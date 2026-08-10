@@ -1,0 +1,32 @@
+{% extends 'pages/_layout.html' %}
+
+{% block content %}
+            <h1 class="page-title">Every Fantasy Premier League player</h1>
+            <p class="page-lede">
+                All {{ total }} players in the {{ season_label }} game, listed under the name
+                Fantasy Premier League displays. Each one has a page with their price,
+                ownership, form, underlying numbers and predicted points for the coming
+                gameweeks.
+            </p>
+            <p class="text-muted small">
+                Looking to sort and filter rather than browse? The
+                <a href="/players">player ratings table</a> does that.
+            </p>
+
+            <nav class="az-jump" aria-label="Jump to letter">
+                {% for group in groups %}<a href="#letter-{{ group.letter }}">{{ group.letter }}</a>{% endfor %}
+            </nav>
+
+            {% for group in groups %}
+            <h2 id="letter-{{ group.letter }}">{{ group.letter }}</h2>
+            <ul class="az-list">
+                {% for p in group.players %}
+                {# Listed under the name FPL displays, which is the one a reader
+                   is scanning for; the full name follows where it differs, so
+                   the page still matches a search for it. #}
+                <li><a href="{{ p.path }}">{{ p.web_name }}</a>
+                    <span class="az-meta">{{ p.team_short or p.team_name }} &middot; {{ p.pos }}{% if p.cost %} &middot; &pound;{{ p.cost }}m{% endif %}{% if p.full_name != p.web_name %} &middot; {{ p.full_name }}{% endif %}</span></li>
+                {% endfor %}
+            </ul>
+            {% endfor %}
+{% endblock %}

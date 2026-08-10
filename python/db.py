@@ -158,6 +158,13 @@ CREATE INDEX IF NOT EXISTS idx_draft_picks ON manager_draft_picks (draft_id);
 """
 
 
+# How long manager data is kept. UK GDPR requires a defined retention period
+# rather than "forever", and the privacy page quotes this constant directly, so
+# changing it here changes what the site promises. Two seasons is enough for
+# year-on-year comparison, which is the only reason to keep it at all.
+RETENTION_MONTHS = 24
+
+
 def db_path():
     return os.environ.get("FPL_DB_PATH", DEFAULT_DB_PATH)
 
@@ -307,3 +314,36 @@ def processed_deadlines():
     with connect() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT * FROM processed_deadline ORDER BY gameweek")]
+
+
+# ---- retention ------------------------------------------------------------
+
+def purge_expired(retention_months=RETENTION_MONTHS, now=None):
+    """Delete manager data older than the retention period.
+
+    The AI Manager (sentinel fpl_id 0) is exempt: it isn't a person, and its
+    record is the whole point of the feature. Everything else ages out.
+
+    Picks are removed by the ON DELETE CASCADE on manager_team, so deleting the
+    header rows is sufficient - this can't leave orphaned child rows behind.
+    """
+    from datetime import datetime, timedelta, timezone
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=int(retention_months * 30.44))).isoformat()
+
+    with connect() as conn:
+        teams = conn.execute(
+            """DELETE FROM manager_team
+               WHERE fpl_id != ? AND captured_at < ?""",
+            (AI_MANAGER_FPL_ID, cutoff)).rowcount
+        drafts_gone = conn.execute(
+            "DELETE FROM manager_draft WHERE updated_at < ?", (cutoff,)).rowcount
+        # A known_manager row is only useful while something references it.
+        known = conn.execute(
+            """DELETE FROM known_manager
+               WHERE last_seen < ?
+                 AND fpl_id NOT IN (SELECT fpl_id FROM manager_team)
+                 AND fpl_id NOT IN (SELECT fpl_id FROM manager_draft)""",
+            (cutoff,)).rowcount
+    return {"cutoff": cutoff, "manager_gameweeks": teams,
+            "drafts": drafts_gone, "known_managers": known}

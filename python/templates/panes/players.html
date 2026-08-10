@@ -1,5 +1,5 @@
         <!-- ============ PLAYERS ============ -->
-        <div id="pane-players" class="tab-pane d-none">
+        <div id="pane-players" class="tab-pane{{ '' if initial_pane == 'pane-players' else ' d-none' }}">
             <ul class="nav nav-pills mb-3" id="playersViewTabs">
                 <li class="nav-item"><button class="nav-link active" data-view="all">All players</button></li>
                 <li class="nav-item"><button class="nav-link" data-view="underperforming">Underperforming</button></li>
@@ -22,4 +22,11 @@
                     </table>
                 </div>
             </div>
+            {# Server-rendered, so it's in the raw HTML: this is the one link
+               that makes the several hundred player pages part of the site
+               rather than orphans reachable only from sitemap.xml. #}
+            <p class="players-az-link">
+                Browse <a href="/players/a-z">every player A&ndash;Z</a> &mdash; one page each,
+                with price, ownership, underlying numbers and predicted points.
+            </p>
         </div>

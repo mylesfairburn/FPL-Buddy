@@ -1,16 +1,31 @@
     <!-- ============ FOOTER ============ -->
     <footer class="site-footer">
         <div class="container footer-inner">
-            <span class="footer-brand">
+            <a class="footer-brand" href="/">
                 <img class="footer-icon" src="/static/icon_64.png" alt="" onerror="this.style.display='none'">FPL Buddy
-            </span>
-            <nav class="footer-links">
-                <a href="https://www.premierleague.com/" target="_blank" rel="noopener noreferrer">Premier League</a>
-                <a href="https://fantasy.premierleague.com/" target="_blank" rel="noopener noreferrer">Fantasy Premier League</a>
-                <a href="https://fantasy.premierleague.com/api/bootstrap-static/" target="_blank" rel="noopener noreferrer">FPL API</a>
-                <a href="http://clubelo.com/API" target="_blank" rel="noopener noreferrer">ClubElo API</a>
-                <a href="https://www.pippit.ai/home" target="_blank" rel="noopener noreferrer">Icon made with Pippit AI</a>
-            </nav>
+            </a>
+            {# Links and the Ko-fi button are grouped so the footer stays a
+               two-part row - brand on the left, everything else on the right.
+               Dropped straight into .footer-inner, the button would land in the
+               middle of the space-between layout with a gap either side. #}
+            <div class="footer-right">
+                <nav class="footer-links">
+                    <a href="/players/a-z">Players A&ndash;Z</a>
+                    <a href="/about">About</a>
+                    <a href="/privacy">Privacy</a>
+                    <a href="/contact">Contact</a>
+                    <a href="https://www.premierleague.com/" target="_blank" rel="noopener noreferrer">Premier League</a>
+                    <a href="https://fantasy.premierleague.com/" target="_blank" rel="noopener noreferrer">Fantasy Premier League</a>
+                    <a href="https://fantasy.premierleague.com/api/bootstrap-static/" target="_blank" rel="noopener noreferrer">FPL API</a>
+                    <a href="http://clubelo.com/API" target="_blank" rel="noopener noreferrer">ClubElo API</a>
+                </nav>
+                {# Only rendered once FPL_KOFI_HANDLE is set - see main.py. #}
+                {% if kofi_url %}
+                <a class="kofi-btn" href="{{ kofi_url }}" target="_blank" rel="noopener noreferrer"
+                   title="Support FPL Buddy on Ko-fi">
+{% include 'partials/icon_coffee.html' %}Ko-fi</a>
+                {% endif %}
+            </div>
         </div>
         <div class="container">
             <p class="footer-note">

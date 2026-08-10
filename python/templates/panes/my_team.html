@@ -1,12 +1,16 @@
         <!-- ============ MY TEAM ============ -->
-        <div id="pane-team" class="tab-pane">
+        <div id="pane-team" class="tab-pane{{ '' if initial_pane == 'pane-team' else ' d-none' }}">
 
             <!-- First-run prompt for the FPL ID -->
             <div id="idPrompt" class="id-prompt d-none">
                 <h5 class="mb-2">Connect your FPL team</h5>
                 <p class="text-muted small mb-3">Enter your FPL ID to load your squad. We'll remember it on this device.</p>
                 <div class="d-flex align-items-center gap-2 flex-wrap">
-                    <input type="number" id="idInput" class="form-control" style="max-width:220px" placeholder="e.g. 1234567">
+                    {# text, not number - see the note on the same field in
+                       pages/home.html. #}
+                    <input type="text" id="idInput" class="form-control" style="max-width:220px"
+                           placeholder="e.g. 1234567" inputmode="numeric" pattern="[0-9]*"
+                           autocomplete="off" aria-label="Your FPL ID">
                     <span class="info-icon" tabindex="0" role="button" aria-label="How to find your FPL ID"
                             data-tip="Log in at fantasy.premierleague.com, select 'Pick Team' then select 'Gameweek History'. Look at the address bar: fantasy.premierleague.com/entry/XXXXXX/... - that number (XXXXXX) is your FPL ID.">i</span>
                     <button id="idSave" class="btn btn-primary">Load team</button>

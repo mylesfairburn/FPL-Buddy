@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Bench Boost">
+  <title>Bench Boost</title>
+  <rect width="64" height="64" rx="14" fill="#2F9E44"/>
+  <!-- Arrow rising off the bench: the bench coming into play. -->
+  <path d="M32 11 L45 26 H37.5 V34 H26.5 V26 H19 Z" fill="#ffffff"/>
+  <!-- Bench: seat plus two legs. -->
+  <rect x="13" y="40" width="38" height="6.5" rx="3.25" fill="#ffffff"/>
+  <rect x="18" y="46.5" width="5" height="9" rx="2" fill="#ffffff"/>
+  <rect x="41" y="46.5" width="5" height="9" rx="2" fill="#ffffff"/>
+</svg>

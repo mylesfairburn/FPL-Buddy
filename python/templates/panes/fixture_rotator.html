@@ -1,5 +1,5 @@
         <!-- ============ FIXTURE ROTATOR ============ -->
-        <div id="pane-rotator" class="tab-pane d-none">
+        <div id="pane-rotator" class="tab-pane{{ '' if initial_pane == 'pane-rotator' else ' d-none' }}">
             <ul class="nav nav-pills mb-3" id="rotationTabs">
                 <li class="nav-item"><button class="nav-link active" data-category="defender">Defenders</button></li>
                 <li class="nav-item"><button class="nav-link" data-category="attacker">Attackers</button></li>

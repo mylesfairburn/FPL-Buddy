@@ -1,9 +1,15 @@
+/* Teal brand, three tiers. The split exists for contrast, not decoration:
+   --accent is the default because most uses either put white text ON it
+   (badges, pills, buttons) or use it AS text on white, and both need 4.5:1.
+   --brand is the vivid logo-matching teal, reserved for the navbar, which is
+   a large filled surface whose only text is the brand wordmark. */
 :root {
-    --accent: #8B5CF6;
-    --accent-dark: #7C3AED;
+    --brand: #00A0A2;        /* 3.21:1 on white — large text and UI only */
+    --accent: #00767A;       /* 5.42:1 — safe for body text and small white-on-teal */
+    --accent-dark: #005B5E;  /* 7.90:1 — hover, pressed, headings */
 }
 body { background-color: #ffffff; }
-.navbar { background-color: var(--accent); }
+.navbar { background-color: var(--brand); }
 .navbar-brand { color: #ffffff !important; font-weight: 600; }
 .btn-primary, .nav-pills .nav-link.active, .nav-tabs .nav-link.active {
     background-color: var(--accent) !important;
@@ -29,7 +35,7 @@ body { background-color: #ffffff; }
 table th { color: var(--accent-dark); }
 .form-select:focus, .form-control:focus {
     border-color: var(--accent);
-    box-shadow: 0 0 0 0.25rem rgba(139, 92, 246, 0.25);
+    box-shadow: 0 0 0 0.25rem rgba(0, 172, 174, 0.25);
 }
 .section-heading { color: var(--accent-dark); font-weight: 600; }
 .rotation-table td, .rotation-table th {
@@ -46,10 +52,10 @@ table th { color: var(--accent-dark); }
     cursor: pointer;
 }
 .rotation-table tr.selected-team td {
-    background-color: rgba(139, 92, 246, 0.15);
+    background-color: rgba(0, 172, 174, 0.15);
 }
 .rotation-table tr.selected-team td.team-col {
-    background-color: rgba(139, 92, 246, 0.25);
+    background-color: rgba(0, 172, 174, 0.25);
 }
 .fixture-cell {
     border-radius: 4px;
@@ -97,9 +103,13 @@ table th { color: var(--accent-dark); }
     align-items: center;
     gap: 4px;
 }
-/* Team shirts (hotlinked from FPL, keyed on team_code) */
-.shirt { height: 22px; width: auto; vertical-align: middle; margin-right: 6px; }
-.shirt-sm { height: 18px; width: auto; vertical-align: middle; }
+/* Team shirts — inline SVG from kits.js, keyed on team_code. Width is set
+   explicitly rather than left to `auto`: these were <img> elements, which take
+   their ratio from the file, but an <svg> takes it from the viewBox and some
+   browsers collapse or stretch it under `width: auto`. The viewBox is square,
+   so width always equals height. */
+.shirt { height: 22px; width: 22px; vertical-align: middle; margin-right: 6px; }
+.shirt-sm { height: 18px; width: 18px; vertical-align: middle; }
 .player-name { font-weight: 500; }
 /* Next-3-GW predicted points cells, coloured by fixture difficulty */
 .gw-cell {
@@ -230,7 +240,7 @@ table th { color: var(--accent-dark); }
     display: flex; flex-direction: column;
     padding: 6px 12px;
     border-radius: 8px;
-    background: #f5f3fc;
+    background: #effafa;
     min-width: 78px;
 }
 .stat-chip.accent { background: var(--accent); }
@@ -243,8 +253,9 @@ table th { color: var(--accent-dark); }
 .pitch-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .rec-captain { font-size: 0.82rem; color: #555; }
 
-/* Pitch — save the attached graphic as static/pitch.svg to use it;
-   otherwise the solid-green fallback shows. */
+/* Pitch — original drawing, Laws of the Game proportions. The solid green
+   behind it is a fallback if the file ever fails to load. */
+
 .pitch {
     background: #1f8a4c url('/static/pitch.svg') center/cover no-repeat;
     border-radius: 10px;
@@ -257,7 +268,7 @@ table th { color: var(--accent-dark); }
 
 .player { width: 76px; flex: 0 1 76px; min-width: 0; text-align: center; }
 .player-kit { position: relative; display: inline-block; }
-.kit { height: 44px; width: auto; }
+.kit { height: 44px; width: 44px; }
 .cap-badge {
     position: absolute; top: -4px; right: 2px;
     width: 17px; height: 17px;
@@ -271,7 +282,7 @@ table th { color: var(--accent-dark); }
 .injury-dot {
     position: absolute; bottom: 0; left: 4px;
     width: 11px; height: 11px;
-    background: #e90052; border: 1px solid #fff; border-radius: 50%;
+    background: #e03131; border: 1px solid #fff; border-radius: 50%;
 }
 .player-name-pill {
     background: rgba(255,255,255,0.95);
@@ -488,7 +499,7 @@ table th { color: var(--accent-dark); }
 .pm-transfer-title { font-size: 0.8rem; font-weight: 600; margin-bottom: 6px; }
 .pm-cand { display: flex; align-items: center; gap: 8px; padding: 5px 4px; border-bottom: 1px solid #f2f2f2; font-size: 0.85rem; cursor: pointer; border-radius: 6px; }
 .pm-cand:last-child { border-bottom: none; }
-.pm-cand:hover { background: #f5f3fc; }
+.pm-cand:hover { background: #effafa; }
 
 @media (max-width: 575.98px) {
     .pitch-wrap { max-width: 100%; }
@@ -513,7 +524,7 @@ table th { color: var(--accent-dark); }
 .sub-mode .player { outline: none; }
 .player.sub-ineligible { opacity: 0.3; pointer-events: none; }
 .player.sub-eligible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
-.player.sub-source { outline: 2px dashed #e90052; outline-offset: 2px; border-radius: 8px; }
+.player.sub-source { outline: 2px dashed #e03131; outline-offset: 2px; border-radius: 8px; }
 
 /* Dual price slider */
 .price-range { margin-top: 2px; }
@@ -543,7 +554,7 @@ table th { color: var(--accent-dark); }
 /* Richer Find-players rows */
 .picker-row { border-bottom: 1px solid #f2f2f2; cursor: pointer; padding: 6px 8px; }
 .picker-row:last-child { border-bottom: none; }
-.picker-row:hover { background: #f5f3fc; }
+.picker-row:hover { background: #effafa; }
 .pr-top { display: flex; align-items: center; gap: 8px; }
 .pr-gws { justify-content: flex-start; margin-top: 4px; }
 .br-form { color: #666; font-size: 0.72rem; width: 46px; white-space: nowrap; }
@@ -588,7 +599,7 @@ table th { color: var(--accent-dark); }
 .ps-list { max-height: 480px; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; }
 .ps-table { font-size: 0.8rem; margin: 0; }
 .ps-table thead th {
-    position: sticky; top: 0; background: #faf9fe; z-index: 1;
+    position: sticky; top: 0; background: #f6fcfc; z-index: 1;
     font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.02em; color: #777;
     border-bottom: 2px solid #eee; white-space: nowrap; padding: 6px;
 }
@@ -598,9 +609,9 @@ table th { color: var(--accent-dark); }
 .ps-table td { vertical-align: middle; padding: 5px 6px; }
 .ps-name { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-weight: 600; }
 .ps-table .player-gws { justify-content: flex-start; }
-.ps-row:hover { background: #f5f3fc; cursor: pointer; }
+.ps-row:hover { background: #effafa; cursor: pointer; }
 .ps-rec-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-dark); font-weight: 700; margin: 2px 0 4px; }
-.ps-rec .ps-table { border: 1px solid #ece7fb; border-radius: 8px; }
+.ps-rec .ps-table { border: 1px solid #d9f3f3; border-radius: 8px; }
 .ps-act { white-space: nowrap; padding: 2px 8px; font-size: 0.72rem; }
 
 /* --- Card polish: fixtures under the name --- */
@@ -662,10 +673,10 @@ table th { color: var(--accent-dark); }
 .player.pending-out { opacity: 0.4; filter: grayscale(1); }
 .player.pending-out .out-plus {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-    font-size: 1.5rem; font-weight: 800; color: #e90052;
+    font-size: 1.5rem; font-weight: 800; color: #e03131;
 }
-.player.pending-active { opacity: 0.85; filter: none; outline: 2px solid #e90052; outline-offset: 2px; border-radius: 10px; }
-.player.pending-active .out-plus { color: #e90052; }
+.player.pending-active { opacity: 0.85; filter: none; outline: 2px solid #e03131; outline-offset: 2px; border-radius: 10px; }
+.player.pending-active .out-plus { color: #e03131; }
 
 /* Empty squad slot — tap to search for a player to fill it */
 .player.empty-slot {
@@ -868,9 +879,9 @@ table th { color: var(--accent-dark); }
    ============================================================ */
 .chip-row {
     display: flex; flex-direction: column; padding: 6px 10px; margin-bottom: 6px;
-    border: 1px solid #eee; border-radius: 8px; background: #faf9fe;
+    border: 1px solid #eee; border-radius: 8px; background: #f6fcfc;
 }
-.chip-row.chip-hot { border-color: var(--accent); background: #f0ebfb; }
+.chip-row.chip-hot { border-color: var(--accent); background: #e3f6f6; }
 .chip-name { font-weight: 700; font-size: 0.85rem; color: var(--accent-dark); }
 .chip-note { font-size: 0.72rem; color: #666; }
 .chip-row.chip-hot .chip-note { color: var(--accent-dark); font-weight: 600; }
@@ -891,10 +902,10 @@ table th { color: var(--accent-dark); }
 .chip-pill {
     display: inline-flex; align-items: center; gap: 4px;
     padding: 4px 12px; border-radius: 999px; cursor: pointer; user-select: none;
-    background: #f0ebfb; color: var(--accent-dark); font-size: 0.8rem; font-weight: 600;
-    border: 1px solid #e3d9f7;
+    background: #e3f6f6; color: var(--accent-dark); font-size: 0.8rem; font-weight: 600;
+    border: 1px solid #c2eded;
 }
-.chip-pill:hover { background: #e7dffa; }
+.chip-pill:hover { background: #cff0f0; }
 .chip-pill.chip-hot { background: var(--accent); color: #fff; border-color: var(--accent); }
 
 /* ============================================================
@@ -978,7 +989,7 @@ body {
 
 .site-footer {
     border-top: 1px solid #eee;
-    background: #faf9fe;
+    background: #f6fcfc;
     padding: 18px 0 22px;
     margin-top: auto;
 }
@@ -991,6 +1002,10 @@ body {
     font-weight: 700; color: var(--accent-dark);
 }
 .footer-icon { width: 24px; height: 24px; border-radius: 6px; object-fit: cover; }
+.footer-right {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+    justify-content: flex-end;
+}
 .footer-links { display: flex; flex-wrap: wrap; gap: 6px 18px; }
 .footer-links a {
     color: var(--accent-dark); font-size: 0.82rem; font-weight: 500; text-decoration: none;
@@ -1003,7 +1018,7 @@ body {
 /* --- Chip explanation, inline under the chips row (mobile) --- */
 .chips-bar { margin-bottom: 8px; }
 .chip-info {
-    background: #f5f3fc; border: 1px solid #e3d9f7; border-radius: 10px;
+    background: #effafa; border: 1px solid #c2eded; border-radius: 10px;
     padding: 8px 10px; margin-bottom: 8px;
     font-size: 0.78rem; line-height: 1.35; color: var(--accent-dark);
 }
@@ -1063,6 +1078,7 @@ body {
 
     /* Footer stacks */
     .footer-inner { flex-direction: column; align-items: flex-start; gap: 8px; }
+    .footer-right { justify-content: flex-start; gap: 10px 14px; }
     .footer-links { gap: 4px 14px; }
     .footer-links a { font-size: 0.78rem; }
 
@@ -1124,7 +1140,10 @@ body {
 .mgr-chip-note.ready { border-color: #cde9d0; background: #f3fbf4; }
 .mgr-chip-name {
     font-weight: 700; color: var(--accent-dark); text-transform: uppercase;
-    font-size: 0.66rem; letter-spacing: 0.03em; flex: 0 0 62px;
+    font-size: 0.62rem; letter-spacing: 0.02em;
+    /* Was a fixed 62px basis, which is narrower than "BENCH BOOST" needs, so
+       it wrapped. Size to the content and refuse to break instead. */
+    flex: 0 0 auto; white-space: nowrap;
 }
 .mgr-chip-detail { color: #666; min-width: 0; }
 .mgr-upcoming { font-size: 0.72rem; color: #888; margin-top: 6px; }
@@ -1233,7 +1252,7 @@ body {
 .ai-mini span.ai-actual { color: var(--accent-dark); }
 
 /* The chip actually being played this week reads first. */
-.chip-card.chip-playing { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(139,92,246,0.25); }
+.chip-card.chip-playing { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(0, 172, 174, 0.25); }
 .chip-card.chip-playing .chip-status { background: var(--accent); color: #fff; }
 
 @media (max-width: 575.98px) {
@@ -1255,15 +1274,11 @@ body {
 .player-gws .mini-gw b { font-size: 0.38rem; letter-spacing: -0.3px; }
 
 @media (max-width: 575.98px) {
-    /* A pitch card is ~64px wide on a phone. Three fixture tiles leaves ~16px
-       of content each, and "ARS (H)" needs ~20px - no font size fixes that and
-       stays readable. Two tiles gets ~31px each, so the label fits at a size
-       you can actually read. The third fixture is still on the player card and
-       in the tables; this is only the pitch, only on a phone. */
-    .pitch .player-gws .mini-gw:nth-child(n+3),
-    .bench .player-gws .mini-gw:nth-child(n+3) { display: none; }
-    .player-gws .mini-gw { font-size: 0.55rem; padding: 1px 2px; }
-    .player-gws .mini-gw b { font-size: 0.42rem; }
+    /* All three fixtures show. A pitch card is ~64px on a phone, so each tile
+       gets ~20px - which fits now that the label is "ARS(H)" rather than
+       "ARS (H)" and the tiles carry no horizontal padding. */
+    .player-gws .mini-gw { font-size: 0.5rem; padding: 1px 0; }
+    .player-gws .mini-gw b { font-size: 0.36rem; }
 }
 
 /* Chip names on one line - "Triple Captain" wrapped and pushed its card taller
@@ -1277,4 +1292,324 @@ body {
 @media (max-width: 575.98px) {
     .chip-card-name { font-size: 0.5rem; letter-spacing: -0.2px; }
     .chip-card { padding: 4px 2px; }
+}
+
+
+/* ============================================================
+   AVAILABILITY BAND
+   ============================================================ */
+
+/* Sits directly above the name pill and spans the card, so a flagged player
+   reads as a problem from across the pitch. Replaces the 11px corner dot,
+   which carried the same information but only if you knew to hover it. */
+.avail-band {
+    display: block;
+    margin-top: 2px;
+    border-radius: 3px 3px 0 0;
+    font-size: 0.6rem;
+    font-weight: 700;
+    line-height: 1.25;
+    text-align: center;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+}
+/* Colour tracks likelihood, not just "flagged": 75% and 25% are very different
+   decisions and shouldn't look the same. */
+/* Every card carries a band now, so the fit state has to be quiet - otherwise
+   the pitch becomes a wall of colour and the real warnings stop standing out. */
+.avail-full     { background: #40916c; }   /* 100% - fit */
+.avail-likely   { background: #f0a202; }   /* 75%  - probably fine */
+.avail-doubt    { background: #e8710a; }   /* 50%  - real doubt */
+.avail-unlikely { background: #d9480f; }   /* 25%  - probably not */
+.avail-out      { background: #c92a2a; }   /* 0%   - injured/suspended/out */
+
+/* The name pill squares off underneath so band and pill read as one label. */
+.avail-band + .player-name-pill { border-radius: 0 0 3px 3px; margin-top: 0; }
+
+@media (max-width: 575.98px) {
+    .avail-band { font-size: 0.5rem; line-height: 1.2; }
+}
+
+/* ============================================================
+   CONTENT PAGES (about / privacy / contact)
+   ============================================================ */
+
+/* Prose, not a dashboard: a measure that's comfortable to read rather than the
+   full container width the tool pages use. */
+.content-page { max-width: 760px; margin: 0 auto; padding-top: 4px; }
+.content-page h1.page-title {
+    color: var(--accent-dark); font-weight: 700; margin-bottom: 10px;
+}
+.content-page .page-lede { font-size: 1.02rem; color: #444; line-height: 1.6; }
+.content-page h2 {
+    color: var(--accent-dark); font-weight: 700; font-size: 1.15rem;
+    margin: 28px 0 8px;
+}
+.content-page h3 {
+    color: #333; font-weight: 700; font-size: 0.98rem; margin: 18px 0 6px;
+}
+.content-page p, .content-page li { line-height: 1.65; color: #333; }
+.content-page ul, .content-page ol { padding-left: 1.2rem; }
+.content-page li { margin-bottom: 6px; }
+.content-page a { color: var(--accent-dark); }
+.content-page code {
+    background: #f1f7f7; color: var(--accent-dark); padding: 1px 5px;
+    border-radius: 4px; font-size: 0.88em; word-break: break-all;
+}
+
+/* Landing page ID entry. Reuses .id-prompt so it's the same card the app
+   shows, just given more room to breathe as the first thing on the page. */
+.home-id-prompt { margin: 22px auto 34px; background: #fbfdfd; }
+.home-id-title {
+    color: var(--accent-dark); font-weight: 700; font-size: 1.15rem;
+    margin: 0 0 6px;
+}
+.home-id-skip {
+    font-size: 0.85rem; color: #666; margin: 16px 0 0;
+}
+/* The tool headings are links, and on a page that's mostly links they need to
+   still read as headings rather than as a list of blue text. */
+.content-page h3 a { text-decoration: none; }
+.content-page h3 a:hover { text-decoration: underline; }
+
+/* ---- Ko-fi ---- */
+.icon-coffee { flex: none; }
+
+.kofi-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 13px; border-radius: 999px;
+    background: var(--accent); color: #fff;
+    font-size: 0.82rem; font-weight: 700; text-decoration: none;
+    border: 1px solid transparent; white-space: nowrap;
+    transition: background 0.15s ease;
+}
+.kofi-btn:hover, .kofi-btn:focus { background: var(--accent-dark); color: #fff; }
+
+/* "Team saved" toast. Fixed to the bottom of the viewport rather than placed in
+   the page, because the Save button can be scrolled well out of sight by the
+   time a save lands on a phone. */
+.toast-pop {
+    position: fixed; z-index: 1080;
+    left: 50%; bottom: 22px; transform: translateX(-50%);
+    width: min(340px, calc(100vw - 32px));
+    background: #fff; border: 1px solid #e3eded; border-radius: 12px;
+    box-shadow: 0 6px 26px rgba(0, 0, 0, 0.14);
+    padding: 13px 34px 13px 15px;
+}
+.toast-pop.toast-in { animation: toastUp 0.26s ease-out; }
+@keyframes toastUp {
+    from { opacity: 0; transform: translate(-50%, 14px); }
+    to   { opacity: 1; transform: translate(-50%, 0); }
+}
+/* Respect a reduced-motion preference: the toast still appears, it just
+   doesn't slide. */
+@media (prefers-reduced-motion: reduce) {
+    .toast-pop.toast-in { animation: none; }
+}
+
+.toast-title {
+    font-weight: 700; color: var(--accent-dark); font-size: 0.95rem;
+    line-height: 1.2;
+}
+.toast-title::before { content: "\2713\00a0"; }
+.toast-msg { font-size: 0.8rem; color: #666; margin-top: 3px; line-height: 1.45; }
+
+.toast-close {
+    position: absolute; top: 6px; right: 8px;
+    background: none; border: 0; padding: 2px 6px;
+    font-size: 1.15rem; line-height: 1; color: #aaa; cursor: pointer;
+}
+.toast-close:hover { color: #555; }
+
+.toast-kofi {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 11px; padding: 7px 12px; border-radius: 8px;
+    background: #f1f7f7; color: var(--accent-dark);
+    font-size: 0.78rem; font-weight: 600; text-decoration: none;
+    line-height: 1.25;
+}
+.toast-kofi:hover { background: var(--accent); color: #fff; }
+
+/* First-save dialog. Bigger and centred on purpose - it appears once a session
+   and then never again, so it gets to be an interruption. */
+.kofi-modal {
+    position: fixed; inset: 0; z-index: 1090;
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+}
+.kofi-backdrop { position: absolute; inset: 0; background: rgba(8, 38, 40, 0.55); }
+
+.kofi-card {
+    position: relative;
+    width: 100%; max-width: 420px;
+    background: #fff; border-radius: 18px;
+    padding: 30px 30px 24px;
+    text-align: center;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+    animation: kofiIn 0.22s ease-out;
+    max-height: calc(100vh - 40px); overflow-y: auto;
+}
+@keyframes kofiIn {
+    from { opacity: 0; transform: translateY(10px) scale(0.97); }
+    to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .kofi-card { animation: none; }
+}
+
+/* Deliberately prominent, and a comfortable size on a phone: this is the only
+   way out of the dialog, so it must be neither a hunt nor a fiddly tap. */
+.kofi-close {
+    position: absolute; top: 10px; right: 12px;
+    width: 40px; height: 40px; border-radius: 50%;
+    background: #f1f7f7; border: 0; color: #55706f;
+    font-size: 1.4rem; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+}
+.kofi-close:hover { background: var(--accent); color: #fff; }
+.kofi-close:focus-visible { outline: 2px solid var(--accent-dark); outline-offset: 2px; }
+
+.kofi-cup {
+    width: 68px; height: 68px; margin: 4px auto 14px;
+    border-radius: 50%; background: #f1f7f7; color: var(--accent-dark);
+    display: flex; align-items: center; justify-content: center;
+}
+.kofi-cup .icon-coffee { width: 34px; height: 34px; stroke-width: 1.6; }
+
+.kofi-title {
+    margin: 0 0 8px; font-size: 1.35rem; font-weight: 700;
+    color: var(--accent-dark);
+}
+.kofi-lead { margin: 0 0 14px; font-size: 0.92rem; color: #444; line-height: 1.55; }
+.kofi-body { margin: 0 0 20px; font-size: 0.86rem; color: #666; line-height: 1.6; }
+
+.kofi-cta {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; padding: 12px 18px; border-radius: 10px;
+    background: var(--accent); color: #fff;
+    font-size: 0.95rem; font-weight: 700; text-decoration: none;
+}
+.kofi-cta:hover, .kofi-cta:focus { background: var(--accent-dark); color: #fff; }
+.kofi-cta .icon-coffee { width: 18px; height: 18px; }
+
+.kofi-foot { margin: 12px 0 0; font-size: 0.72rem; color: #9aa8a8; }
+
+/* Set while the dialog is open. Without it the page scrolls behind the
+   backdrop on a phone, which reads as the dialog being broken. */
+body.modal-open { overflow: hidden; }
+
+@media (max-width: 400px) {
+    .kofi-card { padding: 30px 18px 20px; border-radius: 14px; }
+    .kofi-title { font-size: 1.2rem; }
+    .kofi-cup { width: 58px; height: 58px; }
+    .kofi-cup .icon-coffee { width: 29px; height: 29px; }
+}
+
+.players-az-link {
+    margin: 18px 0 0; font-size: 0.85rem; color: #666;
+}
+.players-az-link a { color: var(--accent-dark); font-weight: 600; }
+
+.pm-profile {
+    display: block; margin-top: 14px; text-align: center;
+    font-size: 0.85rem; font-weight: 600; color: var(--accent-dark);
+    text-decoration: none;
+}
+.pm-profile:hover { text-decoration: underline; }
+
+/* ---- Player pages ---- */
+.crumbs { font-size: 0.8rem; color: #888; margin-bottom: 10px; }
+.crumbs a { color: var(--accent); text-decoration: none; }
+.crumbs a:hover { text-decoration: underline; }
+
+.player-sub { color: #555; font-size: 0.95rem; margin: -4px 0 18px; }
+
+/* The four numbers someone came for, above the prose. */
+.player-keys {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 10px; margin: 0 0 22px;
+}
+.player-key {
+    background: #f1f7f7; border-radius: 10px; padding: 10px 12px; text-align: center;
+}
+.pk-val {
+    display: block; font-size: 1.3rem; font-weight: 700; color: var(--accent-dark);
+    line-height: 1.15;
+}
+.pk-lab {
+    display: block; font-size: 0.66rem; text-transform: uppercase;
+    letter-spacing: 0.04em; color: #777; margin-top: 3px;
+}
+
+/* Tables scroll inside their own box rather than pushing the page sideways. */
+.table-scroll { overflow-x: auto; margin: 10px 0 6px; }
+.stat-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.stat-table th, .stat-table td {
+    padding: 7px 10px; border-bottom: 1px solid #eee; text-align: left;
+}
+.stat-table thead th {
+    background: #f1f7f7; color: var(--accent-dark); font-weight: 700;
+    font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em;
+}
+.stat-table tbody th { font-weight: 600; color: #555; width: 25%; }
+.stat-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.player-more { margin-top: 26px; font-size: 0.9rem; }
+
+/* ---- A-Z index ---- */
+.az-jump { display: flex; flex-wrap: wrap; gap: 6px; margin: 18px 0 8px; }
+.az-jump a {
+    display: inline-block; min-width: 30px; text-align: center;
+    padding: 4px 7px; border-radius: 7px; background: #f1f7f7;
+    color: var(--accent-dark); font-weight: 700; font-size: 0.85rem;
+    text-decoration: none;
+}
+.az-jump a:hover { background: var(--accent); color: #fff; }
+
+.az-list {
+    list-style: none; padding: 0; margin: 6px 0 0;
+    columns: 2; column-gap: 26px;
+}
+.az-list li {
+    break-inside: avoid; margin-bottom: 5px; font-size: 0.9rem;
+    line-height: 1.4;
+}
+.az-meta { color: #999; font-size: 0.76rem; white-space: nowrap; }
+
+@media (max-width: 575.98px) {
+    .az-list { columns: 1; }
+    .stat-table tbody th { width: auto; }
+}
+
+/* Obfuscated addresses: styled as links even before the script swaps in the
+   real mailto, so they don't look broken with JS disabled. */
+.obf-mail { color: var(--accent-dark); font-weight: 600; word-break: break-word; }
+
+.contact-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px; margin-top: 18px;
+}
+.contact-card {
+    border: 1px solid #eee; border-radius: 10px; padding: 14px 16px;
+    background: #faf9fe;
+}
+.contact-card h2 { margin: 0 0 6px; font-size: 1rem; }
+.contact-card p { margin-bottom: 6px; font-size: 0.88rem; }
+.contact-address { margin-bottom: 0 !important; }
+
+@media (max-width: 575.98px) {
+    .content-page h1.page-title { font-size: 1.4rem; }
+    .content-page .page-lede { font-size: 0.95rem; }
+    .content-page h2 { font-size: 1.05rem; }
+}
+
+/* Brand is a home link on every page, so it needs link affordances the old
+   <span> didn't - without underlining it into looking like body-copy text. */
+a.navbar-brand.brand { text-decoration: none; }
+a.navbar-brand.brand:hover .brand-icon { transform: scale(1.06); }
+a.navbar-brand.brand:hover { color: #ffffff !important; opacity: 0.92; }
+.brand-icon { transition: transform 0.15s ease; }
+a.navbar-brand.brand:focus-visible {
+    outline: 2px solid #ffffff; outline-offset: 3px; border-radius: 8px;
 }

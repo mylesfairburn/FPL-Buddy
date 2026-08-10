@@ -282,11 +282,15 @@ def predict_ratings(position_dfs, model_bundles, form_features, fixture_features
     return updated
 
 
+# These were the four official Premier League brand colours (yellow #ffcc29,
+# cyan #04f5ff, magenta #e90052, purple #37003c) used verbatim. Replaced with
+# the site's own teal-based palette: red/amber/orange are reserved for status
+# meanings in the UI, so they're avoided here too.
 POSITION_COLORS = {
-    'Goalkeeper': '#ffcc29',
-    'Defender': '#04f5ff',
-    'Midfielder': '#e90052',
-    'Forward': '#37003c',
+    'Goalkeeper': '#00767A',
+    'Defender': '#1E40AF',
+    'Midfielder': '#2E9B57',
+    'Forward': '#334155',
 }
 
 
@@ -301,7 +305,7 @@ def plot_top_ratings(position_dfs, top_n=10, out_dir='../data/plots'):
             continue
 
         fig, ax = plt.subplots(figsize=(9, 5.5))
-        color = POSITION_COLORS.get(position, '#37003c')
+        color = POSITION_COLORS.get(position, '#334155')
         bars = ax.barh(top['web_name'], top['rating'], color=color, edgecolor='none')
 
         for bar, rating in zip(bars, top['rating']):

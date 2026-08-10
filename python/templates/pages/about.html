@@ -1,0 +1,110 @@
+{% extends "pages/_layout.html" %}
+
+{% block content %}
+<h1 class="page-title">About {{ site_name }}</h1>
+<p class="page-lede">
+    A free Fantasy Premier League tool that rates every player with a trained model,
+    picks two AI squads a week, and shows you which teams have the kindest run of
+    fixtures. Built by one person, for the same reason most FPL tools get built:
+    wanting a better answer than a gut feeling.
+</p>
+
+<h2>How players are rated</h2>
+<p>
+    Every player carries a projected points figure for each of the next eight
+    gameweeks. That comes from a ridge regression trained separately for each
+    position — goalkeepers, defenders, midfielders and forwards score points in
+    genuinely different ways, so one model across all four would average away the
+    thing you actually want to know.
+</p>
+<p>
+    The model is trained on per-gameweek data from 2025/26 onwards, and gains a
+    season every year. Its inputs are a rolling three-gameweek average of expected
+    goal involvements, minutes and bonus points, plus whether the fixture is home or
+    away and how strong the opponent is. Rolling averages are shifted by one
+    gameweek before use, so a player's own result can never leak into the features
+    predicting it — the commonest way a model like this ends up looking far better
+    than it is.
+</p>
+<p>
+    Two deliberate omissions. Total points is not an input, even though it is the
+    most obviously predictive column available: it's Fantasy Premier League's own
+    formula applied to minutes, goals and bonus, so including it alongside its own
+    ingredients makes the model split credit between a total and the parts it was
+    built from. And form is measured over three gameweeks rather than five or ten,
+    because a longer window is steadier but slower to notice that something has
+    changed.
+</p>
+
+<h2>The two AI squads</h2>
+<p>
+    Both are picked by an integer linear program rather than by sorting a list. The
+    difference matters because the constraints interact: "best points per million,
+    position by position" can spend the budget early and then be unable to fill the
+    last forward slot, or take three cheap defenders from one club and be blocked
+    from the striker it actually wanted. A solver handles that directly and returns
+    a squad that is provably the best available, not merely the best one a
+    particular shortcut happened to find.
+</p>
+<h3>AI Best XI</h3>
+<p>
+    The highest-scoring legal squad for the coming gameweek, rebuilt from scratch
+    every week with no memory of the last one. £100m, two goalkeepers, five
+    defenders, five midfielders, three forwards, and at most three players from any
+    one club. It has no transfers to worry about, so it spends almost nothing on the
+    bench — every spare pound belongs in the eleven.
+</p>
+<h3>AI Manager</h3>
+<p>
+    A bot playing the actual game. It keeps one squad across the season, has a bank
+    balance, earns and spends free transfers, takes four-point hits when a move
+    justifies one, and holds a single set of chips.
+</p>
+<p>
+    It therefore judges players over the next several gameweeks rather than just the
+    next one, weighted so that nearer fixtures count for more. That is the whole
+    difference between the two: buy the best captain for one Saturday and sell him a
+    fortnight later and you have burned four points and a free transfer for nothing.
+    It also refuses to build a squad that can't field eleven players in a blank
+    gameweek, and plans chips against the fixture list — double gameweeks and blanks
+    are what actually make a chip worth playing, and both are visible months ahead.
+</p>
+
+<h2>Availability</h2>
+<p>
+    Every player card carries a percentage. It's Fantasy Premier League's own
+    published chance of playing, and the AI squads use it directly: a player rated
+    75% likely to feature is compared on 75% of his projection, not all of it. When
+    the optimiser does start someone doubtful, it puts a dependable replacement on
+    the bench in the same position, ordered so the automatic substitution actually
+    covers them.
+</p>
+
+<h2>What this site cannot do</h2>
+<p>
+    It cannot change your team. Fantasy Premier League's public API is read-only
+    without an authenticated session, so everything here is a recommendation you
+    then apply yourself in the official app. That is a deliberate limit, not a
+    missing feature — this site never asks for your Fantasy Premier League password,
+    and never will.
+</p>
+<p>
+    It also cannot tell the future. The projections are a model's best estimate from
+    a handful of inputs, and football is not very predictable over ninety minutes.
+    They're most useful for comparing players against each other, and least useful
+    read as a forecast of anyone's actual score. The AI squads' predictions are
+    frozen when each deadline passes and never recalculated, so the track record on
+    each tab is an honest one rather than something quietly improved after the fact.
+</p>
+
+<h2>Not official</h2>
+<p>
+    This is an unofficial fan project with no connection to the Premier League or to
+    Fantasy Premier League. Player data, fixtures and results come from Fantasy
+    Premier League's public API; team strength ratings come from ClubElo.
+</p>
+<p>
+    Questions, bugs and disagreements about the model are all welcome —
+    see the <a href="/contact">contact page</a>.
+</p>
+{% endblock %}

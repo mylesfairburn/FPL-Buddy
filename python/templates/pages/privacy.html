@@ -1,0 +1,110 @@
+{% extends "pages/_layout.html" %}
+
+{% block content %}
+<h1 class="page-title">Privacy policy</h1>
+<p class="page-lede">
+    This site stores a small amount of data that can be traced back to a person, so
+    it needs a policy explaining exactly what and why. It's short, because there
+    isn't much of it.
+</p>
+<p class="text-muted small">Last updated: {{ today }}</p>
+
+<h2>Who is responsible</h2>
+<p>
+    {{ site_name }} is an unofficial hobby project run by an individual in the United
+    Kingdom. For data protection purposes that individual is the
+    <strong>data controller</strong>. You can reach them at
+    {{ obf_mail(emails.contact) }}.
+</p>
+
+<h2>What is stored</h2>
+<p>
+    There are no accounts on this site. There is no sign-up, no password, and no
+    payment information. The only identifier used is your <strong>FPL ID</strong> —
+    the number in your Fantasy Premier League team URL — which you type in yourself.
+</p>
+<p>Against that ID, the following is stored:</p>
+<ul>
+    <li><strong>Your saved team</strong> — the squad you build here before a deadline,
+        so it loads on any device you enter the same ID on.</li>
+    <li><strong>Your squad for past gameweeks</strong> — captured after each deadline
+        from Fantasy Premier League's own public API.</li>
+    <li><strong>The projected points</strong> this site's model gave each of those
+        players at the time. This is the only part that doesn't exist elsewhere,
+        and it's the reason the record is kept at all: it's what makes
+        "predicted versus actual" answerable later.</li>
+</ul>
+
+<h2>Something you should know</h2>
+<p>
+    Because an FPL ID is just a number, <strong>anyone can enter anyone's</strong>.
+    If someone enters your ID, this site will store that team's public squad history
+    even if you have never visited. The underlying data is already public on Fantasy
+    Premier League's own site, and no private information is involved — but it is
+    happening, and you should be told rather than have to work it out.
+</p>
+<p>
+    For the same reason, a saved team is <strong>not private</strong>. Anyone who
+    knows your FPL ID can view and overwrite it. Don't put anything in it you would
+    mind a stranger seeing or changing.
+</p>
+
+<h2>Lawful basis</h2>
+<p>
+    <strong>Legitimate interests</strong> — running a free tool that compares
+    predictions against real results. The data used is already publicly available
+    through Fantasy Premier League, and none of it is sensitive. If you would rather
+    not be included, ask and it will be removed.
+</p>
+
+<h2>How long it is kept</h2>
+<p>
+    Manager data is deleted automatically after <strong>{{ retention_months }} months</strong>.
+    A scheduled job enforces this — it isn't a promise to remember to do it manually.
+    Two seasons is enough for year-on-year comparison, which is the only reason to
+    keep anything.
+</p>
+
+<h2>Your rights</h2>
+<p>
+    You have the right to ask what is held about you, to have it corrected, and to
+    have it deleted. Email {{ obf_mail(emails.contact) }} with your FPL ID and it
+    will be actioned — there is no charge and no form to fill in. You can also clear
+    a saved team yourself at any time using the <em>Change ID</em> button.
+</p>
+<p>
+    If you are unhappy with how a request is handled you can complain to the
+    <a href="https://ico.org.uk/" target="_blank" rel="noopener noreferrer">Information
+    Commissioner's Office</a>.
+</p>
+
+<h2>Cookies and local storage</h2>
+<p>
+    This site sets <strong>no cookies</strong> and runs no analytics or tracking.
+    It uses your browser's local storage for two functional things: remembering the
+    FPL ID you typed, and remembering which tab you were on. Both stay on your
+    device, are never transmitted anywhere, and are cleared when you clear your
+    browser data. Under PECR these are strictly necessary, so no consent banner is
+    required.
+</p>
+<p class="text-muted">
+    If advertising is ever added, that will change — this page and a consent banner
+    would both go up before any advertising cookie is set, not after.
+</p>
+
+<h2>Where the data comes from</h2>
+<p>
+    Player, fixture and team information comes from the public
+    <a href="https://fantasy.premierleague.com/" target="_blank" rel="noopener noreferrer">Fantasy
+    Premier League</a> API and from <a href="http://clubelo.com/" target="_blank" rel="noopener noreferrer">ClubElo</a>.
+    Neither receives any information about you from this site.
+</p>
+
+<h2>Security</h2>
+<p>
+    Data is held in a single database file on a server controlled by the site owner
+    and is not shared with, sold to, or processed by any third party. If you believe
+    you have found a security problem, please email {{ obf_mail(emails.security) }}
+    rather than reporting it publicly.
+</p>
+{% endblock %}

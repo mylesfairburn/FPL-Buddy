@@ -9,13 +9,24 @@
  */
 
 // ---- Tabs ----
-// The open tab and scroll position are remembered across a refresh.
-// Kept in sessionStorage (per-tab, cleared when the tab closes) and
-// mirrored into the URL hash, so a reload, a restored tab or a shared
-// link all land where you were rather than back on My Team at the top.
-const TAB_KEY = 'fpl_active_pane';
+// Each tab is a real URL served by the server, not a fragment of one document.
+// Switching tabs still happens entirely in the browser - nothing is re-fetched -
+// but the address bar changes to the actual path, so the page can be linked to,
+// bookmarked, shared and indexed. A '#pane-players' fragment could do none of
+// those: it never reaches the server, so every tab looked like the same page.
+//
+// The map has to match the routes in main.py. It's short and it changes about
+// once a year, which is why it's a literal here rather than something generated.
 const SCROLL_KEY = 'fpl_scroll_pos';
-const PANES = ['pane-team', 'pane-ai-teams', 'pane-players', 'pane-rotator'];
+const PANE_PATHS = {
+    'pane-team': '/my-team',
+    'pane-ai-teams': '/ai-teams',
+    'pane-players': '/players',
+    'pane-rotator': '/fixture-rotator',
+};
+const PATH_PANES = {};
+Object.keys(PANE_PATHS).forEach(p => { PATH_PANES[PANE_PATHS[p]] = p; });
+const PANES = Object.keys(PANE_PATHS);
 
 function activatePane(pane, opts) {
     opts = opts || {};
@@ -26,8 +37,19 @@ function activatePane(pane, opts) {
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('d-none'));
     btn.classList.add('active');
     document.getElementById(pane).classList.remove('d-none');
-    try { sessionStorage.setItem(TAB_KEY, pane); } catch (e) {}
-    if (history.replaceState) history.replaceState(null, '', '#' + pane);
+    // pushState, not replaceState: each tab is a place you've been, so Back
+    // should return to the previous tab rather than leaving the site. Skipped
+    // when the path already matches - on first load, and when popstate is what
+    // moved us here, in which case the browser has already changed the URL.
+    const path = PANE_PATHS[pane];
+    if (path && history.pushState && location.pathname !== path) {
+        history.pushState({ pane: pane }, '', path);
+    }
+    // The URL changed, so the title has to as well. Otherwise the browser tab -
+    // and any bookmark taken from it - keeps the name of whichever page you
+    // first landed on, which is the wrong page by the time you've switched
+    // twice. The server puts each tab's real <title> on the link.
+    if (btn.dataset.title) document.title = btn.dataset.title;
     if (pane === 'pane-players') ensurePlayers().then(() => playersTabSearch.refresh());
     if (pane === 'pane-ai-teams') showAiView(currentAiView);
     // Only reset scroll on a real click; a restore wants to keep it.
@@ -35,7 +57,22 @@ function activatePane(pane, opts) {
 }
 
 document.querySelectorAll('#mainTabs .nav-link').forEach(btn => {
-    btn.addEventListener('click', () => activatePane(btn.dataset.pane));
+    btn.addEventListener('click', e => {
+        // The tabs are anchors so crawlers can follow them and so middle-click
+        // still opens a new tab - but a plain left-click should switch panes
+        // instantly rather than reload the whole document. Modified clicks are
+        // left alone: the user is asking for a new tab or window.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        activatePane(btn.dataset.pane);
+    });
+});
+
+// Back/forward between tabs. Without this the URL would change and the page
+// would not, which is worse than having no history at all.
+window.addEventListener('popstate', () => {
+    const pane = PATH_PANES[location.pathname];
+    if (pane) activatePane(pane, { restoring: true });
 });
 
 // Throttled so a scroll doesn't hit storage on every frame.
@@ -70,12 +107,12 @@ document.querySelectorAll('#aiViewTabs .nav-link').forEach(btn =>
     btn.addEventListener('click', () => showAiView(btn.dataset.view)));
 
 function restoreView() {
-    // A hash in the URL wins over the remembered tab - an explicit link
-    // should beat "wherever you happened to be last".
-    const fromHash = (location.hash || '').replace('#', '');
-    let pane = PANES.includes(fromHash) ? fromHash : null;
-    if (!pane) { try { pane = sessionStorage.getItem(TAB_KEY); } catch (e) {} }
-    activatePane(pane || 'pane-team', { restoring: true });
+    // The URL is the answer. The server has already told us which tab this path
+    // is (and rendered it open, so there's no flash of the wrong pane); reading
+    // location.pathname is the fallback for a cached document served before
+    // that variable existed.
+    const pane = window.__INITIAL_PANE__ || PATH_PANES[location.pathname] || 'pane-team';
+    activatePane(pane, { restoring: true });
 
     let y = 0;
     try { y = parseInt(sessionStorage.getItem(SCROLL_KEY) || '0', 10) || 0; } catch (e) {}
@@ -101,22 +138,65 @@ function restoreView() {
 }
 
 // ---- Shirt kits ----
-function shirtUrl(teamCode, position) {
-    if (teamCode == null) return '';
-    const isGk = position === 'Goalkeeper' || position === 'GK';
-    return `https://fantasy.premierleague.com/dist/img/shirts/standard/shirt_${teamCode}${isGk ? '_1' : ''}-66.png`;
-}
-function shirtImg(teamCode, position, cls) {
-    const url = shirtUrl(teamCode, position);
-    if (!url) return '';
-    return `<img class="${cls}" src="${url}" alt="" onerror="this.style.display='none'">`;
-}
+// shirtImg() now lives in kits.js, which draws each club's shirt as inline SVG
+// from a colour map. It replaced PNGs hotlinked from fantasy.premierleague.com:
+// those were someone else's artwork served off someone else's bandwidth, and a
+// path change at their end would have broken every player card here at once.
+// kits.js is loaded before this file in index.html.
 
 // Home/away marker. Bracketed everywhere - "ARS H" reads like a scoreline,
 // "ARS (H)" reads as a venue, which is what it is.
 function haTag(g) {
     if (!g || g.was_home == null) return '';
     return g.was_home ? '(H)' : '(A)';
+}
+
+// ---- Availability banner ------------------------------------------------
+// FPL flags a player with a status letter and, usually, a percentage chance of
+// featuring. That percentage is the useful number - "doubtful" could mean 75%
+// or 25%, and those are very different decisions - so it's shown directly
+// rather than hidden behind a tooltip on a small coloured dot.
+//
+// Colour tracks the chance so the pitch is scannable at a glance: you should be
+// able to see you have a problem without reading anything.
+function availabilityBand(p) {
+    const status = (p.status || 'a').toLowerCase();
+    const chance = p.chance_of_playing_next_round;
+
+    // Every player carries a band, so the absence of a warning is itself
+    // information: "100%" says this player was checked and is fit, where a blank
+    // space could equally mean nobody has looked.
+    let pct = (chance == null) ? null : Math.max(0, Math.min(100, Number(chance)));
+    if (pct == null) {
+        // FPL omits the percentage for most players, and what that implies
+        // depends on the status letter: 'a' means fully fit, injured/suspended/
+        // unavailable means not playing. Only a bare 'd' is a real unknown -
+        // there a number would be invented rather than inferred, so it keeps a
+        // word instead.
+        if (status === 'a') pct = 100;
+        else if (status !== 'd') pct = 0;
+    }
+
+    let tone;                                  // drives the colour band
+    if (pct == null) tone = 'doubt';
+    else if (pct >= 100) tone = 'full';
+    else if (pct >= 75) tone = 'likely';
+    else if (pct >= 50) tone = 'doubt';
+    else if (pct >= 25) tone = 'unlikely';
+    else tone = 'out';
+
+    const STATUS_WORD = { i: 'Injured', s: 'Suspended', u: 'Unavailable',
+                          n: 'Not in squad', d: 'Doubtful' };
+    const label = pct != null ? `${pct}%` : (STATUS_WORD[status] || 'Doubtful');
+    // The news line is the reason behind the number - kept as the tooltip.
+    const title = (p.news || STATUS_WORD[status] || 'No injury news').replace(/"/g, '&quot;');
+    return { tone, label, title };
+}
+
+function availabilityBandHtml(p) {
+    const band = availabilityBand(p);
+    if (!band) return '';
+    return `<div class="avail-band avail-${band.tone}" title="${band.title}">${band.label}</div>`;
 }
 
 // Small clear-button helper for search inputs.
@@ -457,8 +537,9 @@ function playerCard(p, opts) {
     let badge = '';
     if (p.id === captainId) badge = `<span class="cap-badge" style="${bstyle}">C</span>`;
     else if (p.id === viceId) badge = `<span class="cap-badge vice" style="${bstyle}">V</span>`;
-    const injured = (p.status && p.status !== 'a')
-        ? `<span class="injury-dot" title="${(p.news || '').replace(/"/g, '')}"></span>` : '';
+    // Replaces the old corner dot: a full-width band above the name, so a
+    // flagged starter is obvious rather than something you have to hover to find.
+    const availBand = availabilityBandHtml(p);
     if (opts.pendingOut) cls += ' pending-out pending-active';
     const plus = opts.pendingOut ? '<div class="out-plus">+</div>' : '';
     // Once a gameweek is under way the projection is history - show what they
@@ -469,7 +550,8 @@ function playerCard(p, opts) {
         : `<div class="player-gws">${miniFixtures(p)}</div>`;
     return `<div class="${cls}" data-id="${p.id}" style="position:relative">
         ${posLabel}${badge}
-        <div class="player-kit">${shirtImg(p.team_code, p.pos, 'kit')}${injured}${plus}</div>
+        <div class="player-kit">${shirtImg(p.team_code, p.pos, 'kit')}${plus}</div>
+        ${availBand}
         <div class="player-name-pill">${p.web_name}</div>
         ${live}
     </div>`;
@@ -653,6 +735,15 @@ function openPlayerModal(p, owned) {
     }
     const tbox = document.getElementById('pmTransfer');
     tbox.classList.add('d-none'); tbox.innerHTML = '';
+
+    // The pop-up is a summary; the profile page is the whole thing. The path is
+    // supplied by /api/all_players rather than built here, so this link always
+    // matches the canonical URL instead of 301-ing on every click. It's hidden
+    // where there's no path - a squad pick loaded from /api/team hasn't been
+    // through that enrichment.
+    const profile = document.getElementById('pmProfile');
+    profile.classList.toggle('d-none', !p.path);
+    if (p.path) profile.href = p.path;
 
     renderUpcoming(p);
     renderForm(p);
@@ -952,7 +1043,7 @@ function renderChips(gw) {
     bar.innerHTML = CHIPS.map(c => {
         const available = avail.includes(c.key);
         return `<div class="chip-card ${available ? 'chip-avail' : 'chip-unavail'}" tabindex="0" data-i="${c.key}">
-            <img class="chip-img" src="/static/${c.key}.png" alt="${c.name}" onerror="this.style.visibility='hidden'">
+            <img class="chip-img" src="/static/${c.key}.svg" alt="${c.name}" onerror="this.style.visibility='hidden'">
             <div class="chip-card-name">${c.name}</div>
             <div class="chip-status">${available ? 'Available' : 'Unavailable'}</div>
         </div>`;
@@ -1010,12 +1101,114 @@ document.getElementById('saveTeamBtn').addEventListener('click', () => {
         document.getElementById('resetBtn').classList.add('d-none');
         btn.textContent = 'Saved ✓';
         setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 1500);
+        showSaveFeedback();
     })
     .catch(e => {
         alert(`Couldn't save your team: ${e.message}`);
         btn.textContent = label; btn.disabled = false;
     });
 });
+
+// ---- Save feedback ---------------------------------------------------------
+// Two forms, deliberately different in weight:
+//
+//   FIRST save of a session -> a centred dialog that stays until it's closed by
+//   hand. It's the one moment the site has visibly done something for you, so
+//   it's the one moment worth interrupting for. Shown once per session and
+//   never again, which is what earns the interruption.
+//
+//   EVERY save after that -> the small bottom toast, with the same Ko-fi link
+//   in it. Someone tinkering with their squad saves half a dozen times in a
+//   sitting; a dialog each time would be intolerable, but a toast they can
+//   ignore is not.
+//
+// Both confirm the save itself, because that part is genuine feedback and the
+// button briefly reading "Saved ✓" is easy to miss on a phone.
+const KOFI_PROMPTED_KEY = 'fpl_kofi_prompted';
+let saveToastTimer = null;
+
+function showSaveFeedback() {
+    let prompted = false;
+    try { prompted = sessionStorage.getItem(KOFI_PROMPTED_KEY) === '1'; } catch (e) {}
+
+    // The dialog only exists when a Ko-fi handle is configured; without one
+    // there's nothing to interrupt for, so every save gets the toast.
+    if (!prompted && document.getElementById('kofiModal')) {
+        try { sessionStorage.setItem(KOFI_PROMPTED_KEY, '1'); } catch (e) {}
+        openKofiModal();
+        return;
+    }
+    showSaveToast();
+}
+
+// ---- Bottom toast ----
+function hideSaveToast() {
+    const t = document.getElementById('saveToast');
+    if (t) t.classList.add('d-none');
+    if (saveToastTimer) { clearTimeout(saveToastTimer); saveToastTimer = null; }
+}
+
+function showSaveToast() {
+    const t = document.getElementById('saveToast');
+    if (!t) return;
+
+    t.classList.remove('d-none');
+    // Restart the animation on a repeat save, otherwise the second toast
+    // appears fully-formed with no movement and reads as a stuck element.
+    t.classList.remove('toast-in');
+    void t.offsetWidth;
+    t.classList.add('toast-in');
+
+    if (saveToastTimer) clearTimeout(saveToastTimer);
+    // Long enough to notice a link, read it and decide to click it.
+    saveToastTimer = setTimeout(hideSaveToast, document.getElementById('toastKofi') ? 7000 : 4000);
+}
+
+// ---- First-save dialog ----
+// Closed by the X or Escape only. Not by clicking the backdrop: that's the
+// dismissal people trigger by accident, and this is meant to be read once.
+let kofiLastFocus = null;
+
+function openKofiModal() {
+    const m = document.getElementById('kofiModal');
+    if (!m) return;
+    kofiLastFocus = document.activeElement;
+    m.classList.remove('d-none');
+    // Stops the page scrolling behind the dialog, which on a phone otherwise
+    // looks like the dialog itself is broken.
+    document.body.classList.add('modal-open');
+    const close = document.getElementById('kofiClose');
+    if (close) close.focus();
+}
+
+function closeKofiModal() {
+    const m = document.getElementById('kofiModal');
+    if (!m || m.classList.contains('d-none')) return;
+    m.classList.add('d-none');
+    document.body.classList.remove('modal-open');
+    // Put focus back where it was, so a keyboard user isn't dumped at the top
+    // of the document.
+    if (kofiLastFocus && kofiLastFocus.focus) kofiLastFocus.focus();
+    kofiLastFocus = null;
+}
+
+(function () {
+    const close = document.getElementById('toastClose');
+    if (close) close.addEventListener('click', hideSaveToast);
+    // Clicking through to Ko-fi opens a new tab; clear the toast behind it so
+    // it isn't still sitting there on return.
+    const kofi = document.getElementById('toastKofi');
+    if (kofi) kofi.addEventListener('click', hideSaveToast);
+
+    const modalClose = document.getElementById('kofiClose');
+    if (modalClose) modalClose.addEventListener('click', closeKofiModal);
+
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        const m = document.getElementById('kofiModal');
+        if (m && !m.classList.contains('d-none')) closeKofiModal();
+    });
+}());
 
 // ---- Recommended transfers ----
 function renderTransfers(recs) {
@@ -1874,9 +2067,17 @@ function aiPlayerCard(p, onBench, gameweek) {
     const badge = p.is_captain ? '<span class="cap-badge">C</span>'
                 : (p.is_vice_captain ? '<span class="cap-badge vice">V</span>' : '');
     const posLabel = onBench ? `<div class="bench-pos">${p.pos || ''}</div>` : '';
+    // Availability only means something for a squad that hasn't played yet, and
+    // it's the more interesting number here than on My Team: it shows whether
+    // the AI knowingly picked someone doubtful. Stored snapshots don't carry a
+    // status, and a finished gameweek has actual points - in either case today's
+    // fitness would say nothing true about a squad that already played.
+    const band = (p.status !== undefined && p.actual_points == null)
+        ? availabilityBandHtml(p) : '';
     return `<div class="player" style="position:relative">
         ${posLabel}${badge}
         <div class="player-kit">${shirtImg(p.team_code, p.pos, 'kit')}</div>
+        ${band}
         <div class="player-name-pill">${p.web_name}</div>
         <div class="player-gws">${aiFixtureBox(p, gameweek)}</div>
     </div>`;
@@ -2061,7 +2262,7 @@ function renderMgrChipPlan(d) {
             const isAvailable = available.includes(key) && !used.includes(key);
             const playing = d.chip === key;
             return `<div class="chip-card ${isAvailable ? 'chip-avail' : 'chip-unavail'}${playing ? ' chip-playing' : ''}" data-i="${key}">
-                <img class="chip-img" src="/static/${key}.png" alt="${CHIP_NAMES[key]}"
+                <img class="chip-img" src="/static/${key}.svg" alt="${CHIP_NAMES[key]}"
                      onerror="this.style.visibility='hidden'">
                 <div class="chip-card-name">${CHIP_NAMES[key]}</div>
                 <div class="chip-status">${playing ? 'Playing' : (isAvailable ? 'Available' : 'Used')}</div>

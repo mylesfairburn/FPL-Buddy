@@ -1,0 +1,136 @@
+{% extends 'pages/_layout.html' %}
+
+{% block head_extra %}
+    {# Person markup. Modest ranking benefit on its own, but it's what lets a
+       search engine understand this page is ABOUT a named footballer rather
+       than a page that happens to mention one. #}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Person",
+      "name": {{ player.full_name | tojson }},
+      "jobTitle": {{ player.pos_name | title | tojson }},
+      "url": "{{ site_url }}{{ player.path }}"
+      {%- if player.team_name %},
+      "memberOf": {"@type": "SportsTeam", "name": {{ player.team_name | tojson }}}
+      {%- endif %}
+    }
+    </script>
+{% endblock %}
+
+{% block content %}
+            <nav class="crumbs" aria-label="Breadcrumb">
+                <a href="/players">Players</a> &rsaquo;
+                <a href="/players/a-z">A&ndash;Z</a> &rsaquo;
+                <span>{{ player.full_name }}</span>
+            </nav>
+
+            <h1 class="page-title">{{ player.full_name }}</h1>
+            <p class="player-sub">
+                {{ player.team_name }} &middot; {{ player.pos_name | title }}
+                {%- if player.cost %} &middot; &pound;{{ player.cost }}m{% endif %}
+                {%- if player.web_name and player.web_name != player.full_name %}
+                    &middot; known as {{ player.web_name }}{% endif %}
+            </p>
+
+            {# The headline numbers, before the prose - someone who came here for
+               "what does he cost" should not have to read a paragraph. #}
+            <div class="player-keys">
+                {% if player.rating is not none %}
+                <div class="player-key"><span class="pk-val">{{ player.rating | round(0) | int }}</span><span class="pk-lab">Rating /100</span></div>
+                {% endif %}
+                {% if player.cost %}
+                <div class="player-key"><span class="pk-val">&pound;{{ player.cost }}m</span><span class="pk-lab">Price</span></div>
+                {% endif %}
+                {% if player.stats.selected_by_percent is defined %}
+                <div class="player-key"><span class="pk-val">{{ player.stats.selected_by_percent }}%</span><span class="pk-lab">Owned</span></div>
+                {% endif %}
+                {% if horizon is not none %}
+                <div class="player-key"><span class="pk-val">{{ horizon }}</span><span class="pk-lab">Projected, next {{ player.next_gameweeks[:8] | length }} GWs</span></div>
+                {% endif %}
+            </div>
+
+            {% for para in paragraphs %}
+            <p>{{ para }}</p>
+            {% endfor %}
+
+            {% if player.next_gameweeks %}
+            <h2>Predicted points, next {{ player.next_gameweeks[:8] | length }} gameweeks</h2>
+            <div class="table-scroll">
+                <table class="stat-table">
+                    <thead><tr><th>GW</th><th>Opponent</th><th class="num">Predicted</th></tr></thead>
+                    <tbody>
+                    {% for g in player.next_gameweeks[:8] %}
+                        <tr>
+                            <td>{{ g.event if g.event else '—' }}</td>
+                            <td>{{ fixture_label(g) }}</td>
+                            <td class="num">{{ g.points if g.points is not none else '—' }}</td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {# Labelled with the season the numbers are actually FROM. In
+               preseason that's last season, because that's what FPL's bootstrap
+               still holds until the first deadline. #}
+            <h2>{{ stats_season }} season totals</h2>
+            {% if not season_started %}
+            <p class="text-muted small">
+                The {{ season_label }} season hasn't started, so these are
+                {{ stats_season }} figures.
+            </p>
+            {% endif %}
+            {% set s = player.stats %}
+            {% if s.minutes %}
+            <div class="table-scroll">
+                <table class="stat-table">
+                    <tbody>
+                        <tr><th>Points</th><td class="num">{{ s.total_points | int }}</td>
+                            <th>Points per game</th><td class="num">{{ s.points_per_game }}</td></tr>
+                        <tr><th>Minutes</th><td class="num">{{ s.minutes | int }}</td>
+                            <th>Starts</th><td class="num">{{ s.starts | int if s.starts is defined else '—' }}</td></tr>
+                        <tr><th>Goals</th><td class="num">{{ s.goals_scored | int if s.goals_scored is defined else 0 }}</td>
+                            <th>Assists</th><td class="num">{{ s.assists | int if s.assists is defined else 0 }}</td></tr>
+                        <tr><th>Clean sheets</th><td class="num">{{ s.clean_sheets | int if s.clean_sheets is defined else 0 }}</td>
+                            <th>Bonus</th><td class="num">{{ s.bonus | int if s.bonus is defined else 0 }}</td></tr>
+                        <tr><th>Expected goals</th><td class="num">{{ s.expected_goals if s.expected_goals is defined else '—' }}</td>
+                            <th>Expected assists</th><td class="num">{{ s.expected_assists if s.expected_assists is defined else '—' }}</td></tr>
+                        <tr><th>Yellow cards</th><td class="num">{{ s.yellow_cards | int if s.yellow_cards is defined else 0 }}</td>
+                            <th>Red cards</th><td class="num">{{ s.red_cards | int if s.red_cards is defined else 0 }}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted">
+                No {{ stats_season }} minutes played.
+                {% if player.prev_season and player.prev_season.minutes %}
+                Last season: {{ player.prev_season.minutes | int }} minutes,
+                {{ player.prev_season.goals_scored | int }} goals from
+                {{ player.prev_season.expected_goals | round(2) }} expected goals.
+                {% endif %}
+            </p>
+            {% endif %}
+
+            <h2>How this page is put together</h2>
+            <p>
+                Price, ownership, minutes and the raw season totals come straight from the
+                public Fantasy Premier League API. The rating and the predicted points are
+                this site's own: a regression model trained per position on per-gameweek
+                history, then run once per upcoming fixture so home advantage and opponent
+                strength are priced in. There's a fuller account on the
+                <a href="/about">about page</a>.
+            </p>
+            <p class="text-muted small">
+                Numbers update when the site refreshes its data, normally overnight and after
+                each gameweek. Predicted points are a model output, not a promise &mdash; use
+                them as one input among several.
+            </p>
+
+            <p class="player-more">
+                <a href="/players">All player ratings</a> &middot;
+                <a href="/players/a-z">Every player A&ndash;Z</a> &middot;
+                <a href="/fixture-rotator">Fixture rotation planner</a>
+            </p>
+{% endblock %}

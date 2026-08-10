@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Wildcard">
+  <title>Wildcard</title>
+  <rect width="64" height="64" rx="14" fill="#5F3DC4"/>
+  <!-- A playing card, tilted so the silhouette isn't a plain rectangle at
+       small sizes. The star stays upright so it reads at 34px. -->
+  <rect x="20" y="13" width="24" height="38" rx="4" fill="#ffffff"
+        transform="rotate(-11 32 32)"/>
+  <path d="M32 23 L34.23 28.93 L40.56 29.22 L35.61 33.17 L37.29 39.28
+           L32 35.8 L26.71 39.28 L28.39 33.17 L23.44 29.22 L29.77 28.93 Z"
+        fill="#5F3DC4"/>
+</svg>

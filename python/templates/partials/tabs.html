@@ -1,6 +1,20 @@
+        {# Real anchors, not buttons. Each tab is a genuine URL now, and a
+           crawler can only find a page it can follow a link to - a <button>
+           with a click handler is invisible to it. app.js intercepts the click
+           so switching tabs stays instant and no page is reloaded; middle-click,
+           ctrl-click and "open in new tab" all still do the right thing because
+           the href is really there.
+
+           The active tab is marked server-side as well as by app.js. Leaving it
+           to the script alone means the page paints with no tab highlighted and
+           snaps into place a moment later.
+
+           `tabs` comes from main.py, which owns the routing table - the labels
+           and hrefs aren't repeated here so they can't drift out of step with
+           the routes that serve them. #}
         <ul class="nav nav-tabs mb-4" id="mainTabs">
-            <li class="nav-item"><button class="nav-link active" data-pane="pane-team">My Team</button></li>
-            <li class="nav-item"><button class="nav-link" data-pane="pane-ai-teams">AI Teams</button></li>
-            <li class="nav-item"><button class="nav-link" data-pane="pane-players">Players</button></li>
-            <li class="nav-item"><button class="nav-link" data-pane="pane-rotator">Fixture Rotator</button></li>
+{% for t in tabs %}
+            <li class="nav-item"><a class="nav-link{{ ' active' if initial_pane == t.pane }}"
+                href="{{ t.path }}" data-pane="{{ t.pane }}" data-title="{{ t.title }}">{{ t.label }}</a></li>
+{% endfor %}
         </ul>

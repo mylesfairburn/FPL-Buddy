@@ -1,0 +1,38 @@
+{% if kofi_url %}
+    {# Shown on the FIRST save of a session only, and only closable by hand -
+       no auto-dismiss and no click-outside-to-close, because the whole point of
+       showing it once is that it gets read once. Every later save in the same
+       session gets the small bottom toast instead (partials/save_toast.html),
+       which carries the same link without stopping anyone.
+
+       aria-modal + labelledby so a screen reader treats it as a dialog rather
+       than reading it as part of the page behind it. #}
+    <div id="kofiModal" class="kofi-modal d-none" role="dialog" aria-modal="true"
+         aria-labelledby="kofiModalTitle">
+        <div class="kofi-backdrop"></div>
+        <div class="kofi-card">
+            <button class="kofi-close" id="kofiClose" aria-label="Close">&times;</button>
+
+            <div class="kofi-cup">
+{% include 'partials/icon_coffee.html' %}
+            </div>
+
+            <h2 class="kofi-title" id="kofiModalTitle">Team saved</h2>
+            <p class="kofi-lead">
+                Your squad is stored against your FPL ID, so it'll load on any device
+                you use.
+            </p>
+            <p class="kofi-body">
+                FPL Buddy is free, has no ads and doesn't ask you to make an account.
+                It's built and run by one person on a home server. If it's useful to
+                you, a coffee genuinely helps keep it going.
+            </p>
+
+            <a class="kofi-cta" id="kofiCta" href="{{ kofi_url }}"
+               target="_blank" rel="noopener noreferrer">
+{% include 'partials/icon_coffee.html' %}Support on Ko-fi</a>
+
+            <p class="kofi-foot">You'll only see this once.</p>
+        </div>
+    </div>
+{% endif %}

@@ -1,0 +1,168 @@
+{% extends 'pages/_layout.html' %}
+
+{% block head_extra %}
+    {# Runs before anything paints, so a returning visitor never sees this page
+       flicker up before the app loads.
+
+       Once per session, not every time: without the flag the site logo would be
+       unusable for anyone with an ID saved - clicking "home" would bounce them
+       straight back to the tab they just left. Googlebot has no localStorage, so
+       a crawler always gets the page itself. #}
+    <script>
+        (function () {
+            // The tabs used to be '#pane-players' and friends on this URL. A
+            // fragment never reaches the server, so an old bookmark can only be
+            // rescued here, in the browser that still has it.
+            var legacy = {
+                '#pane-team': '/my-team', '#pane-ai-teams': '/ai-teams',
+                '#pane-players': '/players', '#pane-rotator': '/fixture-rotator'
+            };
+            if (legacy[location.hash]) { location.replace(legacy[location.hash]); return; }
+
+            var id = null, seen = null;
+            try { id = localStorage.getItem('fpl_team_id'); } catch (e) {}
+            try { seen = sessionStorage.getItem('fpl_seen_home'); } catch (e) {}
+            try { sessionStorage.setItem('fpl_seen_home', '1'); } catch (e) {}
+            // replace(), not assign(): a redirect shouldn't leave an entry in
+            // history that Back would land on and immediately redirect again.
+            if (id && !seen) location.replace('/my-team');
+        }());
+    </script>
+{% endblock %}
+
+{% block content %}
+            <h1 class="page-title">Fantasy Premier League, worked out for you</h1>
+            <p class="page-lede">
+                FPL Buddy rates every player in the game with a trained points model, picks two
+                AI squads a week, plans your fixture rotations and analyses the team you
+                already have. It's free, there's no account, and there's nothing to install.
+            </p>
+
+            <!-- ============ FPL ID ENTRY ============ -->
+            <div class="id-prompt home-id-prompt">
+                <h2 class="home-id-title">Connect your FPL team</h2>
+                <p class="text-muted small mb-3">
+                    Enter your FPL ID to load your squad. We'll remember it on this device.
+                </p>
+                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-center">
+                    {# type="text" rather than "number": an FPL ID is an
+                       identifier, not a quantity, so the spinner arrows offer to
+                       increment it to a different manager's team. (They also
+                       mean a stray scroll over the focused field silently
+                       changes the value.) inputmode still brings up the numeric
+                       keypad on a phone, and the script validates the digits. #}
+                    <input type="text" id="homeIdInput" class="form-control"
+                           style="max-width:220px" placeholder="e.g. 1234567"
+                           inputmode="numeric" pattern="[0-9]*" autocomplete="off"
+                           aria-label="Your FPL ID">
+                    <button id="homeIdSave" class="btn btn-primary">Load my team</button>
+                </div>
+                <div id="homeIdError" class="text-danger small mt-2"></div>
+                <p class="home-id-skip">
+                    Haven't got one to hand? <a href="/players">Browse the player ratings</a>
+                    instead &mdash; no ID needed.
+                </p>
+            </div>
+
+            <h2 id="find-your-fpl-id">How to find your FPL ID</h2>
+            <p>
+                Your FPL ID is the number Fantasy Premier League uses for your team. To find it:
+            </p>
+            <ol>
+                <li>Log in at <a href="https://fantasy.premierleague.com/" target="_blank" rel="noopener noreferrer">fantasy.premierleague.com</a>.</li>
+                <li>Select <strong>Pick Team</strong>, then <strong>Gameweek History</strong>.</li>
+                <li>Look at the address bar. It reads <code>fantasy.premierleague.com/entry/1234567/history</code> &mdash;
+                    the number in the middle is your FPL ID.</li>
+            </ol>
+            <p class="text-muted small">
+                It's a public identifier, not a password. FPL Buddy never asks for your
+                Fantasy Premier League login and can't change your real team &mdash; everything
+                here is a preview you apply yourself in the official app.
+            </p>
+
+            <!-- ============ THE FOUR TOOLS ============ -->
+            <h2>What's inside</h2>
+
+            <h3><a href="/my-team">My Team</a></h3>
+            <p>
+                Your actual squad, with a predicted score for every player in it. It flags the
+                starting XI you should be playing, suggests transfers worth making, tells you
+                when a chip is worth burning, and follows the score live once the gameweek
+                kicks off. Injuries and suspensions show as a percentage chance of playing
+                rather than a vague warning triangle.
+            </p>
+
+            <h3><a href="/ai-teams">AI Teams</a></h3>
+            <p>
+                Two different questions, two different squads. The <strong>AI Manager</strong> plays
+                the season properly &mdash; one team, real transfer limits, a budget it has to live
+                within and chips it has to decide when to spend &mdash; and its score is recorded
+                every gameweek so you can see how it's actually doing. The <strong>Best XV</strong>
+                ignores all that and answers a simpler question: what is the highest-scoring
+                legal squad for the coming gameweek? Both are frozen at the deadline, so what
+                you see afterwards is what was really predicted, not a pick made with hindsight.
+            </p>
+
+            <h3><a href="/players">Players</a></h3>
+            <p>
+                Every player in the game, rated and sorted. Predicted points for the next
+                gameweeks, price, form, ownership and the underlying numbers &mdash; including a
+                table of players whose returns are lagging their expected goals and assists,
+                which is usually where the next price rise comes from.
+            </p>
+
+            <h3><a href="/fixture-rotator">Fixture Rotator</a></h3>
+            <p>
+                Two clubs whose fixtures alternate, so whichever one you start has the easier
+                game. The planner ranks defensive and attacking pairs over the next eight
+                gameweeks, skips the obvious premium clubs you'd never rotate anyway, and
+                suggests the specific cheap players to do it with.
+            </p>
+
+            <h2>Where the numbers come from</h2>
+            <p>
+                Player data and fixtures come from the public Fantasy Premier League API, and
+                team strength from <a href="http://clubelo.com/API" target="_blank" rel="noopener noreferrer">ClubElo</a>.
+                The ratings are produced by a regression model trained separately for each
+                position on per-gameweek history, then adjusted for who each player is about to
+                face. There's a fuller explanation of the method, and what it can't do, on the
+                <a href="/about">about page</a>.
+            </p>
+            <p class="text-muted small">
+                An unofficial fan project. Not affiliated with, endorsed by, or connected to
+                the Premier League.
+            </p>
+{% endblock %}
+
+{% block scripts %}
+    <script>
+        // Deliberately not app.js: that file wires up the pitch, the tab panes
+        // and the team loader, none of which exist here. This page needs one
+        // thing - take an ID and hand off to /my-team, which does the rest.
+        (function () {
+            var input = document.getElementById('homeIdInput');
+            var save = document.getElementById('homeIdSave');
+            var err = document.getElementById('homeIdError');
+            if (!input || !save) return;
+
+            try { input.value = localStorage.getItem('fpl_team_id') || ''; } catch (e) {}
+
+            function go() {
+                var val = (input.value || '').trim();
+                if (!/^\d+$/.test(val)) {
+                    err.textContent = 'Enter a numeric FPL ID.';
+                    input.focus();
+                    return;
+                }
+                err.textContent = '';
+                try { localStorage.setItem('fpl_team_id', val); } catch (e) {}
+                location.href = '/my-team';
+            }
+
+            save.addEventListener('click', go);
+            input.addEventListener('keydown', function (e) {
+                if (e.key === 'Enter') { e.preventDefault(); go(); }
+            });
+        }());
+    </script>
+{% endblock %}

@@ -1,8 +1,11 @@
     <nav class="navbar navbar-dark mb-4">
         <div class="container d-flex justify-content-between align-items-center">
-            <span class="navbar-brand mb-0 h1 brand">
+            {# The brand is the way home. It's the only route back to the tool
+               from /about, /privacy and /contact, where the tab bar isn't
+               rendered - and it's where people instinctively click anyway. #}
+            <a class="navbar-brand mb-0 h1 brand" href="/" aria-label="FPL Buddy — home">
                 <img class="brand-icon" src="/static/icon_64.png" alt="" onerror="this.style.display='none'">FPL Buddy
-            </span>
+            </a>
             <button id="changeId" class="btn btn-sm d-none">Change ID</button>
         </div>
     </nav>

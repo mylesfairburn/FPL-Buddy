@@ -6,10 +6,14 @@ Run locally with:
 """
 
 import os
+import re
+from datetime import datetime, timedelta, timezone
+from xml.sax.saxutils import escape as xml_escape
 
 import pandas as pd
 from fastapi import Body, FastAPI, Header, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
@@ -19,6 +23,7 @@ import db
 import drafts
 import gameweek as gw_clock
 import manager_history
+import player_pages
 import seasons
 from pipeline import run_pipeline
 from rating_model import get_rated_position_dfs
@@ -26,7 +31,8 @@ from fixture_rotator import (get_rotation_data, rank_rotation_pairs, recommend_p
 from search import search_player
 from squad_optimiser import DEFAULT_BUDGET, OptimisationError
 from team_service import (get_team_view, get_league_standings, get_all_players, get_player_summary,
-                          get_news_feed, get_underperforming_players)
+                          get_news_feed, get_underperforming_players, team_name_map,
+                          _team_short_map as get_team_short_map)
 from gameweek import detect_mode
 
 # Set this in production. Once /api/refresh drives DB writes and a minute of
@@ -34,10 +40,189 @@ from gameweek import detect_mode
 # unset (local dev) it stays open so nothing breaks for a local run.
 REFRESH_TOKEN = os.environ.get("FPL_REFRESH_TOKEN", "")
 
+# Absolute origin, needed for canonical URLs, Open Graph tags and the sitemap -
+# all of which have to be absolute to work at all. Overridable so a staging
+# host doesn't advertise the production URL to crawlers.
+SITE_URL = os.environ.get("FPL_SITE_URL", "https://fpl.mfhost.co.uk").rstrip("/")
+SITE_NAME = "FPL Buddy"
+
+# Role addresses rather than personal ones, so they can be reassigned without
+# rewriting the site. Kept server-side and rendered obfuscated - see the note in
+# the contact template about scrapers.
+# Ko-fi. Set FPL_KOFI_HANDLE to the name in your Ko-fi URL - if your page is
+# ko-fi.com/mylesf, the handle is "mylesf". Left unset the button simply isn't
+# rendered, which is deliberate: a hard-coded guess would send anyone who
+# clicked it to a stranger's donation page.
+KOFI_HANDLE = os.environ.get("FPL_KOFI_HANDLE", "mylesfairburn").strip().strip("/")
+KOFI_URL = f"https://ko-fi.com/{KOFI_HANDLE}" if KOFI_HANDLE else ""
+
+EMAILS = {
+    "general": "hello@fpl.mfhost.co.uk",
+    "contact": "contact@fpl.mfhost.co.uk",
+    "security": "security@fpl.mfhost.co.uk",
+    "abuse": "abuse@fpl.mfhost.co.uk",
+}
+
+# The four tabs used to be fragments of one document (#pane-players and so on).
+# A fragment is discarded before a request is ever made, so to a crawler they
+# were all the same URL - four different tools competing to rank as one page,
+# and that page's server-rendered HTML is barely forty words. Each pane now has
+# a real path that renders the same shell with that tab already open.
+#
+# This is the one definition of the tab bar: the routes below, the links the
+# template renders and the pane app.js opens all come from here, so a fifth tab
+# is one entry rather than four edits in three files.
+TABS = [
+    {"path": "/my-team", "pane": "pane-team", "label": "My Team"},
+    {"path": "/ai-teams", "pane": "pane-ai-teams", "label": "AI Teams"},
+    {"path": "/players", "pane": "pane-players", "label": "Players"},
+    {"path": "/fixture-rotator", "pane": "pane-rotator", "label": "Fixture Rotator"},
+]
+TAB_PANES = {t["path"]: t["pane"] for t in TABS}
+
+# Per-route metadata. Every indexable page needs its own title and description:
+# without them Google writes the snippet itself, usually by grabbing whatever
+# text it finds first. `priority`/`changefreq` feed the sitemap; both default
+# below, so a route only states them when it differs.
+PAGES = {
+    "/": {
+        "title": "FPL Buddy — Fantasy Premier League ratings, AI teams and fixture rotation",
+        "description": ("Free Fantasy Premier League tools: player ratings from a trained "
+                        "points model, two AI-picked squads each gameweek, a fixture "
+                        "rotation planner and your own team analysed. Enter your FPL ID "
+                        "to get started."),
+        "priority": "1.0",
+        "changefreq": "weekly",
+    },
+    "/my-team": {
+        "title": "My FPL team — squad, lineup and transfer analysis | FPL Buddy",
+        "description": ("Load your Fantasy Premier League squad from your FPL ID: predicted "
+                        "points for every player, an optimised starting XI, transfer "
+                        "suggestions, chip advice and live gameweek scoring."),
+        "priority": "0.9",
+        "changefreq": "daily",
+    },
+    "/ai-teams": {
+        "title": "AI Fantasy Premier League teams — AI Manager and best XV | FPL Buddy",
+        "description": ("Two AI-picked Fantasy Premier League squads: a manager bot that "
+                        "plays every gameweek with real transfers and chips, and the "
+                        "highest-scoring XV for the upcoming gameweek."),
+        "priority": "0.9",
+        "changefreq": "daily",
+    },
+    "/players": {
+        "title": "FPL player ratings and predicted points | FPL Buddy",
+        "description": ("Every Fantasy Premier League player rated by a trained points model, "
+                        "with predicted points for the next gameweeks, price, form, ownership "
+                        "and the players underperforming their underlying numbers."),
+        "priority": "0.9",
+        "changefreq": "daily",
+    },
+    "/fixture-rotator": {
+        "title": "FPL fixture rotation planner — best team pairs | FPL Buddy",
+        "description": ("Find Fantasy Premier League defence and attack rotation pairs: two "
+                        "clubs whose fixtures alternate so one of them always has a good "
+                        "game, ranked over the next eight gameweeks."),
+        "priority": "0.9",
+        "changefreq": "daily",
+    },
+    "/players/a-z": {
+        "title": "Every Fantasy Premier League player A-Z | FPL Buddy",
+        "description": ("A complete list of every player in Fantasy Premier League, "
+                        "grouped by surname, each linking to their price, ownership, "
+                        "form, underlying numbers and predicted points."),
+        "priority": "0.8",
+        "changefreq": "weekly",
+    },
+    "/about": {
+        "title": "About FPL Buddy — how the ratings and AI squads work",
+        "description": ("How FPL Buddy rates players, how the two AI squads are picked, "
+                        "and what the numbers on the site actually mean."),
+    },
+    "/privacy": {
+        "title": "Privacy policy — FPL Buddy",
+        "description": ("What FPL Buddy stores, why, how long for, and how to have it "
+                        "deleted."),
+    },
+    "/contact": {
+        "title": "Contact FPL Buddy",
+        "description": "How to report a bug, ask a question, or raise a rights or security issue.",
+    },
+}
+
 app = FastAPI()
+
+# app.js is ~107 KB and style.css another ~60 KB uncompressed, and the JSON from
+# /api/all_players is larger than both. Gzip takes roughly 70-80% off all three.
+# minimum_size skips the small responses, where the compression work and the
+# lost chance of a byte-range request cost more than the saved bytes.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 templates = Jinja2Templates(directory="templates")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Read-only endpoints derived from the in-memory rated pool. That pool only
+# changes when load_data() runs - the nightly job, or a manual /api/refresh - so
+# a browser or CDN reusing a response for a few minutes can't show anything the
+# server wouldn't have said anyway. It's `public` because none of it is
+# per-user: the same bytes go to everyone, which is what lets the Cloudflare
+# edge answer instead of this process.
+API_CACHE = "public, max-age=300"
+
+
+class CachedStatic(StaticFiles):
+    """Static files with an explicit, bounded cache lifetime.
+
+    Without a Cache-Control header the browser applies its own heuristics, and
+    mobile Safari in particular will hold a stylesheet well past a deploy - even
+    through a manual cache clear, because the cached HTML keeps asking for the
+    same URL. A day is short enough that an unversioned asset (an icon, a chip
+    image) can't go stale for long, and style.css/app.js don't rely on it: their
+    URLs carry a version token that changes the moment the file does.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=86400"
+        return response
+
+
+app.mount("/static", CachedStatic(directory="static"), name="static")
 templates.env.cache = None  # workaround for a Jinja2/Starlette/Python 3.14 bug
+
+
+def obf_mail(address):
+    """Render an address as "user (at) domain" with the parts in data
+    attributes.
+
+    A bare mailto: in the HTML is harvested by scrapers within days. The layout
+    script reassembles this into a real link on load, so a human sees a normal
+    clickable address and a crawler reading the raw markup does not."""
+    from markupsafe import Markup, escape
+    user, _, domain = str(address).partition("@")
+    return Markup(
+        f'<a class="obf-mail" href="#" data-u="{escape(user)}" data-d="{escape(domain)}">'
+        f'{escape(user)} <span aria-hidden="true">(at)</span> {escape(domain)}</a>')
+
+
+templates.env.globals["obf_mail"] = obf_mail
+
+
+def asset_version():
+    """Short token that changes whenever the CSS or JS changes on disk.
+
+    Appended to those URLs so a deploy produces a URL the browser has never
+    seen, which is the only reliable way to retire a cached copy - "clear cache"
+    on a phone is not something you can ask a user to do, and it doesn't always
+    work anyway."""
+    import hashlib
+    h = hashlib.sha1()
+    for name in ("static/style.css", "static/app.js", "static/kits.js"):
+        try:
+            st = os.stat(name)
+            h.update(f"{name}:{st.st_mtime_ns}:{st.st_size}".encode())
+        except OSError:
+            h.update(name.encode())
+    return h.hexdigest()[:10]
 
 state = {"mode": "preseason", "position_dfs": None, "rotation_df": None}
 
@@ -90,6 +275,29 @@ _preview_cache = {"best_xv": {}, "manager": {}}
 def clear_preview_cache():
     _preview_cache["best_xv"].clear()
     _preview_cache["manager"].clear()
+    _player_pages["index"] = None
+
+
+# Several hundred page records, each walking every rated DataFrame row. Building
+# that per request would be absurd when the answer only changes when the ratings
+# do, so it's built once per data load and thrown away by clear_preview_cache().
+_player_pages = {"index": None}
+
+
+def player_page_index():
+    """code -> page record for every player in the pool."""
+    if _player_pages["index"] is None:
+        pages = player_pages.build_index(state["position_dfs"])
+        try:
+            pages = player_pages.attach_team_names(
+                pages, team_name_map(), get_team_short_map())
+        except Exception as e:
+            # A club-name lookup failing shouldn't cost us the pages; the
+            # records carry a neutral fallback.
+            print(f"couldn't attach club names to player pages: {e}")
+            pages = player_pages.attach_team_names(pages, {}, {})
+        _player_pages["index"] = pages
+    return _player_pages["index"]
 
 
 def cached_best_xv(gameweek, budget=DEFAULT_BUDGET):
@@ -126,9 +334,245 @@ def startup():
         print(f"WARNING: couldn't initialise SQLite ({e}); AI tabs will be unavailable.")
     load_data()
 
+def page_context(request, path, meta=None, **extra):
+    """Shared template context: metadata for `path` plus site-wide values.
+
+    `meta` overrides the PAGES lookup, for routes whose title and description
+    are per-record rather than per-route - the player pages, where there are
+    several hundred of them and each one describes a different footballer."""
+    meta = meta or PAGES.get(path, PAGES["/"])
+    return {
+        "request": request,
+        "asset_version": asset_version(),
+        "site_url": SITE_URL,
+        "site_name": SITE_NAME,
+        "emails": EMAILS,
+        "kofi_url": KOFI_URL,
+        "page_title": meta["title"],
+        "page_description": meta["description"],
+        "canonical": SITE_URL + path,
+        "today": datetime.now(timezone.utc).strftime("%-d %B %Y")
+                 if os.name != "nt" else datetime.now(timezone.utc).strftime("%d %B %Y").lstrip("0"),
+        **extra,
+    }
+
+
+def html_response(template, request, path, meta=None, **extra):
+    response = templates.TemplateResponse(template, page_context(request, path, meta=meta, **extra))
+    # The document must never be cached: it's what carries the versioned asset
+    # URLs, so a stale copy pins the browser to stale CSS and JS no matter what
+    # the assets themselves say.
+    response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request, "mode": state["mode"]})
+    """Landing page: the FPL ID prompt, plus what the four tools actually do.
+
+    This used to be the app shell with the My Team tab open, which meant the
+    site's highest-authority URL served almost no text - everything a reader
+    (or a crawler) sees there is drawn by JavaScript after the fact. The app now
+    lives at /my-team and this page explains it.
+
+    Anyone who has already entered an ID is sent straight to /my-team by a
+    script in the template, so this is a first-visit page in practice."""
+    return html_response("pages/home.html", request, "/")
+
+
+# One shell, four URLs. `initial_pane` is the only thing that differs: the
+# template hands it to app.js, which opens that tab before first paint rather
+# than flashing My Team and then switching.
+
+def tab_response(request, path):
+    """Render the app shell with the tab for `path` already open.
+
+    `tabs` carries each tab's title as well as its label, so app.js can set
+    document.title when you switch tabs without a page load - otherwise the
+    browser tab, and anything bookmarked from it, keeps the name of whichever
+    page you happened to arrive on."""
+    tabs = [dict(t, title=PAGES[t["path"]]["title"]) for t in TABS]
+    return html_response("index.html", request, path, mode=state["mode"],
+                         initial_pane=TAB_PANES[path], tabs=tabs)
+
+
+@app.get("/my-team", response_class=HTMLResponse)
+def my_team(request: Request):
+    return tab_response(request, "/my-team")
+
+
+@app.get("/ai-teams", response_class=HTMLResponse)
+def ai_teams(request: Request):
+    return tab_response(request, "/ai-teams")
+
+
+@app.get("/players", response_class=HTMLResponse)
+def players_page(request: Request):
+    return tab_response(request, "/players")
+
+
+@app.get("/fixture-rotator", response_class=HTMLResponse)
+def fixture_rotator_page(request: Request):
+    return tab_response(request, "/fixture-rotator")
+
+
+# =========================================================================
+#  Per-player pages
+# =========================================================================
+# One page per player in the pool. See player_pages.py for why the URL is keyed
+# on the season-stable `code` and not `id`.
+
+def _season_label():
+    try:
+        return seasons.current_season()
+    except Exception:
+        return ""
+
+
+def _stats_provenance():
+    """Which season the raw totals in the bootstrap actually describe.
+
+    Before the first deadline of a new season, FPL's bootstrap still carries
+    LAST season's totals. Printing those under a "2026-27 season totals" heading
+    would be wrong on every player at once, for the whole of the summer - which
+    is exactly when a new site is trying to get itself indexed. So the pages ask
+    the season clock first and label the numbers accordingly."""
+    current = _season_label()
+    try:
+        started = bool(gw_clock.started_gameweeks())
+    except Exception:
+        # Can't tell: keep the current-season label rather than asserting the
+        # data is a year old. Being vague beats being confidently wrong.
+        return current, True
+    if started:
+        return current, True
+    try:
+        return (seasons.previous_season() or "last season"), False
+    except Exception:
+        return "last season", False
+
+
+@app.get("/players/a-z", response_class=HTMLResponse)
+def players_index(request: Request):
+    """Every player, grouped by surname initial.
+
+    The sitemap gets the player pages crawled; this is what makes them part of
+    the site rather than several hundred orphans reachable only from an XML
+    file. It's also the page that a search for "fpl player list" wants."""
+    pages = player_page_index()
+    return html_response("pages/players_az.html", request, "/players/a-z",
+                         groups=player_pages.a_to_z(pages), total=len(pages),
+                         season_label=_season_label())
+
+
+@app.get("/player/{slug}", response_class=HTMLResponse)
+def player_profile(request: Request, slug: str):
+    """One player's page.
+
+    The trailing number in the slug is the identifier; the words in front of it
+    are for readers and for the keywords they put in the URL. A request whose
+    words don't match - an old spelling, a truncated share, a guess - is
+    redirected to the canonical form rather than served, so the same page can't
+    accumulate rankings under several addresses."""
+    m = re.search(r"(\d+)$", slug)
+    if not m:
+        raise HTTPException(status_code=404, detail="No such player.")
+    rec = player_page_index().get(int(m.group(1)))
+    if rec is None:
+        raise HTTPException(status_code=404, detail="No such player.")
+    if slug != rec["slug"]:
+        return RedirectResponse(rec["path"], status_code=301)
+
+    season = _season_label()
+    stats_season, started = _stats_provenance()
+    return html_response(
+        "pages/player.html", request, rec["path"],
+        meta=player_pages.meta_for(rec, season, stats_season, started),
+        player=rec, season_label=season,
+        stats_season=stats_season, season_started=started,
+        paragraphs=player_pages.describe(rec, season, stats_season, started),
+        horizon=player_pages.horizon_points(rec),
+        fixture_label=player_pages.fixture_label)
+
+
+# The content pages exist for three separate reasons, all of which happen to
+# want the same thing: AdSense treats About/Privacy/Contact as non-negotiable,
+# UK GDPR requires a published privacy notice and a contact point for a site
+# storing personal data, and they're the only prose on an otherwise
+# entirely numeric site - which is what a search engine has to rank.
+
+@app.get("/about", response_class=HTMLResponse)
+def about(request: Request):
+    return html_response("pages/about.html", request, "/about")
+
+
+@app.get("/privacy", response_class=HTMLResponse)
+def privacy(request: Request):
+    return html_response("pages/privacy.html", request, "/privacy",
+                         retention_months=db.RETENTION_MONTHS)
+
+
+@app.get("/contact", response_class=HTMLResponse)
+def contact(request: Request):
+    return html_response("pages/contact.html", request, "/contact")
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+def robots():
+    """Point crawlers at the sitemap and keep them out of the JSON API.
+
+    The /api/* routes return data with no prose, so indexing them wastes crawl
+    budget on pages that can never rank and puts machine-readable endpoints in
+    search results."""
+    return PlainTextResponse(
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "\n"
+        f"Sitemap: {SITE_URL}/sitemap.xml\n",
+        headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/sitemap.xml")
+def sitemap():
+    """Every indexable URL: the landing page, the four tool pages and the prose
+    pages.
+
+    `lastmod` is today for the tool pages because their content genuinely does
+    change every day - ratings, predictions and the AI squads all move. The
+    prose pages are marked monthly and given a lower priority so crawl budget
+    goes to the pages worth recrawling."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    urls = "".join(
+        f"<url><loc>{SITE_URL}{path}</loc><lastmod>{today}</lastmod>"
+        f"<changefreq>{meta.get('changefreq', 'monthly')}</changefreq>"
+        f"<priority>{meta.get('priority', '0.5')}</priority></url>"
+        for path, meta in PAGES.items())
+    # Plus one entry per player. Several hundred URLs, well inside the 50,000
+    # limit for a single sitemap, so this doesn't need splitting into an index.
+    # `xml_escape` because a name can legitimately contain an ampersand.
+    urls += "".join(
+        f"<url><loc>{SITE_URL}{xml_escape(rec['path'])}</loc><lastmod>{today}</lastmod>"
+        f"<changefreq>weekly</changefreq><priority>0.6</priority></url>"
+        for rec in player_page_index().values())
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>'
+           '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+           f"{urls}</urlset>")
+    return Response(content=xml, media_type="application/xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/.well-known/security.txt", response_class=PlainTextResponse)
+def security_txt():
+    """RFC 9116. Gives anyone who finds a vulnerability somewhere to send it
+    other than a public issue tracker or your personal inbox."""
+    expires = (datetime.now(timezone.utc) + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return PlainTextResponse(
+        f"Contact: mailto:{EMAILS['security']}\n"
+        f"Expires: {expires}\n"
+        "Preferred-Languages: en\n"
+        f"Canonical: {SITE_URL}/.well-known/security.txt\n",
+        headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/search")
@@ -142,7 +586,8 @@ def search(q: str):
 
 
 @app.get("/api/ratings")
-def ratings(position: str = "All", top_n: int = 20):
+def ratings(response: Response, position: str = "All", top_n: int = 20):
+    response.headers["Cache-Control"] = API_CACHE
     position_dfs = state["position_dfs"]
     if position_dfs is None:
         return {"results": []}
@@ -163,7 +608,9 @@ def ratings(position: str = "All", top_n: int = 20):
 
 
 @app.get("/api/rotation")
-def rotation(category: str = "defender", n_gameweeks: int = 8, exclude_top_n: int = 4):
+def rotation(response: Response, category: str = "defender", n_gameweeks: int = 8,
+             exclude_top_n: int = 4):
+    response.headers["Cache-Control"] = API_CACHE
     rotation_df = state["rotation_df"]
     if rotation_df is None:
         return {"gameweeks": [], "teams": [], "pairs": []}
@@ -263,15 +710,28 @@ def league(league_id: int, page: int = 1):
 
 
 @app.get("/api/all_players")
-def all_players():
+def all_players(response: Response):
     """Full rated player pool - powers search/transfers and building a squad
     from empty pitch slots."""
-    return get_all_players(state["position_dfs"])
+    response.headers["Cache-Control"] = API_CACHE
+    data = get_all_players(state["position_dfs"])
+    # The canonical page URL comes from here rather than being assembled in the
+    # browser: the slug is an accent-folded version of the full name, and the
+    # server is the only place that knows the whole name. Building it twice in
+    # two languages is how you end up with links that 301 on every click.
+    try:
+        paths = {code: rec["path"] for code, rec in player_page_index().items()}
+        for p in data["players"]:
+            p["path"] = paths.get(p.get("code"))
+    except Exception as e:
+        print(f"couldn't attach player page paths: {e}")
+    return data
 
 
 @app.get("/api/underperforming")
-def underperforming(top_n: int = 20):
+def underperforming(response: Response, top_n: int = 20):
     """Players whose actual returns lag their underlying xG/xGC numbers."""
+    response.headers["Cache-Control"] = API_CACHE
     return get_underperforming_players(state["position_dfs"], top_n=top_n)
 
 

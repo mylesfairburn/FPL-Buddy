@@ -262,6 +262,17 @@ def daily_refresh(skip_stats=False):
     db.init_db()
     events = gw_clock.get_events()
 
+    # Enforce the retention period the privacy policy publishes. Doing this in
+    # the nightly job is what makes that promise true rather than aspirational.
+    try:
+        purged = db.purge_expired()
+        if purged["manager_gameweeks"] or purged["drafts"] or purged["known_managers"]:
+            log(f"  retention: removed {purged['manager_gameweeks']} gameweek(s), "
+                f"{purged['drafts']} draft(s), {purged['known_managers']} id(s) "
+                f"older than {db.RETENTION_MONTHS} months")
+    except Exception as e:
+        log(f"  retention purge FAILED: {e}")
+
     if not skip_stats:
         try:
             refresh_season_stats()

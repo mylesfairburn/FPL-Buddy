@@ -294,6 +294,10 @@ def optimise_squad(players, gameweek, budget=DEFAULT_BUDGET,
             "raw_predicted": round(float(p["_raw_predicted"]), 2),
             "availability": round(float(p["_availability"]), 2),
             "status": p.get("status", "a"),
+            # Carried through so the front end can show the same availability
+            # band as the My Team pitch, rather than re-deriving a percentage
+            # from the rounded `availability` figure above.
+            "chance_of_playing_next_round": p.get("chance_of_playing_next_round"),
             "news": p.get("news", "") or "",
             "is_cover": (slot > XI_SIZE and p["pos"] in doubtful_positions
                          and p["_availability"] >= RELIABLE_AT),

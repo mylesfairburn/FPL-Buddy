@@ -1,5 +1,5 @@
         <!-- ============ AI TEAMS ============ -->
-        <div id="pane-ai-teams" class="tab-pane d-none">
+        <div id="pane-ai-teams" class="tab-pane{{ '' if initial_pane == 'pane-ai-teams' else ' d-none' }}">
             <ul class="nav nav-pills mb-3" id="aiViewTabs">
                 <li class="nav-item"><button class="nav-link active" data-view="mgr">AI Manager</button></li>
                 <li class="nav-item"><button class="nav-link" data-view="xi">AI Best XI</button></li>
@@ -28,14 +28,14 @@
             <div id="mgrContent" class="d-none">
                 <div class="stat-chips" id="mgrChips"></div>
                 <div class="ai-body row g-3 mt-1">
-                    <div class="col-lg-6">
+                    <div class="col-lg-5">
                         <div id="mgrChipsBar" class="chips-bar mb-2"></div>
                         <div class="pitch-wrap">
                             <div class="pitch" id="mgrPitch"></div>
                             <div class="bench" id="mgrBench"></div>
                         </div>
                     </div>
-                    <div class="col-lg-6">
+                    <div class="col-lg-7">
                         <h6 class="section-heading">This week&rsquo;s moves</h6>
                         <div id="mgrMoves"></div>
                         <h6 class="section-heading mt-3">Chip thinking</h6>
@@ -80,13 +80,13 @@
             <div id="aiContent" class="d-none">
                 <div class="stat-chips" id="aiChips"></div>
                 <div class="ai-body row g-3 mt-1">
-                    <div class="col-lg-6">
+                    <div class="col-lg-5">
                         <div class="pitch-wrap">
                             <div class="pitch" id="aiPitch"></div>
                             <div class="bench" id="aiBench"></div>
                         </div>
                     </div>
-                    <div class="col-lg-6">
+                    <div class="col-lg-7">
                         <h6 class="section-heading">Squad</h6>
                         <div class="ps-list">
                             <table class="table table-sm ps-table ai-squad-table mb-0">

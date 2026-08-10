@@ -70,6 +70,23 @@ def _team_short_map():
     return _TEAM_SHORT or {}
 
 
+_TEAM_NAMES = None
+
+
+def team_name_map():
+    """team id -> full club name (e.g. 1 -> 'Arsenal').
+
+    Goes through get_bootstrap_data() rather than the API directly, so it falls
+    back to the on-disk cache during an outage: the short names are enough for a
+    pitch tile, but a page that says "a their club midfielder" is not something
+    to serve to a reader."""
+    global _TEAM_NAMES
+    if _TEAM_NAMES is None:
+        data = get_bootstrap_data() or {}
+        _TEAM_NAMES = {t["id"]: t["name"] for t in data.get("teams", [])}
+    return _TEAM_NAMES or {}
+
+
 def _build_element_index(position_dfs):
     """element_id -> everything the front end needs about that player, pulled
     from the already-rated position DataFrames (so ratings/predictions come for
@@ -88,9 +105,18 @@ def _build_element_index(position_dfs):
                 pp = row.get("predicted_points")
                 predicted = float(pp) if pp is not None and pp == pp else 0.0
 
+            # `id` is reassigned by FPL every summer, so it can't be part of a
+            # URL that's meant to survive - last season's /player/427 would come
+            # back in August as a different footballer. `code` is the same
+            # number for a player for as long as they're in the game, which is
+            # what a permanent page has to be keyed on.
+            code = row.get("code")
             index[int(row["id"])] = {
                 "id": int(row["id"]),
+                "code": int(code) if code is not None and code == code else None,
                 "web_name": row.get("web_name", ""),
+                "first_name": row.get("first_name", "") or "",
+                "second_name": row.get("second_name", "") or "",
                 "pos": POS_SHORT.get(int(row["element_type"]), "?"),
                 "element_type": int(row["element_type"]),
                 "team_code": int(row["team_code"]) if row.get("team_code") == row.get("team_code") else None,
@@ -254,7 +280,8 @@ def get_all_players(position_dfs):
     idx = _build_element_index(position_dfs)
     # `status` is included because the squad optimiser must not build a team
     # around an injured or suspended player ('a' = available).
-    players = [{"id": p["id"], "web_name": p["web_name"], "pos": p["pos"],
+    players = [{"id": p["id"], "code": p.get("code"),
+                "web_name": p["web_name"], "pos": p["pos"],
                 "team_code": p["team_code"], "team": p.get("team"),
                 "team_name": p.get("team_name"), "form": p.get("form"),
                 "cost": p["cost"], "rating": p["rating"], "predicted": p["predicted"],

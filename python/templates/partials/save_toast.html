@@ -1,0 +1,21 @@
+    {# Shown on every save AFTER the first of a session - the first one gets the
+       centred dialog in partials/kofi_modal.html instead.
+
+       It does two jobs: confirms the save (the only feedback before this was the
+       button briefly reading "Saved ✓", which is easy to miss on a phone) and
+       keeps the Ko-fi link within reach without interrupting anything.
+
+       role="status" + aria-live="polite" so a screen reader announces it
+       without stealing focus mid-task. #}
+    <div id="saveToast" class="toast-pop d-none" role="status" aria-live="polite">
+        <button class="toast-close" id="toastClose" aria-label="Dismiss">&times;</button>
+        <div class="toast-title">Team saved</div>
+        <div class="toast-msg">
+            It'll load on any device you enter your FPL ID on.
+        </div>
+        {% if kofi_url %}
+        <a class="toast-kofi" id="toastKofi" href="{{ kofi_url }}"
+           target="_blank" rel="noopener noreferrer">
+{% include 'partials/icon_coffee.html' %}Enjoying FPL Buddy? Support it on Ko-fi</a>
+        {% endif %}
+    </div>

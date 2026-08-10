@@ -1,0 +1,62 @@
+{% extends "pages/_layout.html" %}
+
+{% block content %}
+<h1 class="page-title">Contact</h1>
+<p class="page-lede">
+    {{ site_name }} is run by one person. There's no support team and no ticketing
+    system — these go to a real inbox and get read.
+</p>
+
+<div class="contact-grid">
+    <div class="contact-card">
+        <h2>General</h2>
+        <p>Questions, feedback, or anything that doesn't fit below.</p>
+        <p class="contact-address">{{ obf_mail(emails.general) }}</p>
+    </div>
+
+    <div class="contact-card">
+        <h2>Bugs and data problems</h2>
+        <p>
+            A rating that looks wrong, a player missing, a page that won't load.
+            Telling me what you were doing and roughly when makes it much easier
+            to find.
+        </p>
+        <p class="contact-address">{{ obf_mail(emails.contact) }}</p>
+    </div>
+
+    <div class="contact-card">
+        <h2>Privacy and your data</h2>
+        <p>
+            To ask what's held about you, or to have it deleted. Include your FPL ID.
+            No charge, no form — see the <a href="/privacy">privacy policy</a>.
+        </p>
+        <p class="contact-address">{{ obf_mail(emails.contact) }}</p>
+    </div>
+
+    <div class="contact-card">
+        <h2>Security</h2>
+        <p>
+            If you've found a vulnerability, please report it here rather than
+            publicly, and give me a reasonable chance to fix it.
+        </p>
+        <p class="contact-address">{{ obf_mail(emails.security) }}</p>
+    </div>
+
+    <div class="contact-card">
+        <h2>Rights holders</h2>
+        <p>
+            If you believe something on this site infringes your copyright or trade
+            marks, email here and it will be looked at promptly. This is a hobby
+            project — anything genuinely objectionable gets removed rather than
+            argued about.
+        </p>
+        <p class="contact-address">{{ obf_mail(emails.abuse) }}</p>
+    </div>
+</div>
+
+<p class="text-muted small mt-4">
+    Addresses are written out rather than linked directly, to keep them off the
+    scrapers that harvest <code>mailto:</code> links. They become normal links
+    once the page loads.
+</p>
+{% endblock %}
