@@ -15,6 +15,7 @@
         <ul class="nav nav-tabs mb-4" id="mainTabs">
 {% for t in tabs %}
             <li class="nav-item"><a class="nav-link{{ ' active' if initial_pane == t.pane }}"
-                href="{{ t.path }}" data-pane="{{ t.pane }}" data-title="{{ t.title }}">{{ t.label }}</a></li>
+                href="{{ t.path }}" data-pane="{{ t.pane }}" data-title="{{ t.title }}"
+                data-h1="{{ t.h1 }}">{{ t.label }}</a></li>
 {% endfor %}
         </ul>

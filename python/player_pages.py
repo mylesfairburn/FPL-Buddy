@@ -362,7 +362,16 @@ def meta_for(rec, season_label, stats_season=None, season_started=True):
     club = rec.get("team_name", "")
     price = f"£{rec['cost']}m" if rec["cost"] else None
 
-    title = f"{name} FPL {season_label} — stats, price and predicted points | FPL Buddy"
+    # Kept under ~65 characters, which is roughly where search engines stop
+    # rendering a title, so the suffix is short and the name leads.
+    #
+    # No "| FPL Buddy" here, unlike the fixed pages in main.py. On several
+    # hundred pages that's 13 characters of brand spent before the useful words
+    # on every one of them, and both Google and Bing append the site name to the
+    # result themselves. The full name is used rather than `_short()` because
+    # web_name collides - there is more than one Sánchez - and colliding titles
+    # across hundreds of pages is a worse problem than a long one.
+    title = f"{name} — FPL {season_label} stats, price and points"
 
     bits = [f"{name}, {club} {rec['pos_name']}".strip().rstrip(",")]
     if price:

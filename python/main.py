@@ -87,7 +87,7 @@ TAB_PANES = {t["path"]: t["pane"] for t in TABS}
 # below, so a route only states them when it differs.
 PAGES = {
     "/": {
-        "title": "FPL Buddy — Fantasy Premier League ratings, AI teams and fixture rotation",
+        "title": "FPL Buddy — Fantasy Premier League ratings and AI teams",
         "description": ("Free Fantasy Premier League tools: player ratings from a trained "
                         "points model, two AI-picked squads each gameweek, a fixture "
                         "rotation planner and your own team analysed. Enter your FPL ID "
@@ -97,6 +97,7 @@ PAGES = {
     },
     "/my-team": {
         "title": "My FPL team — squad, lineup and transfer analysis | FPL Buddy",
+        "h1": "My FPL team",
         "description": ("Load your Fantasy Premier League squad from your FPL ID: predicted "
                         "points for every player, an optimised starting XI, transfer "
                         "suggestions, chip advice and live gameweek scoring."),
@@ -104,7 +105,8 @@ PAGES = {
         "changefreq": "daily",
     },
     "/ai-teams": {
-        "title": "AI Fantasy Premier League teams — AI Manager and best XV | FPL Buddy",
+        "title": "AI Fantasy Premier League teams — AI Manager and best XV",
+        "h1": "AI Fantasy Premier League teams",
         "description": ("Two AI-picked Fantasy Premier League squads: a manager bot that "
                         "plays every gameweek with real transfers and chips, and the "
                         "highest-scoring XV for the upcoming gameweek."),
@@ -113,6 +115,7 @@ PAGES = {
     },
     "/players": {
         "title": "FPL player ratings and predicted points | FPL Buddy",
+        "h1": "FPL player ratings",
         "description": ("Every Fantasy Premier League player rated by a trained points model, "
                         "with predicted points for the next gameweeks, price, form, ownership "
                         "and the players underperforming their underlying numbers."),
@@ -121,6 +124,7 @@ PAGES = {
     },
     "/fixture-rotator": {
         "title": "FPL fixture rotation planner — best team pairs | FPL Buddy",
+        "h1": "FPL fixture rotation planner",
         "description": ("Find Fantasy Premier League defence and attack rotation pairs: two "
                         "clubs whose fixtures alternate so one of them always has a good "
                         "game, ranked over the next eight gameweeks."),
@@ -438,13 +442,20 @@ def index(request: Request):
 def tab_response(request, path):
     """Render the app shell with the tab for `path` already open.
 
-    `tabs` carries each tab's title as well as its label, so app.js can set
-    document.title when you switch tabs without a page load - otherwise the
-    browser tab, and anything bookmarked from it, keeps the name of whichever
-    page you happened to arrive on."""
-    tabs = [dict(t, title=PAGES[t["path"]]["title"]) for t in TABS]
+    `tabs` carries each tab's title and heading as well as its label, so app.js
+    can set document.title and the <h1> when you switch tabs without a page
+    load - otherwise the browser tab, and anything bookmarked from it, keeps the
+    name of whichever page you happened to arrive on, and the heading describes
+    a pane that is no longer on screen.
+
+    All four panes are in the DOM on all four URLs, so the <h1> is rendered once
+    here from the routing table rather than once per pane. Four <h1>s - three of
+    them hidden - is what a crawler would otherwise be handed."""
+    tabs = [dict(t, title=PAGES[t["path"]]["title"], h1=PAGES[t["path"]]["h1"])
+            for t in TABS]
     return html_response("index.html", request, path, mode=state["mode"],
-                         initial_pane=TAB_PANES[path], tabs=tabs)
+                         initial_pane=TAB_PANES[path], tabs=tabs,
+                         page_h1=PAGES[path]["h1"])
 
 
 @app.get("/my-team", response_class=HTMLResponse)

@@ -1331,6 +1331,15 @@ body {
     .avail-band { font-size: 0.5rem; line-height: 1.2; }
 }
 
+/* Heading for the four tool pages. Deliberately smaller than the prose pages'
+   h1: those open with a title and a lede, these open with a heading and then a
+   dense table or pitch, and a 2rem heading above it just pushes the thing you
+   came for below the fold on a phone. */
+.tab-page-title {
+    color: var(--accent-dark); font-weight: 700; font-size: 1.35rem;
+    margin: 0 0 14px;
+}
+
 /* ============================================================
    CONTENT PAGES (about / privacy / contact)
    ============================================================ */
@@ -1599,6 +1608,7 @@ body.modal-open { overflow: hidden; }
 .contact-address { margin-bottom: 0 !important; }
 
 @media (max-width: 575.98px) {
+    .tab-page-title { font-size: 1.15rem; margin-bottom: 10px; }
     .content-page h1.page-title { font-size: 1.4rem; }
     .content-page .page-lede { font-size: 0.95rem; }
     .content-page h2 { font-size: 1.05rem; }

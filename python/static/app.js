@@ -50,6 +50,11 @@ function activatePane(pane, opts) {
     // first landed on, which is the wrong page by the time you've switched
     // twice. The server puts each tab's real <title> on the link.
     if (btn.dataset.title) document.title = btn.dataset.title;
+    // Same reasoning for the visible heading. It's the page's <h1>, so leaving
+    // it on the tab you first landed on would have every page after the first
+    // headed with the wrong tool's name.
+    const heading = document.getElementById('pageHeading');
+    if (heading && btn.dataset.h1) heading.textContent = btn.dataset.h1;
     if (pane === 'pane-players') ensurePlayers().then(() => playersTabSearch.refresh());
     if (pane === 'pane-ai-teams') showAiView(currentAiView);
     // Only reset scroll on a real click; a restore wants to keep it.

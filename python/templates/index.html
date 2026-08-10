@@ -11,6 +11,11 @@
 
 {% include 'partials/tabs.html' %}
 
+        {# Below the tabs, not above them: the tab bar is navigation across the
+           four tools, the heading names the one you're looking at. app.js
+           rewrites it on a tab switch - see data-h1 in partials/tabs.html. #}
+        <h1 id="pageHeading" class="tab-page-title">{{ page_h1 }}</h1>
+
 {% include 'panes/my_team.html' %}
 
 {% include 'panes/ai_teams.html' %}
