@@ -1,7 +1,7 @@
 .git
 __pycache__/
 LAUNCH-REPORT.md
-tests/
+tests/reports/
 *.pyc
 .venv/
 venv/
@@ -15,3 +15,11 @@ state/
 
 # Live API cache - rewritten on every fetch, not source data
 data/seasons/*/bootstrap.json
+
+# Trained model bundles. Deliberately unpublished: they're the one part of this
+# project that can't be rebuilt from public data in an afternoon. They live on
+# the deployment's data volume instead (FPL_DATA_ROOT -> /srv/fpl-companion/data
+# in production), and `python train_model.py` regenerates them locally.
+#
+# Keep a backup somewhere that is neither this repo nor that one server.
+data/models/*.pkl

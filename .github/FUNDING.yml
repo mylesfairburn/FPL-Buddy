@@ -1,0 +1,14 @@
+# Renders a "Sponsor" button at the top of the repo and in the sidebar.
+# Every field is optional; unset platforms simply don't appear.
+ko_fi: mylesfairburn
+
+# Other platforms GitHub supports, left unset deliberately:
+#
+#   github: [mylesfairburn]   # needs GitHub Sponsors onboarding - identity
+#                             # verification and bank details. Worth doing only
+#                             # if recurring sponsorship is actually the goal.
+#   buy_me_a_coffee: ...      # a second tip jar splits the audience rather
+#                             # than doubling it; Ko-fi is already the one the
+#                             # site links to.
+#   patreon, liberapay, open_collective, polar, tidelift, thanks_dev
+#   custom: [...]             # up to 4 arbitrary URLs
