@@ -71,8 +71,14 @@ def _full_name(row):
 
 
 def _fmt(n, dp=0):
-    """Numbers for prose: no trailing '.0', thousands separated."""
-    if n is None:
+    """Numbers for prose: no trailing '.0', thousands separated.
+
+    NaN is treated as absent, the same as None. A missing stat arrives as NaN
+    far more often than as None - it is what pandas puts in an empty cell - and
+    int(round(nan)) raises while f"{nan:.1f}" quietly writes the word "nan"
+    into the sentence. Both are worse than the caller's own "no value" path.
+    """
+    if n is None or n != n:
         return None
     if dp == 0:
         return f"{int(round(n)):,}"
@@ -87,7 +93,10 @@ def _article(word):
     """"a" or "an". Crude - it goes on the letter, not the sound - but the only
     club names it sees are Premier League ones, where the letter is right every
     time (an Arsenal, an Aston Villa, an Everton, an Ipswich)."""
-    return "an" if (word or "")[:1].upper() in "AEIOU" else "a"
+    # `in` on an empty string is True for any haystack, so a blank club name
+    # produced "an" without the check on the left.
+    first = (word or "")[:1].upper()
+    return "an" if first and first in "AEIOU" else "a"
 
 
 def _short(rec):
@@ -172,7 +181,8 @@ def attach_team_names(pages, team_names, team_shorts):
 
 def horizon_points(rec, n=8):
     """Total predicted points over the next n gameweeks."""
-    pts = [g.get("points") for g in rec["next_gameweeks"][:n] if g.get("points") is not None]
+    pts = [g.get("points") for g in (rec.get("next_gameweeks") or [])[:n]
+           if g.get("points") is not None]
     return round(sum(pts), 1) if pts else None
 
 

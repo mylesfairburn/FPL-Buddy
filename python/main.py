@@ -5,6 +5,7 @@ Run locally with:
     uvicorn main:app --reload
 """
 
+import math
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -158,6 +159,29 @@ app = FastAPI()
 # lost chance of a byte-range request cost more than the saved bytes.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Headers a browser needs in order to defend the page.
+
+    Deliberately not including a Content-Security-Policy: the templates carry
+    several inline <script> blocks (the initial pane, the landing-page redirect)
+    and a real policy needs those moved out or given nonces first. A CSP added
+    without that work either does nothing useful or breaks the site, so it's
+    tracked as its own job rather than half-done here.
+
+    HSTS is only sent over HTTPS. Sent on a plain-HTTP local run it would pin
+    the developer's browser to https://localhost and make the app unreachable.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if request.url.scheme == "https":
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
 templates = Jinja2Templates(directory="templates")
 
 # Read-only endpoints derived from the in-memory rated pool. That pool only
@@ -167,6 +191,33 @@ templates = Jinja2Templates(directory="templates")
 # per-user: the same bytes go to everyone, which is what lets the Cloudflare
 # edge answer instead of this process.
 API_CACHE = "public, max-age=300"
+
+
+def _json_safe(value):
+    """Recursively replace NaN/Infinity with None.
+
+    pandas uses NaN for "no number here", and NaN is not valid JSON: the
+    serialiser raises rather than emitting it, so one missing value turns the
+    whole response into a 500. That is not an edge case here - preseason,
+    roughly two in five rated players have no predicted_points at all, and the
+    per-gameweek dicts inside next_gameweeks can carry NaN of their own, which
+    is why this walks nested structures instead of just the top-level row.
+
+    The endpoints that build their payload through team_service already come
+    out clean; these are the two that hand a DataFrame straight to FastAPI.
+    """
+    if isinstance(value, float):
+        return None if math.isnan(value) or math.isinf(value) else value
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+def records(df):
+    """DataFrame rows as JSON-safe dicts."""
+    return [_json_safe(row) for row in df.to_dict(orient="records")]
 
 
 class CachedStatic(StaticFiles):
@@ -582,7 +633,17 @@ def search(q: str):
     result = search_player(q, state["position_dfs"])
     if result is None:
         return {"results": []}
-    return {"results": result.to_dict(orient="records")}
+    return {"results": records(result)}
+
+
+# position_dfs is keyed on the long names the rating model uses. Every other
+# layer of the app - the pane markup, the player records, get_all_players -
+# says GK/DEF/MID/FWD, so a caller reaching for the obvious short code got an
+# empty list back rather than an error. Accept both spellings.
+POSITION_ALIASES = {
+    "GK": "Goalkeeper", "GKP": "Goalkeeper", "DEF": "Defender",
+    "MID": "Midfielder", "FWD": "Forward", "FOR": "Forward",
+}
 
 
 @app.get("/api/ratings")
@@ -592,11 +653,17 @@ def ratings(response: Response, position: str = "All", top_n: int = 20):
     if position_dfs is None:
         return {"results": []}
 
+    # head(-5) means "all but the last five", which is not what a negative
+    # top_n is asking for. Clamp instead, so an out-of-range page size returns
+    # nothing rather than almost everything.
+    top_n = max(0, top_n)
+
     if position == "All":
         combined = pd.concat([
             df.assign(position=pos) for pos, df in position_dfs.items()
         ])
     else:
+        position = POSITION_ALIASES.get(position.strip().upper(), position)
         if position not in position_dfs:
             return {"results": []}
         combined = position_dfs[position].assign(position=position)
@@ -604,7 +671,7 @@ def ratings(response: Response, position: str = "All", top_n: int = 20):
     cols = [c for c in ["web_name", "first_name", "second_name", "team_code",
                         "position", "rating", "predicted_points", "next_gameweeks"] if c in combined.columns]
     top = combined.sort_values("rating", ascending=False).head(top_n)
-    return {"results": top[cols].to_dict(orient="records")}
+    return {"results": records(top[cols])}
 
 
 @app.get("/api/rotation")
@@ -925,9 +992,27 @@ def ai_status():
     """DB health + season clock. Makes a failed volume mount visible instead of
     silently writing snapshots into a throwaway file inside the container."""
     events = gw_clock.get_events()
+    # The absolute path is the one field here worth withholding: it is the
+    # deployment's directory layout, handed to anyone who asks. The filename
+    # and the availability flag keep the diagnostic value - a failed volume
+    # mount still shows as a different name with an empty row count.
+    # Both roots are reported as a bare filename plus a storage verdict rather
+    # than an absolute path. The path was the deployment's directory layout
+    # handed to anyone who asked; `storage`/`persisted` answer the question the
+    # path was actually being used to answer - "will this survive the next
+    # deploy?" - and answer it better, because an anonymous volume looks
+    # identical to a correct mount if all you have is the path.
+    health = db.healthcheck()
+    if health.get("path"):
+        health = {**health, "path": os.path.basename(health["path"])}
+    data = seasons.describe()
+    if data.get("data_root"):
+        storage = db.storage_kind(data["data_root"])
+        data = {**data, "data_root": os.path.basename(data["data_root"]),
+                "storage": storage, "persisted": storage in ("bind", "volume")}
     return {
-        "db": db.healthcheck(),
-        "data": seasons.describe(),
+        "db": health,
+        "data": data,
         "mode": state["mode"],
         "current_gameweek": gw_clock.current_gameweek(events),
         "next_gameweek": gw_clock.next_gameweek(events),
@@ -947,10 +1032,17 @@ def manager_gw_history(fpl_id: int):
 
 
 @app.post("/api/mode")
-def set_mode(mode: str):
+def set_mode(mode: str, x_refresh_token: str = Header(default="")):
     """Manual override for the auto-detected mode. Not used by the UI (the mode
     follows the first gameweek deadline now) - kept for testing and for forcing
-    preseason ratings back on if inseason data turns out to be unusable."""
+    preseason ratings back on if inseason data turns out to be unusable.
+
+    Behind the same token as /api/refresh. This calls load_data() too, so an
+    open version of it is the same minute of pipeline CPU per request - and it
+    would have made the token on /api/refresh pointless, since an attacker
+    could just call this instead. It also silently reshapes what every other
+    endpoint returns, which is not something an anonymous caller should do."""
+    require_refresh_token(x_refresh_token)
     if mode not in ("preseason", "inseason"):
         return {"status": "error", "detail": "mode must be 'preseason' or 'inseason'"}
     try:

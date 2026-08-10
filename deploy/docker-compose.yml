@@ -11,8 +11,21 @@ services:
       # SQLite must outlive the image. NOT /app/data - that would shadow the
       # CSVs baked into the image.
       - /srv/fpl-companion/state:/app/state
+      # The data root has to outlive the image too. The nightly job writes
+      # gameweek_stats.csv, the bootstrap cache and the per-player summaries
+      # into it, and without this they were being written into the image layer
+      # and destroyed on every deploy - which silently dropped the app back to
+      # preseason ratings until the next 03:00 run rebuilt them.
+      #
+      # Mounted at a NEW path, not over /app/data: that directory holds the
+      # CSVs baked into the image, and mounting over it would hide them.
+      # ensure_seeded() copies /app/data into here on first boot, per-file and
+      # missing-only, so a nightly-updated file is never reverted to the
+      # image's stale copy.
+      - /srv/fpl-companion/data:/app/data-live
     environment:
       FPL_DB_PATH: /app/state/fpl_companion.db
+      FPL_DATA_ROOT: /app/data-live
       # openssl rand -hex 32 > /srv/fpl-companion/refresh_token
       FPL_REFRESH_TOKEN: ${FPL_REFRESH_TOKEN:?set this, or /api/refresh stays open}
       FPL_APP_URL: http://127.0.0.1:8000

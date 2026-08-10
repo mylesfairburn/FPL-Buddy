@@ -6,40 +6,93 @@ second worker (or a job that imported and mutated that state) would drift out of
 sync with it. The jobs instead write to SQLite and then poke `/api/refresh` so
 the live process reloads.
 
-## 1. Persistent volume for SQLite
+## 1. Persistent volumes
 
-The DB **must** live outside the image. The GitHub Actions → ghcr.io → `docker
-pull` cycle replaces the image wholesale on every deploy, so an in-image file is
-destroyed each time you ship.
+**Two** directories must live outside the image. The GitHub Actions → ghcr.io →
+`docker pull` cycle replaces the image wholesale on every deploy, so anything
+written inside it is destroyed each time you ship.
+
+| Host path | Container path | Holds |
+|---|---|---|
+| `/srv/fpl-companion/state` | `/app/state` | SQLite — saved teams, AI snapshots, the deadline ledger |
+| `/srv/fpl-companion/data` | `/app/data-live` | Everything the nightly job writes: `gameweek_stats.csv`, the bootstrap cache, per-player summaries |
+
+The second one is easy to miss. Without it the app still runs, but every
+nightly write lands in the image layer and is wiped on the next deploy — which
+silently drops the app back to **preseason ratings** until 03:00 rebuilds them.
+
+Note that neither is mounted at `/app/data`. That directory holds the CSVs
+baked into the image; mounting over it would hide them. `FPL_DATA_ROOT` points
+at the mount instead, and `ensure_seeded()` copies the image's copy across on
+first boot — per-file and missing-only, so a nightly-updated file is never
+reverted to the image's stale version.
 
 ```bash
-mkdir -p /srv/fpl-companion/state
+mkdir -p /srv/fpl-companion/state /srv/fpl-companion/data
 ```
-
-Run the container with that mounted at `/app/state` (the path `FPL_DB_PATH`
-defaults to in the image). Note it is deliberately **not** `/app/data` — that
-directory holds the CSVs baked into the image, and mounting over it would hide
-them.
 
 ```bash
 docker run -d --name fpl-companion \
   -p 8000:8000 \
   -v /srv/fpl-companion/state:/app/state \
+  -v /srv/fpl-companion/data:/app/data-live \
+  -e FPL_DATA_ROOT=/app/data-live \
   -e FPL_REFRESH_TOKEN="$(cat /srv/fpl-companion/refresh_token)" \
   ghcr.io/mylesfairburn/fpl-companion:latest
 ```
 
-Or with compose — see `deploy/docker-compose.yml`.
+Or with compose — see `deploy/docker-compose.yml`, which sets both.
 
-Verify the mount actually took effect after any deploy:
+### Verifying it took effect
 
 ```bash
 curl -s localhost:8000/api/ai/status | python -m json.tool
 ```
 
-`db.path` should be `/app/state/fpl_companion.db`, `journal_mode` should be
-`wal`, and the row counts should be non-zero once a deadline has passed. If the
-counts reset to 0 after a deploy, the volume is not mounted.
+Check `db.storage` and `data.storage`. Both must read `bind` (or `volume`):
+
+| Value | Meaning |
+|---|---|
+| `bind` | An explicit `-v host:container`. Correct — survives redeploys |
+| `volume` | A **named** Docker volume. Also fine |
+| `anon` | **This is the bug.** An anonymous volume, new on every `docker run` |
+| `image` | No mount at all; writing into the image layer |
+| `unknown` | Couldn't read `/proc/self/mountinfo` — check by hand |
+
+`anon` is the one to watch for, and it is why this check exists rather than
+just printing the path. The Dockerfile declares `VOLUME ["/app/state"]`, so if
+the container is ever started **without** `-v`, Docker quietly creates a fresh
+anonymous volume each time the container is recreated. The path looks right,
+`journal_mode` is `wal`, the app reports healthy — and the database is empty,
+with the previous deploy's data stranded in an orphaned volume.
+
+`journal_mode` should be `wal`, and row counts should be non-zero once a
+deadline has passed.
+
+### Recovering data from orphaned anonymous volumes
+
+If you have been running with `anon`, the old data still exists — one volume
+per deploy, unreferenced but not deleted. **Do not run `docker volume prune`
+until you have recovered it.**
+
+```bash
+# Newest first, with sizes. The big ones are your databases.
+docker volume ls -qf dangling=true | while read v; do
+  printf '%s  %s\n' \
+    "$(docker run --rm -v "$v":/v alpine du -sh /v 2>/dev/null | cut -f1)" "$v"
+done | sort -h
+```
+
+Inspect a candidate, then copy it into the real location:
+
+```bash
+docker run --rm -v <volume-id>:/v alpine ls -la /v
+docker run --rm -v <volume-id>:/v -v /srv/fpl-companion/state:/out \
+  alpine cp /v/fpl_companion.db /out/
+```
+
+Stop the container first, and take a copy of whatever is currently in
+`/srv/fpl-companion/state` before overwriting it.
 
 ## 2. Lock down `/api/refresh`
 

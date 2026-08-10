@@ -18,6 +18,7 @@ volume in production; the default is repo-root ./state/ for local runs.
 """
 
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -173,6 +174,57 @@ def utcnow():
     return datetime.now(timezone.utc).isoformat()
 
 
+# Anonymous Docker volumes are named with a 64-character hex id. A named volume
+# or a bind mount is anything else.
+_ANON_VOLUME = re.compile(r"/volumes/([0-9a-f]{64})/_data")
+
+
+def storage_kind(path=None):
+    """Where the DB file actually lives, from the container's point of view.
+
+    This exists because the failure it detects is silent. The Dockerfile
+    declares VOLUME ["/app/state"], so if the container is started without an
+    explicit -v, Docker creates a *fresh anonymous volume* every time the
+    container is recreated. The app boots, builds its schema and reports
+    perfectly healthy - on an empty database, with the previous deploy's data
+    stranded in an orphaned volume. "Is it a mount point" cannot tell these
+    apart, because the anonymous volume is a mount point too.
+
+    /proc/self/mountinfo carries the host-side path for each mount, which does
+    distinguish them:
+
+        bind    an explicit -v /srv/...:/app/state — survives redeploys
+        volume  a NAMED docker volume — also survives redeploys
+        anon    an anonymous volume — new on every `docker run`, THE BUG
+        image   no mount at all; the file is a layer in the image itself
+
+    Linux-only, and best-effort: any failure reports "unknown" rather than
+    raising, because this is a diagnostic and must never be the reason a health
+    endpoint goes down.
+    """
+    # Accepts either a file (the DB) or a directory (the data root).
+    target = os.path.abspath(path or db_path())
+    if not os.path.isdir(target):
+        target = os.path.dirname(target)
+    try:
+        if not os.path.ismount(target):
+            return "image"
+        with open("/proc/self/mountinfo", encoding="utf-8") as fh:
+            for line in fh:
+                fields = line.split()
+                # 4th and 5th fields are the root within the source filesystem
+                # and the mount point inside this namespace.
+                if len(fields) < 5 or fields[4] != target:
+                    continue
+                source = fields[3]
+                if _ANON_VOLUME.search(source):
+                    return "anon"
+                return "volume" if "/volumes/" in source else "bind"
+        return "unknown"
+    except (OSError, IndexError):
+        return "unknown"
+
+
 # One table whose presence stands in for "the schema is applied". Checked per
 # connection rather than latched per process - see connect().
 _SENTINEL_TABLE = "ai_team_snapshot"
@@ -262,10 +314,13 @@ def healthcheck():
                 "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
             counts = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
                       for t in tables if not t.startswith("sqlite_")}
+        storage = storage_kind()
         return {"available": True, "path": os.path.abspath(db_path()),
+                "storage": storage, "persisted": storage in ("bind", "volume"),
                 "journal_mode": mode, "counts": counts}
     except sqlite3.Error as e:
-        return {"available": False, "path": os.path.abspath(db_path()), "detail": str(e)}
+        return {"available": False, "path": os.path.abspath(db_path()),
+                "storage": storage_kind(), "detail": str(e)}
 
 
 # ---- known managers -------------------------------------------------------

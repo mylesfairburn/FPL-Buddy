@@ -1,6 +1,7 @@
 .git
 __pycache__/
 LAUNCH-REPORT.md
+test/
 *.pyc
 .venv/
 venv/

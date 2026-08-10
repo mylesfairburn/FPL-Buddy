@@ -1,0 +1,5554 @@
+{
+  "meta": {
+    "when": "2026-08-10 14:41:33",
+    "duration": 22.528639793395996,
+    "python": "3.14.2",
+    "platform": "Windows 11"
+  },
+  "summary": {
+    "total": 539,
+    "passed": 534,
+    "failed": 5,
+    "by_group": {
+      "slugify": {
+        "total": 48,
+        "failed": 0
+      },
+      "prose helpers": {
+        "total": 20,
+        "failed": 0
+      },
+      "A-Z index": {
+        "total": 3,
+        "failed": 0
+      },
+      "draft validation": {
+        "total": 22,
+        "failed": 0
+      },
+      "storage detection": {
+        "total": 10,
+        "failed": 0
+      },
+      "horizon points": {
+        "total": 5,
+        "failed": 0
+      },
+      "page routes": {
+        "total": 38,
+        "failed": 0
+      },
+      "tab routing": {
+        "total": 12,
+        "failed": 0
+      },
+      "SEO metadata": {
+        "total": 38,
+        "failed": 0
+      },
+      "robots / security.txt": {
+        "total": 6,
+        "failed": 0
+      },
+      "sitemap.xml": {
+        "total": 11,
+        "failed": 0
+      },
+      "player pages": {
+        "total": 35,
+        "failed": 0
+      },
+      "A-Z index page": {
+        "total": 3,
+        "failed": 0
+      },
+      "compression": {
+        "total": 2,
+        "failed": 0
+      },
+      "static assets": {
+        "total": 14,
+        "failed": 0
+      },
+      "API contract": {
+        "total": 44,
+        "failed": 0
+      },
+      "API parameters": {
+        "total": 19,
+        "failed": 0
+      },
+      "data shape": {
+        "total": 6,
+        "failed": 0
+      },
+      "search": {
+        "total": 15,
+        "failed": 0
+      },
+      "draft round-trip": {
+        "total": 16,
+        "failed": 0
+      },
+      "AI endpoints": {
+        "total": 7,
+        "failed": 0
+      },
+      "upstream proxies": {
+        "total": 10,
+        "failed": 0
+      },
+      "SQL injection": {
+        "total": 37,
+        "failed": 0
+      },
+      "regex injection": {
+        "total": 10,
+        "failed": 0
+      },
+      "XSS": {
+        "total": 15,
+        "failed": 0
+      },
+      "path traversal": {
+        "total": 18,
+        "failed": 0
+      },
+      "authentication": {
+        "total": 8,
+        "failed": 1
+      },
+      "security headers": {
+        "total": 7,
+        "failed": 1
+      },
+      "information disclosure": {
+        "total": 9,
+        "failed": 0
+      },
+      "input fuzzing": {
+        "total": 31,
+        "failed": 0
+      },
+      "payload limits": {
+        "total": 4,
+        "failed": 0
+      },
+      "third-party assets": {
+        "total": 3,
+        "failed": 2
+      },
+      "privacy": {
+        "total": 5,
+        "failed": 1
+      },
+      "HTTP methods": {
+        "total": 4,
+        "failed": 0
+      },
+      "open redirect": {
+        "total": 4,
+        "failed": 0
+      }
+    },
+    "failures_by_severity": {
+      "critical": 0,
+      "high": 0,
+      "medium": 3,
+      "low": 1,
+      "info": 1
+    }
+  },
+  "rows": [
+    {
+      "group": "slugify",
+      "name": "slugify('Bukayo Saka') \u2014 the ordinary case",
+      "input": "'Bukayo Saka'",
+      "expected": "bukayo-saka",
+      "actual": "bukayo-saka",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('Gabriel Jesus') \u2014 two words",
+      "input": "'Gabriel Jesus'",
+      "expected": "gabriel-jesus",
+      "actual": "gabriel-jesus",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('Gu\u00e9hi') \u2014 acute accent folds to ASCII",
+      "input": "'Gu\u00e9hi'",
+      "expected": "guehi",
+      "actual": "guehi",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('\u00d8degaard') \u2014 \u00d8 has no NFKD decomposition",
+      "input": "'\u00d8degaard'",
+      "expected": "odegaard",
+      "actual": "odegaard",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('H\u00f8jbjerg') \u2014 \u00f8 mid-word",
+      "input": "'H\u00f8jbjerg'",
+      "expected": "hojbjerg",
+      "actual": "hojbjerg",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('Wei\u00df') \u2014 \u00df expands to two letters",
+      "input": "'Wei\u00df'",
+      "expected": "weiss",
+      "actual": "weiss",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('\u0141ukasz') \u2014 \u0141 has no decomposition",
+      "input": "'\u0141ukasz'",
+      "expected": "lukasz",
+      "actual": "lukasz",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('\u0110or\u0111e') \u2014 \u0110 has no decomposition",
+      "input": "'\u0110or\u0111e'",
+      "expected": "dorde",
+      "actual": "dorde",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('\u00c6neas') \u2014 \u00c6 expands",
+      "input": "'\u00c6neas'",
+      "expected": "aeneas",
+      "actual": "aeneas",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify(\"N'Golo Kant\u00e9\") \u2014 apostrophe becomes a separator",
+      "input": "\"N'Golo Kant\u00e9\"",
+      "expected": "n-golo-kante",
+      "actual": "n-golo-kante",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('Alexander-Arnold') \u2014 existing hyphen survives",
+      "input": "'Alexander-Arnold'",
+      "expected": "alexander-arnold",
+      "actual": "alexander-arnold",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('  spaced  out  ') \u2014 leading/trailing space stripped",
+      "input": "' spaced out '",
+      "expected": "spaced-out",
+      "actual": "spaced-out",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify(\"O'Brien-Smith Jr.\") \u2014 trailing punctuation trimmed",
+      "input": "\"O'Brien-Smith Jr.\"",
+      "expected": "o-brien-smith-jr",
+      "actual": "o-brien-smith-jr",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('...') \u2014 punctuation only collapses to empty",
+      "input": "'...'",
+      "expected": "",
+      "actual": "",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('') \u2014 empty string",
+      "input": "''",
+      "expected": "",
+      "actual": "",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify(None) \u2014 None must not raise",
+      "input": "None",
+      "expected": "",
+      "actual": "",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('ALL CAPS') \u2014 lowercased",
+      "input": "'ALL CAPS'",
+      "expected": "all-caps",
+      "actual": "all-caps",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('van Dijk') \u2014 lowercase particle",
+      "input": "'van Dijk'",
+      "expected": "van-dijk",
+      "actual": "van-dijk",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('S\u00e1nchez') \u2014 acute on a vowel",
+      "input": "'S\u00e1nchez'",
+      "expected": "sanchez",
+      "actual": "sanchez",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('M\u00fcller') \u2014 umlaut drops rather than expanding to ue",
+      "input": "'M\u00fcller'",
+      "expected": "muller",
+      "actual": "muller",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') \u2014 long name is not truncated",
+      "input": "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+      "expected": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "actual": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('Player 7') \u2014 digits survive",
+      "input": "'Player 7'",
+      "expected": "player-7",
+      "actual": "player-7",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('<script>alert(1)</script>') \u2014 HTML cannot survive slugify",
+      "input": "'<script>alert(1)</script>'",
+      "expected": "script-alert-1-script",
+      "actual": "script-alert-1-script",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify('../../etc/passwd') \u2014 traversal cannot survive slugify",
+      "input": "'../../etc/passwd'",
+      "expected": "etc-passwd",
+      "actual": "etc-passwd",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'Bukayo Saka'",
+      "input": "'Bukayo Saka'",
+      "expected": "only [a-z0-9-]",
+      "actual": "bukayo-saka",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'Gabriel Jesus'",
+      "input": "'Gabriel Jesus'",
+      "expected": "only [a-z0-9-]",
+      "actual": "gabriel-jesus",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'Gu\u00e9hi'",
+      "input": "'Gu\u00e9hi'",
+      "expected": "only [a-z0-9-]",
+      "actual": "guehi",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for '\u00d8degaard'",
+      "input": "'\u00d8degaard'",
+      "expected": "only [a-z0-9-]",
+      "actual": "odegaard",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'H\u00f8jbjerg'",
+      "input": "'H\u00f8jbjerg'",
+      "expected": "only [a-z0-9-]",
+      "actual": "hojbjerg",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'Wei\u00df'",
+      "input": "'Wei\u00df'",
+      "expected": "only [a-z0-9-]",
+      "actual": "weiss",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for '\u0141ukasz'",
+      "input": "'\u0141ukasz'",
+      "expected": "only [a-z0-9-]",
+      "actual": "lukasz",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for '\u0110or\u0111e'",
+      "input": "'\u0110or\u0111e'",
+      "expected": "only [a-z0-9-]",
+      "actual": "dorde",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for '\u00c6neas'",
+      "input": "'\u00c6neas'",
+      "expected": "only [a-z0-9-]",
+      "actual": "aeneas",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for \"N'Golo Kant\u00e9\"",
+      "input": "\"N'Golo Kant\u00e9\"",
+      "expected": "only [a-z0-9-]",
+      "actual": "n-golo-kante",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'Alexander-Arnold'",
+      "input": "'Alexander-Arnold'",
+      "expected": "only [a-z0-9-]",
+      "actual": "alexander-arnold",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for '  spaced  out  '",
+      "input": "' spaced out '",
+      "expected": "only [a-z0-9-]",
+      "actual": "spaced-out",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for \"O'Brien-Smith Jr.\"",
+      "input": "\"O'Brien-Smith Jr.\"",
+      "expected": "only [a-z0-9-]",
+      "actual": "o-brien-smith-jr",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for '...'",
+      "input": "'...'",
+      "expected": "only [a-z0-9-]",
+      "actual": "",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for ''",
+      "input": "''",
+      "expected": "only [a-z0-9-]",
+      "actual": "",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for None",
+      "input": "None",
+      "expected": "only [a-z0-9-]",
+      "actual": "",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'ALL CAPS'",
+      "input": "'ALL CAPS'",
+      "expected": "only [a-z0-9-]",
+      "actual": "all-caps",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'van Dijk'",
+      "input": "'van Dijk'",
+      "expected": "only [a-z0-9-]",
+      "actual": "van-dijk",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'S\u00e1nchez'",
+      "input": "'S\u00e1nchez'",
+      "expected": "only [a-z0-9-]",
+      "actual": "sanchez",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'M\u00fcller'",
+      "input": "'M\u00fcller'",
+      "expected": "only [a-z0-9-]",
+      "actual": "muller",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+      "input": "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+      "expected": "only [a-z0-9-]",
+      "actual": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for 'Player 7'",
+      "input": "'Player 7'",
+      "expected": "only [a-z0-9-]",
+      "actual": "player-7",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for '<script>alert(1)</script>'",
+      "input": "'<script>alert(1)</script>'",
+      "expected": "only [a-z0-9-]",
+      "actual": "script-alert-1-script",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "slugify",
+      "name": "slugify output charset for '../../etc/passwd'",
+      "input": "'../../etc/passwd'",
+      "expected": "only [a-z0-9-]",
+      "actual": "etc-passwd",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_article('Arsenal')",
+      "input": "'Arsenal'",
+      "expected": "an",
+      "actual": "an",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_article('Everton')",
+      "input": "'Everton'",
+      "expected": "an",
+      "actual": "an",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_article('Ipswich')",
+      "input": "'Ipswich'",
+      "expected": "an",
+      "actual": "an",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_article('Aston Villa')",
+      "input": "'Aston Villa'",
+      "expected": "an",
+      "actual": "an",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_article('Chelsea')",
+      "input": "'Chelsea'",
+      "expected": "a",
+      "actual": "a",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_article('Liverpool')",
+      "input": "'Liverpool'",
+      "expected": "a",
+      "actual": "a",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_article('Wolves')",
+      "input": "'Wolves'",
+      "expected": "a",
+      "actual": "a",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_article('')",
+      "input": "''",
+      "expected": "a",
+      "actual": "a",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_article(None)",
+      "input": "None",
+      "expected": "a",
+      "actual": "a",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_fmt(3.0, 0)",
+      "input": "3.0, dp=0",
+      "expected": "3",
+      "actual": "3",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_fmt(3.456, 1)",
+      "input": "3.456, dp=1",
+      "expected": "3.5",
+      "actual": "3.5",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_fmt(1234.0, 0) separates thousands",
+      "input": "1234.0, dp=0",
+      "expected": "1,234",
+      "actual": "1,234",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_fmt(None) is falsy or dash",
+      "input": "None",
+      "expected": "no crash, no 'nan'",
+      "actual": "null",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_fmt(nan) degrades gracefully",
+      "input": "float('nan')",
+      "expected": "None or a dash \u2014 never a crash, never the text 'nan'",
+      "actual": "null",
+      "ok": true,
+      "severity": "medium",
+      "note": "225 of the pool's predicted_points are NaN, so a NaN reaching prose formatting is not hypothetical"
+    },
+    {
+      "group": "prose helpers",
+      "name": "_fmt(nan, 1) degrades gracefully",
+      "input": "float('nan'), dp=1",
+      "expected": "no 'nan' in output",
+      "actual": "null",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_plural(1, 'goal')",
+      "input": "1",
+      "expected": "goal",
+      "actual": "goal",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_plural(2, 'goal')",
+      "input": "2",
+      "expected": "goals",
+      "actual": "goals",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "_plural(0, 'goal')",
+      "input": "0",
+      "expected": "goals",
+      "actual": "goals",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "fixture_label returns a string for a normal fixture",
+      "input": "{'opponent': 'ARS', 'is_home': True, 'difficulty': 3}",
+      "expected": "non-empty string",
+      "actual": "ARS",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "prose helpers",
+      "name": "fixture_label tolerates a blank fixture",
+      "input": "{}",
+      "expected": "no exception",
+      "actual": "TBC",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "A-Z index",
+      "name": "every player lands in a group",
+      "input": "[1, 2, 3]",
+      "expected": "3 players across the groups",
+      "actual": "[{\"letter\": \"A\", \"players\": [{\"code\": 3, \"web_name\": \"Alexander-Arnold\", \"full_name\": \"Trent Alexander-Arno ... g\": \"bukayo-saka-1\", \"path\": \"/player/bukayo-saka-1\", \"pos\": \"MID\", \"team_name\": \"Arsenal\", \"cost\": 5.0}]}]",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "A-Z index",
+      "name": "group keys are single A-Z letters",
+      "input": "['A', 'O', 'S']",
+      "expected": "each key is one letter A-Z",
+      "actual": "[\"A\", \"O\", \"S\"]",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "A-Z index",
+      "name": "accented surname files under the folded letter",
+      "input": "\u00d8degaard",
+      "expected": "filed under O not \u00d8",
+      "actual": "[\"A\", \"O\", \"S\"]",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "a valid 15-man squad is accepted",
+      "input": "15 unique players, positions 1-15",
+      "expected": "returns 15 cleaned picks",
+      "actual": "[{\"element_id\": 100, \"position\": 1, \"is_captain\": 0, \"is_vice_captain\": 0, \"cost\": null}, {\"element_id\": 10 ... 0, \"cost\": null}, {\"element_id\": 114, \"position\": 15, \"is_captain\": 0, \"is_vice_captain\": 0, \"cost\": null}]",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: picks is not a list",
+      "input": "'nope'",
+      "expected": "DraftError",
+      "actual": "DraftError: picks must be a list",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: picks is None",
+      "input": "None",
+      "expected": "DraftError",
+      "actual": "DraftError: picks must be a list",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: picks is a dict",
+      "input": "{}",
+      "expected": "DraftError",
+      "actual": "DraftError: picks must be a list",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: 14 players",
+      "input": "14 picks",
+      "expected": "DraftError",
+      "actual": "DraftError: a squad needs exactly 15 players, got 14",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: 16 players",
+      "input": "16 picks",
+      "expected": "DraftError",
+      "actual": "DraftError: a squad needs exactly 15 players, got 16",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: 0 players",
+      "input": "[]",
+      "expected": "DraftError",
+      "actual": "DraftError: a squad needs exactly 15 players, got 0",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: a pick is not an object",
+      "input": "['x'] * 15",
+      "expected": "DraftError",
+      "actual": "DraftError: each pick must be an object",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: a pick has no position",
+      "input": "15 picks, one missing position",
+      "expected": "DraftError",
+      "actual": "DraftError: each pick needs a numeric element id and position",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: position 0",
+      "input": "position 0 present",
+      "expected": "DraftError",
+      "actual": "DraftError: position 0 is outside 1-15",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: position 16",
+      "input": "position 16 present",
+      "expected": "DraftError",
+      "actual": "DraftError: position 16 is outside 1-15",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: negative position",
+      "input": "position -1",
+      "expected": "DraftError",
+      "actual": "DraftError: position -1 is outside 1-15",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: duplicate position",
+      "input": "two picks in position 1",
+      "expected": "DraftError",
+      "actual": "DraftError: two players in position 1",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: duplicate player",
+      "input": "same element_id twice",
+      "expected": "DraftError",
+      "actual": "DraftError: player 100 appears twice",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: non-numeric element id",
+      "input": "element_id 'abc'",
+      "expected": "DraftError",
+      "actual": "DraftError: each pick needs a numeric element id and position",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: two captains",
+      "input": "is_captain on two picks",
+      "expected": "DraftError",
+      "actual": "DraftError: only one captain allowed",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: two vice-captains",
+      "input": "is_vice_captain on two picks",
+      "expected": "DraftError",
+      "actual": "DraftError: only one vice-captain allowed",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "rejects: oversized payload",
+      "input": "20,000 picks",
+      "expected": "DraftError",
+      "actual": "DraftError: a squad needs exactly 15 players, got 20000",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "captain flag normalised to 0/1",
+      "input": "is_captain=1",
+      "expected": "int 0 or 1",
+      "actual": "1",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "cost coerced to float",
+      "input": "cost='5.5'",
+      "expected": "float 5.5",
+      "actual": "5.5",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "missing cost becomes None rather than raising",
+      "input": "no cost key",
+      "expected": "None",
+      "actual": "null",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft validation",
+      "name": "SQL in element_id is rejected at the validator",
+      "input": "element_id = \"1); DROP TABLE manager_draft;--\"",
+      "expected": "DraftError (int() refuses it)",
+      "actual": "DraftError",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "storage detection",
+      "name": "classifies bind mount from an explicit -v",
+      "input": "/srv/fpl-companion/state",
+      "expected": "bind",
+      "actual": "bind",
+      "ok": true,
+      "severity": "high",
+      "note": "'anon' is the silent data-loss case: a fresh volume on every docker run, indistinguishable from a correct mount by path alone"
+    },
+    {
+      "group": "storage detection",
+      "name": "classifies named docker volume",
+      "input": "/var/lib/docker/volumes/fpl_state/_data",
+      "expected": "volume",
+      "actual": "volume",
+      "ok": true,
+      "severity": "high",
+      "note": "'anon' is the silent data-loss case: a fresh volume on every docker run, indistinguishable from a correct mount by path alone"
+    },
+    {
+      "group": "storage detection",
+      "name": "classifies anonymous docker volume",
+      "input": "/var/lib/docker/volumes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/_data",
+      "expected": "anon",
+      "actual": "anon",
+      "ok": true,
+      "severity": "high",
+      "note": "'anon' is the silent data-loss case: a fresh volume on every docker run, indistinguishable from a correct mount by path alone"
+    },
+    {
+      "group": "storage detection",
+      "name": "a 63-char id is not treated as anonymous",
+      "input": "63 hex chars",
+      "expected": "no match",
+      "actual": "null",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "storage detection",
+      "name": "a 64-char id is treated as anonymous",
+      "input": "64 hex chars",
+      "expected": "match",
+      "actual": "\"<re.Match object; span=(0, 79), match='/volumes/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>\"",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "storage detection",
+      "name": "a readable name is not anonymous",
+      "input": "/volumes/fpl_state/_data",
+      "expected": "no match",
+      "actual": "null",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "storage detection",
+      "name": "storage_kind(None) never raises",
+      "input": "None",
+      "expected": "a verdict string, not an exception",
+      "actual": "image",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "storage detection",
+      "name": "storage_kind('/nonexistent/path/x.db') never raises",
+      "input": "'/nonexistent/path/x.db'",
+      "expected": "a verdict string, not an exception",
+      "actual": "image",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "storage detection",
+      "name": "storage_kind('') never raises",
+      "input": "''",
+      "expected": "a verdict string, not an exception",
+      "actual": "image",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "storage detection",
+      "name": "storage_kind('relative.db') never raises",
+      "input": "'relative.db'",
+      "expected": "a verdict string, not an exception",
+      "actual": "image",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "horizon points",
+      "name": "sums only the first n gameweeks",
+      "input": "10 gameweeks of 4.0 points, n=8",
+      "expected": "32.0",
+      "actual": "32.0",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "horizon points",
+      "name": "n larger than the fixture list",
+      "input": "10 gameweeks of 4.0, n=20",
+      "expected": "40.0",
+      "actual": "40.0",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "horizon points",
+      "name": "empty fixture list gives None",
+      "input": "{'next_gameweeks': []}",
+      "expected": "null",
+      "actual": "null",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "horizon points",
+      "name": "all-None points gives None",
+      "input": "3 gameweeks with points=None",
+      "expected": "null",
+      "actual": "null",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "horizon points",
+      "name": "a record with no fixture key degrades gracefully",
+      "input": "{}",
+      "expected": "None rather than KeyError",
+      "actual": "null",
+      "ok": true,
+      "severity": "low",
+      "note": "every record from build_index has the key, so this is defensive rather than a live fault"
+    },
+    {
+      "group": "page routes",
+      "name": "GET / status",
+      "input": "GET /",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET / is HTML",
+      "input": "GET /",
+      "expected": "text/html content-type",
+      "actual": "text/html; charset=utf-8",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET / has a non-trivial body",
+      "input": "GET /",
+      "expected": ">2000 bytes of HTML",
+      "actual": "13439",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET / document is not cached",
+      "input": "GET /",
+      "expected": "no-cache on the HTML document",
+      "actual": "no-cache, must-revalidate",
+      "ok": true,
+      "severity": "critical",
+      "note": "the document carries the versioned asset URLs"
+    },
+    {
+      "group": "page routes",
+      "name": "GET /my-team status",
+      "input": "GET /my-team",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /my-team is HTML",
+      "input": "GET /my-team",
+      "expected": "text/html content-type",
+      "actual": "text/html; charset=utf-8",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /my-team has a non-trivial body",
+      "input": "GET /my-team",
+      "expected": ">2000 bytes of HTML",
+      "actual": "24243",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /my-team document is not cached",
+      "input": "GET /my-team",
+      "expected": "no-cache on the HTML document",
+      "actual": "no-cache, must-revalidate",
+      "ok": true,
+      "severity": "critical",
+      "note": "the document carries the versioned asset URLs"
+    },
+    {
+      "group": "page routes",
+      "name": "GET /ai-teams status",
+      "input": "GET /ai-teams",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /ai-teams is HTML",
+      "input": "GET /ai-teams",
+      "expected": "text/html content-type",
+      "actual": "text/html; charset=utf-8",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /ai-teams has a non-trivial body",
+      "input": "GET /ai-teams",
+      "expected": ">2000 bytes of HTML",
+      "actual": "24243",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /ai-teams document is not cached",
+      "input": "GET /ai-teams",
+      "expected": "no-cache on the HTML document",
+      "actual": "no-cache, must-revalidate",
+      "ok": true,
+      "severity": "critical",
+      "note": "the document carries the versioned asset URLs"
+    },
+    {
+      "group": "page routes",
+      "name": "GET /players status",
+      "input": "GET /players",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /players is HTML",
+      "input": "GET /players",
+      "expected": "text/html content-type",
+      "actual": "text/html; charset=utf-8",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /players has a non-trivial body",
+      "input": "GET /players",
+      "expected": ">2000 bytes of HTML",
+      "actual": "24267",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /players document is not cached",
+      "input": "GET /players",
+      "expected": "no-cache on the HTML document",
+      "actual": "no-cache, must-revalidate",
+      "ok": true,
+      "severity": "critical",
+      "note": "the document carries the versioned asset URLs"
+    },
+    {
+      "group": "page routes",
+      "name": "GET /fixture-rotator status",
+      "input": "GET /fixture-rotator",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /fixture-rotator is HTML",
+      "input": "GET /fixture-rotator",
+      "expected": "text/html content-type",
+      "actual": "text/html; charset=utf-8",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /fixture-rotator has a non-trivial body",
+      "input": "GET /fixture-rotator",
+      "expected": ">2000 bytes of HTML",
+      "actual": "24241",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /fixture-rotator document is not cached",
+      "input": "GET /fixture-rotator",
+      "expected": "no-cache on the HTML document",
+      "actual": "no-cache, must-revalidate",
+      "ok": true,
+      "severity": "critical",
+      "note": "the document carries the versioned asset URLs"
+    },
+    {
+      "group": "page routes",
+      "name": "GET /players/a-z status",
+      "input": "GET /players/a-z",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /players/a-z is HTML",
+      "input": "GET /players/a-z",
+      "expected": "text/html content-type",
+      "actual": "text/html; charset=utf-8",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /players/a-z has a non-trivial body",
+      "input": "GET /players/a-z",
+      "expected": ">2000 bytes of HTML",
+      "actual": "139858",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /players/a-z document is not cached",
+      "input": "GET /players/a-z",
+      "expected": "no-cache on the HTML document",
+      "actual": "no-cache, must-revalidate",
+      "ok": true,
+      "severity": "critical",
+      "note": "the document carries the versioned asset URLs"
+    },
+    {
+      "group": "page routes",
+      "name": "GET /about status",
+      "input": "GET /about",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /about is HTML",
+      "input": "GET /about",
+      "expected": "text/html content-type",
+      "actual": "text/html; charset=utf-8",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /about has a non-trivial body",
+      "input": "GET /about",
+      "expected": ">2000 bytes of HTML",
+      "actual": "10499",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /about document is not cached",
+      "input": "GET /about",
+      "expected": "no-cache on the HTML document",
+      "actual": "no-cache, must-revalidate",
+      "ok": true,
+      "severity": "critical",
+      "note": "the document carries the versioned asset URLs"
+    },
+    {
+      "group": "page routes",
+      "name": "GET /privacy status",
+      "input": "GET /privacy",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /privacy is HTML",
+      "input": "GET /privacy",
+      "expected": "text/html content-type",
+      "actual": "text/html; charset=utf-8",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /privacy has a non-trivial body",
+      "input": "GET /privacy",
+      "expected": ">2000 bytes of HTML",
+      "actual": "9999",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /privacy document is not cached",
+      "input": "GET /privacy",
+      "expected": "no-cache on the HTML document",
+      "actual": "no-cache, must-revalidate",
+      "ok": true,
+      "severity": "critical",
+      "note": "the document carries the versioned asset URLs"
+    },
+    {
+      "group": "page routes",
+      "name": "GET /contact status",
+      "input": "GET /contact",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /contact is HTML",
+      "input": "GET /contact",
+      "expected": "text/html content-type",
+      "actual": "text/html; charset=utf-8",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /contact has a non-trivial body",
+      "input": "GET /contact",
+      "expected": ">2000 bytes of HTML",
+      "actual": "7557",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "GET /contact document is not cached",
+      "input": "GET /contact",
+      "expected": "no-cache on the HTML document",
+      "actual": "no-cache, must-revalidate",
+      "ok": true,
+      "severity": "critical",
+      "note": "the document carries the versioned asset URLs"
+    },
+    {
+      "group": "page routes",
+      "name": "unknown path 404s",
+      "input": "GET /nonexistent-page",
+      "expected": "404",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "page routes",
+      "name": "trailing slash does not 500",
+      "input": "GET /my-team/",
+      "expected": "redirect or 404, never 5xx",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "tab routing",
+      "name": "/my-team opens pane-team",
+      "input": "GET /my-team",
+      "expected": "__INITIAL_PANE__ = \"pane-team\"",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "tab routing",
+      "name": "/my-team marks its own nav link active",
+      "input": "GET /my-team",
+      "expected": "the matching nav-link carries .active",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "tab routing",
+      "name": "/my-team renders all four tab links as anchors",
+      "input": "GET /my-team",
+      "expected": "4 <a class=nav-link> elements",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": "anchors not buttons, or a crawler cannot follow them"
+    },
+    {
+      "group": "tab routing",
+      "name": "/ai-teams opens pane-ai-teams",
+      "input": "GET /ai-teams",
+      "expected": "__INITIAL_PANE__ = \"pane-ai-teams\"",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "tab routing",
+      "name": "/ai-teams marks its own nav link active",
+      "input": "GET /ai-teams",
+      "expected": "the matching nav-link carries .active",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "tab routing",
+      "name": "/ai-teams renders all four tab links as anchors",
+      "input": "GET /ai-teams",
+      "expected": "4 <a class=nav-link> elements",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": "anchors not buttons, or a crawler cannot follow them"
+    },
+    {
+      "group": "tab routing",
+      "name": "/players opens pane-players",
+      "input": "GET /players",
+      "expected": "__INITIAL_PANE__ = \"pane-players\"",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "tab routing",
+      "name": "/players marks its own nav link active",
+      "input": "GET /players",
+      "expected": "the matching nav-link carries .active",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "tab routing",
+      "name": "/players renders all four tab links as anchors",
+      "input": "GET /players",
+      "expected": "4 <a class=nav-link> elements",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": "anchors not buttons, or a crawler cannot follow them"
+    },
+    {
+      "group": "tab routing",
+      "name": "/fixture-rotator opens pane-rotator",
+      "input": "GET /fixture-rotator",
+      "expected": "__INITIAL_PANE__ = \"pane-rotator\"",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "tab routing",
+      "name": "/fixture-rotator marks its own nav link active",
+      "input": "GET /fixture-rotator",
+      "expected": "the matching nav-link carries .active",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "tab routing",
+      "name": "/fixture-rotator renders all four tab links as anchors",
+      "input": "GET /fixture-rotator",
+      "expected": "4 <a class=nav-link> elements",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "high",
+      "note": "anchors not buttons, or a crawler cannot follow them"
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/ title matches PAGES",
+      "input": "GET /",
+      "expected": "FPL Buddy \u2014 Fantasy Premier League ratings, AI teams and fixture rotation",
+      "actual": "FPL Buddy \u2014 Fantasy Premier League ratings, AI teams and fixture rotation",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/ has a description of usable length",
+      "input": "GET /",
+      "expected": "50-320 characters",
+      "actual": "203 chars",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/ canonical is absolute and correct",
+      "input": "GET /",
+      "expected": "https://fpl.mfhost.co.uk/",
+      "actual": "https://fpl.mfhost.co.uk/",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/ has og:title",
+      "input": "GET /",
+      "expected": "og:title present",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... n', function (e) { if (e.key === 'Enter') { e.preventDefault(); go(); } }); }()); </script> </body> </html>",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/my-team title matches PAGES",
+      "input": "GET /my-team",
+      "expected": "My FPL team \u2014 squad, lineup and transfer analysis | FPL Buddy",
+      "actual": "My FPL team \u2014 squad, lineup and transfer analysis | FPL Buddy",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/my-team has a description of usable length",
+      "input": "GET /my-team",
+      "expected": "50-320 characters",
+      "actual": "178 chars",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/my-team canonical is absolute and correct",
+      "input": "GET /my-team",
+      "expected": "https://fpl.mfhost.co.uk/my-team",
+      "actual": "https://fpl.mfhost.co.uk/my-team",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/my-team has og:title",
+      "input": "GET /my-team",
+      "expected": "og:title present",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/ai-teams title matches PAGES",
+      "input": "GET /ai-teams",
+      "expected": "AI Fantasy Premier League teams \u2014 AI Manager and best XV | FPL Buddy",
+      "actual": "AI Fantasy Premier League teams \u2014 AI Manager and best XV | FPL Buddy",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/ai-teams has a description of usable length",
+      "input": "GET /ai-teams",
+      "expected": "50-320 characters",
+      "actual": "169 chars",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/ai-teams canonical is absolute and correct",
+      "input": "GET /ai-teams",
+      "expected": "https://fpl.mfhost.co.uk/ai-teams",
+      "actual": "https://fpl.mfhost.co.uk/ai-teams",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/ai-teams has og:title",
+      "input": "GET /ai-teams",
+      "expected": "og:title present",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/players title matches PAGES",
+      "input": "GET /players",
+      "expected": "FPL player ratings and predicted points | FPL Buddy",
+      "actual": "FPL player ratings and predicted points | FPL Buddy",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/players has a description of usable length",
+      "input": "GET /players",
+      "expected": "50-320 characters",
+      "actual": "195 chars",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/players canonical is absolute and correct",
+      "input": "GET /players",
+      "expected": "https://fpl.mfhost.co.uk/players",
+      "actual": "https://fpl.mfhost.co.uk/players",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/players has og:title",
+      "input": "GET /players",
+      "expected": "og:title present",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/fixture-rotator title matches PAGES",
+      "input": "GET /fixture-rotator",
+      "expected": "FPL fixture rotation planner \u2014 best team pairs | FPL Buddy",
+      "actual": "FPL fixture rotation planner \u2014 best team pairs | FPL Buddy",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/fixture-rotator has a description of usable length",
+      "input": "GET /fixture-rotator",
+      "expected": "50-320 characters",
+      "actual": "174 chars",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/fixture-rotator canonical is absolute and correct",
+      "input": "GET /fixture-rotator",
+      "expected": "https://fpl.mfhost.co.uk/fixture-rotator",
+      "actual": "https://fpl.mfhost.co.uk/fixture-rotator",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/fixture-rotator has og:title",
+      "input": "GET /fixture-rotator",
+      "expected": "og:title present",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... /static/kits.js?v=f68b2c3086\"></script> <script src=\"/static/app.js?v=f68b2c3086\"></script> </body> </html>",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/players/a-z title matches PAGES",
+      "input": "GET /players/a-z",
+      "expected": "Every Fantasy Premier League player A-Z | FPL Buddy",
+      "actual": "Every Fantasy Premier League player A-Z | FPL Buddy",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/players/a-z has a description of usable length",
+      "input": "GET /players/a-z",
+      "expected": "50-320 characters",
+      "actual": "165 chars",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/players/a-z canonical is absolute and correct",
+      "input": "GET /players/a-z",
+      "expected": "https://fpl.mfhost.co.uk/players/a-z",
+      "actual": "https://fpl.mfhost.co.uk/players/a-z",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/players/a-z has og:title",
+      "input": "GET /players/a-z",
+      "expected": "og:title present",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... et.d; el.setAttribute('href', 'mailto:' + address); el.textContent = address; }); </script> </body> </html>",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/about title matches PAGES",
+      "input": "GET /about",
+      "expected": "About FPL Buddy \u2014 how the ratings and AI squads work",
+      "actual": "About FPL Buddy \u2014 how the ratings and AI squads work",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/about has a description of usable length",
+      "input": "GET /about",
+      "expected": "50-320 characters",
+      "actual": "110 chars",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/about canonical is absolute and correct",
+      "input": "GET /about",
+      "expected": "https://fpl.mfhost.co.uk/about",
+      "actual": "https://fpl.mfhost.co.uk/about",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/about has og:title",
+      "input": "GET /about",
+      "expected": "og:title present",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... et.d; el.setAttribute('href', 'mailto:' + address); el.textContent = address; }); </script> </body> </html>",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/privacy title matches PAGES",
+      "input": "GET /privacy",
+      "expected": "Privacy policy \u2014 FPL Buddy",
+      "actual": "Privacy policy \u2014 FPL Buddy",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/privacy has a description of usable length",
+      "input": "GET /privacy",
+      "expected": "50-320 characters",
+      "actual": "69 chars",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/privacy canonical is absolute and correct",
+      "input": "GET /privacy",
+      "expected": "https://fpl.mfhost.co.uk/privacy",
+      "actual": "https://fpl.mfhost.co.uk/privacy",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/privacy has og:title",
+      "input": "GET /privacy",
+      "expected": "og:title present",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... et.d; el.setAttribute('href', 'mailto:' + address); el.textContent = address; }); </script> </body> </html>",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/contact title matches PAGES",
+      "input": "GET /contact",
+      "expected": "Contact FPL Buddy",
+      "actual": "Contact FPL Buddy",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/contact has a description of usable length",
+      "input": "GET /contact",
+      "expected": "50-320 characters",
+      "actual": "73 chars",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/contact canonical is absolute and correct",
+      "input": "GET /contact",
+      "expected": "https://fpl.mfhost.co.uk/contact",
+      "actual": "https://fpl.mfhost.co.uk/contact",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "/contact has og:title",
+      "input": "GET /contact",
+      "expected": "og:title present",
+      "actual": "<!DOCTYPE html> <html lang=\"en\"> <head> <meta charset=\"UTF-8\"> <meta name=\"viewport\" content=\"width=device- ... et.d; el.setAttribute('href', 'mailto:' + address); el.textContent = address; }); </script> </body> </html>",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "SEO metadata",
+      "name": "every page title is unique",
+      "input": "['/', '/my-team', '/ai-teams', '/players', '/fixture-rotator', '/players/a-z', '/about', '/privacy', '/contact']",
+      "expected": "no two pages share a title",
+      "actual": "9",
+      "ok": true,
+      "severity": "high",
+      "note": "duplicate titles make pages compete with each other"
+    },
+    {
+      "group": "SEO metadata",
+      "name": "every description is unique",
+      "input": "['/', '/my-team', '/ai-teams', '/players', '/fixture-rotator', '/players/a-z', '/about', '/privacy', '/contact']",
+      "expected": "no two pages share a description",
+      "actual": "9",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "robots / security.txt",
+      "name": "robots.txt 200",
+      "input": "GET /robots.txt",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "robots / security.txt",
+      "name": "robots.txt points at the sitemap",
+      "input": "GET /robots.txt",
+      "expected": "Sitemap: https://fpl.mfhost.co.uk/sitemap.xml",
+      "actual": "User-agent: * Allow: / Disallow: /api/ Sitemap: https://fpl.mfhost.co.uk/sitemap.xml",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "robots / security.txt",
+      "name": "robots.txt disallows /api/",
+      "input": "GET /robots.txt",
+      "expected": "Disallow: /api/",
+      "actual": "User-agent: * Allow: / Disallow: /api/ Sitemap: https://fpl.mfhost.co.uk/sitemap.xml",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "robots / security.txt",
+      "name": "robots.txt does not block the whole site",
+      "input": "GET /robots.txt",
+      "expected": "no bare 'Disallow: /'",
+      "actual": "User-agent: * Allow: / Disallow: /api/ Sitemap: https://fpl.mfhost.co.uk/sitemap.xml",
+      "ok": true,
+      "severity": "critical",
+      "note": "one stray character here delists the entire site"
+    },
+    {
+      "group": "robots / security.txt",
+      "name": "security.txt 200",
+      "input": "GET /.well-known/security.txt",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "robots / security.txt",
+      "name": "security.txt has Contact and Expires",
+      "input": "GET /.well-known/security.txt",
+      "expected": "both RFC 9116 mandatory fields",
+      "actual": "Contact: mailto:security@fpl.mfhost.co.uk Expires: 2027-08-10T13:41:12Z Preferred-Languages: en Canonical: https://fpl.mfhost.co.uk/.well-known/security.txt",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "sitemap 200",
+      "input": "GET /sitemap.xml",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "sitemap content-type is XML",
+      "input": "GET /sitemap.xml",
+      "expected": "application/xml",
+      "actual": "application/xml",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "sitemap parses as XML",
+      "input": "GET /sitemap.xml",
+      "expected": "valid urlset",
+      "actual": "576 <loc> entries",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "sitemap URL count",
+      "input": "len(PAGES) + len(player_page_index())",
+      "expected": "576",
+      "actual": "576",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "every loc is absolute",
+      "input": "all <loc> values",
+      "expected": "all start with https://fpl.mfhost.co.uk",
+      "actual": "576",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "no duplicate URLs",
+      "input": "all <loc> values",
+      "expected": "all unique",
+      "actual": "0",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "under the 50,000 URL limit",
+      "input": "len(locs)",
+      "expected": "<= 50000",
+      "actual": "576",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "no unescaped ampersands",
+      "input": "raw sitemap body",
+      "expected": "no bare & outside an entity",
+      "actual": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"><url><loc ... 05</loc><lastmod>2026-08-10</lastmod><changefreq>weekly</changefreq><priority>0.6</priority></url></urlset>",
+      "ok": true,
+      "severity": "high",
+      "note": "a player named O'Brien & Co would otherwise break the file"
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "priorities are in range",
+      "input": "all <priority> values",
+      "expected": "0.0-1.0",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "changefreq values are valid",
+      "input": "all <changefreq> values",
+      "expected": "sitemaps.org vocabulary",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "sitemap.xml",
+      "name": "sampled sitemap URLs all resolve 200",
+      "input": "24 sampled URLs (head/middle/tail)",
+      "expected": "every one returns 200",
+      "actual": "all 200",
+      "ok": true,
+      "severity": "critical",
+      "note": "a sitemap listing a 404 is a crawl-budget leak"
+    },
+    {
+      "group": "player pages",
+      "name": "player index is populated",
+      "input": "main.player_page_index()",
+      "expected": "several hundred records",
+      "actual": "567",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "slugs are unique",
+      "input": "all page records",
+      "expected": "no collisions",
+      "actual": "0",
+      "ok": true,
+      "severity": "critical",
+      "note": "a collision means two players share one URL"
+    },
+    {
+      "group": "player pages",
+      "name": "every slug ends in its code",
+      "input": "all page records",
+      "expected": "slug ends with the record's code",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "every path is /player/<slug>",
+      "input": "all page records",
+      "expected": "consistent paths",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "GET /player/david-raya-martin-154561",
+      "input": "GET /player/david-raya-martin-154561",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/david-raya-martin-154561 names the player",
+      "input": "/player/david-raya-martin-154561",
+      "expected": "web_name appears in the body",
+      "actual": "Raya",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/david-raya-martin-154561 carries Person JSON-LD",
+      "input": "/player/david-raya-martin-154561",
+      "expected": "\"@type\": \"Person\"",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/david-raya-martin-154561 prose contains no 'nan'",
+      "input": "/player/david-raya-martin-154561",
+      "expected": "no NaN leaking into sentences",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/david-raya-martin-154561 prose contains no 'None'",
+      "input": "/player/david-raya-martin-154561",
+      "expected": "no Python None in sentences",
+      "actual": "checked",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "GET /player/kepa-arrizabalaga-revuelta-109745",
+      "input": "GET /player/kepa-arrizabalaga-revuelta-109745",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/kepa-arrizabalaga-revuelta-109745 names the player",
+      "input": "/player/kepa-arrizabalaga-revuelta-109745",
+      "expected": "web_name appears in the body",
+      "actual": "Arrizabalaga",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/kepa-arrizabalaga-revuelta-109745 carries Person JSON-LD",
+      "input": "/player/kepa-arrizabalaga-revuelta-109745",
+      "expected": "\"@type\": \"Person\"",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/kepa-arrizabalaga-revuelta-109745 prose contains no 'nan'",
+      "input": "/player/kepa-arrizabalaga-revuelta-109745",
+      "expected": "no NaN leaking into sentences",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/kepa-arrizabalaga-revuelta-109745 prose contains no 'None'",
+      "input": "/player/kepa-arrizabalaga-revuelta-109745",
+      "expected": "no Python None in sentences",
+      "actual": "checked",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "GET /player/illan-meslier-437495",
+      "input": "GET /player/illan-meslier-437495",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/illan-meslier-437495 names the player",
+      "input": "/player/illan-meslier-437495",
+      "expected": "web_name appears in the body",
+      "actual": "Meslier",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/illan-meslier-437495 carries Person JSON-LD",
+      "input": "/player/illan-meslier-437495",
+      "expected": "\"@type\": \"Person\"",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/illan-meslier-437495 prose contains no 'nan'",
+      "input": "/player/illan-meslier-437495",
+      "expected": "no NaN leaking into sentences",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/illan-meslier-437495 prose contains no 'None'",
+      "input": "/player/illan-meslier-437495",
+      "expected": "no Python None in sentences",
+      "actual": "checked",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "GET /player/emiliano-martinez-romero-98980",
+      "input": "GET /player/emiliano-martinez-romero-98980",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/emiliano-martinez-romero-98980 names the player",
+      "input": "/player/emiliano-martinez-romero-98980",
+      "expected": "web_name appears in the body",
+      "actual": "Martinez",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/emiliano-martinez-romero-98980 carries Person JSON-LD",
+      "input": "/player/emiliano-martinez-romero-98980",
+      "expected": "\"@type\": \"Person\"",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/emiliano-martinez-romero-98980 prose contains no 'nan'",
+      "input": "/player/emiliano-martinez-romero-98980",
+      "expected": "no NaN leaking into sentences",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/emiliano-martinez-romero-98980 prose contains no 'None'",
+      "input": "/player/emiliano-martinez-romero-98980",
+      "expected": "no Python None in sentences",
+      "actual": "checked",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "GET /player/marco-bizot-72147",
+      "input": "GET /player/marco-bizot-72147",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/marco-bizot-72147 names the player",
+      "input": "/player/marco-bizot-72147",
+      "expected": "web_name appears in the body",
+      "actual": "M.Bizot",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/marco-bizot-72147 carries Person JSON-LD",
+      "input": "/player/marco-bizot-72147",
+      "expected": "\"@type\": \"Person\"",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/marco-bizot-72147 prose contains no 'nan'",
+      "input": "/player/marco-bizot-72147",
+      "expected": "no NaN leaking into sentences",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "/player/marco-bizot-72147 prose contains no 'None'",
+      "input": "/player/marco-bizot-72147",
+      "expected": "no Python None in sentences",
+      "actual": "checked",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "non-canonical slug 301s",
+      "input": "GET /player/wrong-words-154561",
+      "expected": "301",
+      "actual": "301",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "301 points at the canonical path",
+      "input": "GET /player/wrong-words-154561",
+      "expected": "/player/david-raya-martin-154561",
+      "actual": "/player/david-raya-martin-154561",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "404 for a slug with no trailing number",
+      "input": "GET /player/no-digits-here",
+      "expected": "404 (or 307 for the empty case)",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "404 for a slug with unknown code",
+      "input": "GET /player/999999999",
+      "expected": "404 (or 307 for the empty case)",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "404 for a slug with empty slug",
+      "input": "GET /player/",
+      "expected": "404 (or 307 for the empty case)",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "player pages",
+      "name": "404 for a slug with just a hyphen",
+      "input": "GET /player/-",
+      "expected": "404 (or 307 for the empty case)",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "A-Z index page",
+      "name": "A-Z page 200",
+      "input": "GET /players/a-z",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "A-Z index page",
+      "name": "A-Z links to every player",
+      "input": "GET /players/a-z",
+      "expected": "567",
+      "actual": "567",
+      "ok": true,
+      "severity": "high",
+      "note": "the page is what stops the player pages being orphans"
+    },
+    {
+      "group": "A-Z index page",
+      "name": "A-Z links all exist in the index",
+      "input": "GET /players/a-z",
+      "expected": "no dangling links",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "compression",
+      "name": "large API response is gzipped",
+      "input": "GET /api/all_players (accept gzip)",
+      "expected": "content-encoding: gzip",
+      "actual": "gzip",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "compression",
+      "name": "HTML is gzipped",
+      "input": "GET / (accept gzip)",
+      "expected": "content-encoding: gzip",
+      "actual": "gzip",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/app.js served",
+      "input": "GET /static/app.js",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/app.js is cacheable",
+      "input": "GET /static/app.js",
+      "expected": "max-age=86400",
+      "actual": "public, max-age=86400",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/style.css served",
+      "input": "GET /static/style.css",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/style.css is cacheable",
+      "input": "GET /static/style.css",
+      "expected": "max-age=86400",
+      "actual": "public, max-age=86400",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/kits.js served",
+      "input": "GET /static/kits.js",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/kits.js is cacheable",
+      "input": "GET /static/kits.js",
+      "expected": "max-age=86400",
+      "actual": "public, max-age=86400",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/favicon.png served",
+      "input": "GET /static/favicon.png",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/favicon.png is cacheable",
+      "input": "GET /static/favicon.png",
+      "expected": "max-age=86400",
+      "actual": "public, max-age=86400",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/icon_180.png served",
+      "input": "GET /static/icon_180.png",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/icon_180.png is cacheable",
+      "input": "GET /static/icon_180.png",
+      "expected": "max-age=86400",
+      "actual": "public, max-age=86400",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "static assets",
+      "name": "/static/style.css is version-stamped on /",
+      "input": "GET /",
+      "expected": "/static/style.css?v=<token>",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "without the token a phone can pin itself to stale CSS"
+    },
+    {
+      "group": "static assets",
+      "name": "/static/style.css is version-stamped on /my-team",
+      "input": "GET /my-team",
+      "expected": "/static/style.css?v=<token>",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "without the token a phone can pin itself to stale CSS"
+    },
+    {
+      "group": "static assets",
+      "name": "/static/app.js is version-stamped on /my-team",
+      "input": "GET /my-team",
+      "expected": "/static/app.js?v=<token>",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "without the token a phone can pin itself to stale CSS"
+    },
+    {
+      "group": "static assets",
+      "name": "/static/kits.js is version-stamped on /my-team",
+      "input": "GET /my-team",
+      "expected": "/static/kits.js?v=<token>",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "without the token a phone can pin itself to stale CSS"
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ratings status",
+      "input": "GET /api/ratings",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ratings returns JSON",
+      "input": "GET /api/ratings",
+      "expected": "parseable JSON object",
+      "actual": "dict",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ratings has 'results'",
+      "input": "GET /api/ratings",
+      "expected": "key 'results' present",
+      "actual": "[\"results\"]",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ratings contains no NaN/Infinity",
+      "input": "GET /api/ratings",
+      "expected": "strictly valid JSON numbers",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "bare NaN makes JSON.parse throw in the browser"
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ratings?position=MID&top_n=5 status",
+      "input": "GET /api/ratings?position=MID&top_n=5",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ratings?position=MID&top_n=5 returns JSON",
+      "input": "GET /api/ratings?position=MID&top_n=5",
+      "expected": "parseable JSON object",
+      "actual": "dict",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ratings?position=MID&top_n=5 has 'results'",
+      "input": "GET /api/ratings?position=MID&top_n=5",
+      "expected": "key 'results' present",
+      "actual": "[\"results\"]",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ratings?position=MID&top_n=5 contains no NaN/Infinity",
+      "input": "GET /api/ratings?position=MID&top_n=5",
+      "expected": "strictly valid JSON numbers",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "bare NaN makes JSON.parse throw in the browser"
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/all_players status",
+      "input": "GET /api/all_players",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/all_players returns JSON",
+      "input": "GET /api/all_players",
+      "expected": "parseable JSON object",
+      "actual": "dict",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/all_players has 'players'",
+      "input": "GET /api/all_players",
+      "expected": "key 'players' present",
+      "actual": "[\"players\"]",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/all_players contains no NaN/Infinity",
+      "input": "GET /api/all_players",
+      "expected": "strictly valid JSON numbers",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "bare NaN makes JSON.parse throw in the browser"
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/underperforming?top_n=5 status",
+      "input": "GET /api/underperforming?top_n=5",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/underperforming?top_n=5 returns JSON",
+      "input": "GET /api/underperforming?top_n=5",
+      "expected": "parseable JSON object",
+      "actual": "dict",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/underperforming?top_n=5 contains no NaN/Infinity",
+      "input": "GET /api/underperforming?top_n=5",
+      "expected": "strictly valid JSON numbers",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "bare NaN makes JSON.parse throw in the browser"
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/rotation?category=defender status",
+      "input": "GET /api/rotation?category=defender",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/rotation?category=defender returns JSON",
+      "input": "GET /api/rotation?category=defender",
+      "expected": "parseable JSON object",
+      "actual": "dict",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/rotation?category=defender has 'pairs'",
+      "input": "GET /api/rotation?category=defender",
+      "expected": "key 'pairs' present",
+      "actual": "[\"gameweeks\", \"teams\", \"pairs\"]",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/rotation?category=defender contains no NaN/Infinity",
+      "input": "GET /api/rotation?category=defender",
+      "expected": "strictly valid JSON numbers",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "bare NaN makes JSON.parse throw in the browser"
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/rotation?category=attacker status",
+      "input": "GET /api/rotation?category=attacker",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/rotation?category=attacker returns JSON",
+      "input": "GET /api/rotation?category=attacker",
+      "expected": "parseable JSON object",
+      "actual": "dict",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/rotation?category=attacker has 'pairs'",
+      "input": "GET /api/rotation?category=attacker",
+      "expected": "key 'pairs' present",
+      "actual": "[\"gameweeks\", \"teams\", \"pairs\"]",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/rotation?category=attacker contains no NaN/Infinity",
+      "input": "GET /api/rotation?category=attacker",
+      "expected": "strictly valid JSON numbers",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "bare NaN makes JSON.parse throw in the browser"
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/status status",
+      "input": "GET /api/ai/status",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/status returns JSON",
+      "input": "GET /api/ai/status",
+      "expected": "parseable JSON object",
+      "actual": "dict",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/status has 'db'",
+      "input": "GET /api/ai/status",
+      "expected": "key 'db' present",
+      "actual": "[\"db\", \"data\", \"mode\", \"current_gameweek\", \"next_gameweek\", \"processed_deadlines\", \"known_managers\"]",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/status contains no NaN/Infinity",
+      "input": "GET /api/ai/status",
+      "expected": "strictly valid JSON numbers",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "bare NaN makes JSON.parse throw in the browser"
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/history status",
+      "input": "GET /api/ai/history",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/history returns JSON",
+      "input": "GET /api/ai/history",
+      "expected": "parseable JSON object",
+      "actual": "dict",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/history has 'snapshots'",
+      "input": "GET /api/ai/history",
+      "expected": "key 'snapshots' present",
+      "actual": "[\"available\", \"snapshots\"]",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/history contains no NaN/Infinity",
+      "input": "GET /api/ai/history",
+      "expected": "strictly valid JSON numbers",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "bare NaN makes JSON.parse throw in the browser"
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/manager/history status",
+      "input": "GET /api/ai/manager/history",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/manager/history returns JSON",
+      "input": "GET /api/ai/manager/history",
+      "expected": "parseable JSON object",
+      "actual": "dict",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/manager/history has 'history'",
+      "input": "GET /api/ai/manager/history",
+      "expected": "key 'history' present",
+      "actual": "[\"available\", \"history\"]",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/ai/manager/history contains no NaN/Infinity",
+      "input": "GET /api/ai/manager/history",
+      "expected": "strictly valid JSON numbers",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "bare NaN makes JSON.parse throw in the browser"
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/search?q=sa status",
+      "input": "GET /api/search?q=sa",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/search?q=sa returns JSON",
+      "input": "GET /api/search?q=sa",
+      "expected": "parseable JSON object",
+      "actual": "dict",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/search?q=sa has 'results'",
+      "input": "GET /api/search?q=sa",
+      "expected": "key 'results' present",
+      "actual": "[\"results\"]",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "GET /api/search?q=sa contains no NaN/Infinity",
+      "input": "GET /api/search?q=sa",
+      "expected": "strictly valid JSON numbers",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": "bare NaN makes JSON.parse throw in the browser"
+    },
+    {
+      "group": "API contract",
+      "name": "/api/ratings is publicly cacheable",
+      "input": "GET /api/ratings",
+      "expected": "public, max-age=300",
+      "actual": "public, max-age=300",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "/api/all_players is publicly cacheable",
+      "input": "GET /api/all_players",
+      "expected": "public, max-age=300",
+      "actual": "public, max-age=300",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "/api/underperforming is publicly cacheable",
+      "input": "GET /api/underperforming",
+      "expected": "public, max-age=300",
+      "actual": "public, max-age=300",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "/api/rotation is publicly cacheable",
+      "input": "GET /api/rotation",
+      "expected": "public, max-age=300",
+      "actual": "public, max-age=300",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API contract",
+      "name": "/api/news is uncacheable",
+      "input": "GET /api/news",
+      "expected": "no-store",
+      "actual": "no-store, max-age=0",
+      "ok": true,
+      "severity": "high",
+      "note": "a cached injury feed is worse than no feed"
+    },
+    {
+      "group": "API parameters",
+      "name": "position=Goalkeeper returns rows",
+      "input": "GET /api/ratings?position=Goalkeeper",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API parameters",
+      "name": "position=Defender returns rows",
+      "input": "GET /api/ratings?position=Defender",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API parameters",
+      "name": "position=Midfielder returns rows",
+      "input": "GET /api/ratings?position=Midfielder",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API parameters",
+      "name": "position=Forward returns rows",
+      "input": "GET /api/ratings?position=Forward",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API parameters",
+      "name": "position=All returns rows",
+      "input": "GET /api/ratings?position=All",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API parameters",
+      "name": "position=GK (short code) returns rows",
+      "input": "GET /api/ratings?position=GK",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": "position_dfs is keyed 'Goalkeeper'/'Defender'/...; every other layer of the app says GK/DEF/MID/FWD"
+    },
+    {
+      "group": "API parameters",
+      "name": "position=DEF (short code) returns rows",
+      "input": "GET /api/ratings?position=DEF",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": "position_dfs is keyed 'Goalkeeper'/'Defender'/...; every other layer of the app says GK/DEF/MID/FWD"
+    },
+    {
+      "group": "API parameters",
+      "name": "position=MID (short code) returns rows",
+      "input": "GET /api/ratings?position=MID",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": "position_dfs is keyed 'Goalkeeper'/'Defender'/...; every other layer of the app says GK/DEF/MID/FWD"
+    },
+    {
+      "group": "API parameters",
+      "name": "position=FWD (short code) returns rows",
+      "input": "GET /api/ratings?position=FWD",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": "position_dfs is keyed 'Goalkeeper'/'Defender'/...; every other layer of the app says GK/DEF/MID/FWD"
+    },
+    {
+      "group": "API parameters",
+      "name": "position=gk (short code) returns rows",
+      "input": "GET /api/ratings?position=gk",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": "position_dfs is keyed 'Goalkeeper'/'Defender'/...; every other layer of the app says GK/DEF/MID/FWD"
+    },
+    {
+      "group": "API parameters",
+      "name": "position=Mid (short code) returns rows",
+      "input": "GET /api/ratings?position=Mid",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": "position_dfs is keyed 'Goalkeeper'/'Defender'/...; every other layer of the app says GK/DEF/MID/FWD"
+    },
+    {
+      "group": "API parameters",
+      "name": "position=GKP (short code) returns rows",
+      "input": "GET /api/ratings?position=GKP",
+      "expected": "non-empty results",
+      "actual": "20",
+      "ok": true,
+      "severity": "high",
+      "note": "position_dfs is keyed 'Goalkeeper'/'Defender'/...; every other layer of the app says GK/DEF/MID/FWD"
+    },
+    {
+      "group": "API parameters",
+      "name": "GK alias selects goalkeepers",
+      "input": "GET /api/ratings?position=GK&top_n=5",
+      "expected": "every row's position is Goalkeeper",
+      "actual": "\"{'Goalkeeper'}\"",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API parameters",
+      "name": "unknown position returns empty, not an error",
+      "input": "GET /api/ratings?position=NOPE",
+      "expected": "[]",
+      "actual": "[]",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "API parameters",
+      "name": "top_n is respected",
+      "input": "GET /api/ratings?top_n=5",
+      "expected": "5 rows",
+      "actual": "5",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "API parameters",
+      "name": "top_n=0 does not error",
+      "input": "GET /api/ratings?top_n=0",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "API parameters",
+      "name": "negative top_n does not 500",
+      "input": "GET /api/ratings?top_n=-5",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "API parameters",
+      "name": "absurd top_n does not 500",
+      "input": "GET /api/ratings?top_n=999999999",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "medium",
+      "note": "head() clamps, so this returns the whole pool"
+    },
+    {
+      "group": "API parameters",
+      "name": "non-numeric top_n is a 422",
+      "input": "GET /api/ratings?top_n=abc",
+      "expected": "422",
+      "actual": "422",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "data shape",
+      "name": "ratings are sorted descending",
+      "input": "GET /api/ratings?top_n=50",
+      "expected": "rating monotonically non-increasing",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "data shape",
+      "name": "every row has a web_name",
+      "input": "GET /api/ratings?top_n=50",
+      "expected": "no blank names",
+      "actual": "checked",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "data shape",
+      "name": "all_players is the full pool",
+      "input": "GET /api/all_players",
+      "expected": ">400 players",
+      "actual": "567",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "data shape",
+      "name": "every player has a season-stable code",
+      "input": "GET /api/all_players",
+      "expected": "no missing 'code'",
+      "actual": "checked",
+      "ok": true,
+      "severity": "critical",
+      "note": "code is what the per-player URLs are keyed on"
+    },
+    {
+      "group": "data shape",
+      "name": "every player carries its page path",
+      "input": "GET /api/all_players",
+      "expected": "no missing 'path'",
+      "actual": "none missing",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "data shape",
+      "name": "player codes are unique",
+      "input": "GET /api/all_players",
+      "expected": "no duplicates",
+      "actual": "0",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search short prefix: 'sa'",
+      "input": "GET /api/search?q='sa'",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search full surname: 'Salah'",
+      "input": "GET /api/search?q='Salah'",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search uppercase: 'SALAH'",
+      "input": "GET /api/search?q='SALAH'",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search no match: 'zzzzzzzz'",
+      "input": "GET /api/search?q='zzzzzzzz'",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search accented single char: '\u00e9'",
+      "input": "GET /api/search?q='\u00e9'",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search SQL-ish: \"' OR 1=1 --\"",
+      "input": "GET /api/search?q=\"' OR 1=1 --\"",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search HTML-ish: '<script>'",
+      "input": "GET /api/search?q='<script>'",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search SQL wildcard: '%'",
+      "input": "GET /api/search?q='%'",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search SQL single-char wildcard: '_'",
+      "input": "GET /api/search?q='_'",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search single letter: 'o'",
+      "input": "GET /api/search?q='o'",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search common particle: 'van'",
+      "input": "GET /api/search?q='van'",
+      "expected": "200 with a results list",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "search with no q is a 422",
+      "input": "GET /api/search",
+      "expected": "422",
+      "actual": "422",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "search",
+      "name": "a real surname finds someone",
+      "input": "GET /api/search?q=salah",
+      "expected": "at least one result",
+      "actual": "0",
+      "ok": true,
+      "severity": "low",
+      "note": "tolerant: the pool depends on the season's data"
+    },
+    {
+      "group": "search",
+      "name": "a broad query still returns 200",
+      "input": "GET /api/search?q=a",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": "~40% of the preseason pool has no predicted_points"
+    },
+    {
+      "group": "search",
+      "name": "absent predictions serialise as null, not NaN",
+      "input": "GET /api/search?q=a",
+      "expected": "null in the JSON body",
+      "actual": "188 of 474 rows are null",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft round-trip",
+      "name": "unsaved id reports unavailable",
+      "input": "GET /api/draft/999999999",
+      "expected": "false",
+      "actual": "false",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft round-trip",
+      "name": "save returns 200",
+      "input": "POST /api/draft/999999999 (15 valid picks)",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft round-trip",
+      "name": "save reports 15 picks stored",
+      "input": "POST body",
+      "expected": "15",
+      "actual": "15",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft round-trip",
+      "name": "saved draft reads back",
+      "input": "GET /api/draft/999999999",
+      "expected": "true",
+      "actual": "true",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft round-trip",
+      "name": "squad has 15 players",
+      "input": "GET /api/draft/999999999",
+      "expected": "15",
+      "actual": "15",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft round-trip",
+      "name": "captain survived the round-trip",
+      "input": "GET /api/draft/999999999",
+      "expected": "exactly one is_captain",
+      "actual": "checked",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft round-trip",
+      "name": "first 11 are marked starting",
+      "input": "GET /api/draft/999999999",
+      "expected": "11 starters",
+      "actual": "11",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft round-trip",
+      "name": "re-saving replaces rather than appends",
+      "input": "POST twice, then GET",
+      "expected": "15",
+      "actual": "15",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft round-trip",
+      "name": "rejects empty picks",
+      "input": "POST /api/draft/999999999 empty picks",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here would mean an unvalidated payload reached the DB"
+    },
+    {
+      "group": "draft round-trip",
+      "name": "rejects 14 picks",
+      "input": "POST /api/draft/999999999 14 picks",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here would mean an unvalidated payload reached the DB"
+    },
+    {
+      "group": "draft round-trip",
+      "name": "rejects duplicate player",
+      "input": "POST /api/draft/999999999 duplicate player",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here would mean an unvalidated payload reached the DB"
+    },
+    {
+      "group": "draft round-trip",
+      "name": "rejects picks not a list",
+      "input": "POST /api/draft/999999999 picks not a list",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here would mean an unvalidated payload reached the DB"
+    },
+    {
+      "group": "draft round-trip",
+      "name": "rejects no picks key",
+      "input": "POST /api/draft/999999999 no picks key",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here would mean an unvalidated payload reached the DB"
+    },
+    {
+      "group": "draft round-trip",
+      "name": "rejects two captains",
+      "input": "POST /api/draft/999999999 two captains",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here would mean an unvalidated payload reached the DB"
+    },
+    {
+      "group": "draft round-trip",
+      "name": "delete returns 200",
+      "input": "DELETE /api/draft/999999999",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "draft round-trip",
+      "name": "deleted draft is gone",
+      "input": "GET /api/draft/999999999",
+      "expected": "false",
+      "actual": "false",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "AI endpoints",
+      "name": "GET /api/ai/best_xv status",
+      "input": "GET /api/ai/best_xv",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "AI endpoints",
+      "name": "/api/ai/best_xv states availability",
+      "input": "GET /api/ai/best_xv",
+      "expected": "'available' key present",
+      "actual": "[\"available\", \"detail\"]",
+      "ok": true,
+      "severity": "high",
+      "note": "the front end branches on this rather than on HTTP status"
+    },
+    {
+      "group": "AI endpoints",
+      "name": "GET /api/ai/manager status",
+      "input": "GET /api/ai/manager",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "AI endpoints",
+      "name": "/api/ai/manager states availability",
+      "input": "GET /api/ai/manager",
+      "expected": "'available' key present",
+      "actual": "[\"available\", \"detail\"]",
+      "ok": true,
+      "severity": "high",
+      "note": "the front end branches on this rather than on HTTP status"
+    },
+    {
+      "group": "AI endpoints",
+      "name": "best_xv accepts a gameweek",
+      "input": "GET /api/ai/best_xv?gameweek=1",
+      "expected": "200",
+      "actual": "200",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "AI endpoints",
+      "name": "negative gameweek does not 500",
+      "input": "GET /api/ai/best_xv?gameweek=-1",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "AI endpoints",
+      "name": "zero budget does not 500",
+      "input": "GET /api/ai/best_xv?budget=0",
+      "expected": "status < 500, unavailable is fine",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "upstream proxies",
+      "name": "GET /api/live/1 never 5xx",
+      "input": "GET /api/live/1",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "upstream proxies",
+      "name": "GET /api/live/1 states availability",
+      "input": "GET /api/live/1",
+      "expected": "'available' key",
+      "actual": "[\"available\", \"gameweek\", \"detail\"]",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "upstream proxies",
+      "name": "GET /api/live/38 never 5xx",
+      "input": "GET /api/live/38",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "upstream proxies",
+      "name": "GET /api/live/38 states availability",
+      "input": "GET /api/live/38",
+      "expected": "'available' key",
+      "actual": "[\"available\", \"gameweek\", \"detail\"]",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "upstream proxies",
+      "name": "GET /api/live/0 never 5xx",
+      "input": "GET /api/live/0",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "upstream proxies",
+      "name": "GET /api/live/0 states availability",
+      "input": "GET /api/live/0",
+      "expected": "'available' key",
+      "actual": "[\"available\", \"gameweek\", \"detail\"]",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "upstream proxies",
+      "name": "GET /api/live/9999 never 5xx",
+      "input": "GET /api/live/9999",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "upstream proxies",
+      "name": "GET /api/live/9999 states availability",
+      "input": "GET /api/live/9999",
+      "expected": "'available' key",
+      "actual": "[\"available\", \"gameweek\", \"detail\"]",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "upstream proxies",
+      "name": "player summary never 5xx",
+      "input": "GET /api/player/1",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "upstream proxies",
+      "name": "news never 5xx",
+      "input": "GET /api/news?limit=5",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1 OR 1=1'",
+      "input": "GET /api/draft/1 OR 1=1",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1 OR 1=1'",
+      "input": "GET /api/league/1 OR 1=1",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1 OR 1=1'",
+      "input": "GET /api/player/1 OR 1=1",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1 OR 1=1'",
+      "input": "GET /api/manager/1 OR 1=1/history",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1; DROP TABLE manager_draft;--'",
+      "input": "GET /api/draft/1; DROP TABLE manager_draft;--",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1; DROP TABLE manager_draft;--'",
+      "input": "GET /api/league/1; DROP TABLE manager_draft;--",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1; DROP TABLE manager_draft;--'",
+      "input": "GET /api/player/1; DROP TABLE manager_draft;--",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1; DROP TABLE manager_draft;--'",
+      "input": "GET /api/manager/1; DROP TABLE manager_draft;--/history",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"' OR '1'='1\"",
+      "input": "GET /api/draft/' OR '1'='1",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"' OR '1'='1\"",
+      "input": "GET /api/league/' OR '1'='1",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"' OR '1'='1\"",
+      "input": "GET /api/player/' OR '1'='1",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"' OR '1'='1\"",
+      "input": "GET /api/manager/' OR '1'='1/history",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"1' UNION SELECT name FROM sqlite_master--\"",
+      "input": "GET /api/draft/1' UNION SELECT name FROM sqlite_master--",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"1' UNION SELECT name FROM sqlite_master--\"",
+      "input": "GET /api/league/1' UNION SELECT name FROM sqlite_master--",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"1' UNION SELECT name FROM sqlite_master--\"",
+      "input": "GET /api/player/1' UNION SELECT name FROM sqlite_master--",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"1' UNION SELECT name FROM sqlite_master--\"",
+      "input": "GET /api/manager/1' UNION SELECT name FROM sqlite_master--/history",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1/**/OR/**/1=1'",
+      "input": "GET /api/draft/1/**/OR/**/1=1",
+      "expected": "404 or 422 \u2014 handler never runs",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1/**/OR/**/1=1'",
+      "input": "GET /api/league/1/**/OR/**/1=1",
+      "expected": "404 or 422 \u2014 handler never runs",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1/**/OR/**/1=1'",
+      "input": "GET /api/player/1/**/OR/**/1=1",
+      "expected": "404 or 422 \u2014 handler never runs",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects '1/**/OR/**/1=1'",
+      "input": "GET /api/manager/1/**/OR/**/1=1/history",
+      "expected": "404 or 422 \u2014 handler never runs",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"admin'--\"",
+      "input": "GET /api/draft/admin'--",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"admin'--\"",
+      "input": "GET /api/league/admin'--",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"admin'--\"",
+      "input": "GET /api/player/admin'--",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "int path param rejects \"admin'--\"",
+      "input": "GET /api/manager/admin'--/history",
+      "expected": "422 \u2014 handler never runs",
+      "actual": "422",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "draft body rejects element_id='1 OR 1=1'",
+      "input": "POST /api/draft/999999998 element_id='1 OR 1=1'",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "draft body rejects element_id='1; DROP TABLE manager_draft;--'",
+      "input": "POST /api/draft/999999998 element_id='1; DROP TABLE manager_draft;--'",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "draft body rejects element_id=\"' OR '1'='1\"",
+      "input": "POST /api/draft/999999998 element_id=\"' OR '1'='1\"",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "draft body rejects element_id=\"1' UNION SELECT name FROM sqlite_master--\"",
+      "input": "POST /api/draft/999999998 element_id=\"1' UNION SELECT name FROM sqlite_master--\"",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "draft body rejects element_id='1/**/OR/**/1=1'",
+      "input": "POST /api/draft/999999998 element_id='1/**/OR/**/1=1'",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "draft body rejects element_id=\"admin'--\"",
+      "input": "POST /api/draft/999999998 element_id=\"admin'--\"",
+      "expected": "400 Bad Request",
+      "actual": "400",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "search survives '1 OR 1=1'",
+      "input": "GET /api/search?q='1 OR 1=1'",
+      "expected": "200, no error",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "search survives '1; DROP TABLE manager_draft;--'",
+      "input": "GET /api/search?q='1; DROP TABLE manager_draft;--'",
+      "expected": "200, no error",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "search survives \"' OR '1'='1\"",
+      "input": "GET /api/search?q=\"' OR '1'='1\"",
+      "expected": "200, no error",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "search survives \"1' UNION SELECT name FROM sqlite_master--\"",
+      "input": "GET /api/search?q=\"1' UNION SELECT name FROM sqlite_master--\"",
+      "expected": "200, no error",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "search survives '1/**/OR/**/1=1'",
+      "input": "GET /api/search?q='1/**/OR/**/1=1'",
+      "expected": "200, no error",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "search survives \"admin'--\"",
+      "input": "GET /api/search?q=\"admin'--\"",
+      "expected": "200, no error",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "SQL injection",
+      "name": "schema intact after injection attempts",
+      "input": "GET /api/ai/status",
+      "expected": "manager_draft still present",
+      "actual": "[\"ai_team_snapshot\", \"ai_team_snapshot_picks\", \"ai_transfer_log\", \"known_manager\", \"manager_draft\", \"manager_draft_picks\", \"manager_team\", \"manager_team_picks\", \"processed_deadline\"]",
+      "ok": true,
+      "severity": "critical",
+      "note": "the check that the DROP attempts genuinely did nothing"
+    },
+    {
+      "group": "regex injection",
+      "name": "invalid regex '**' (multiple repeat)",
+      "input": "GET /api/search?q='**'",
+      "expected": "200 with no matches \u2014 the input is data, not a pattern",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here means the query string is compiled as a regex"
+    },
+    {
+      "group": "regex injection",
+      "name": "invalid regex '(' (unbalanced group)",
+      "input": "GET /api/search?q='('",
+      "expected": "200 with no matches \u2014 the input is data, not a pattern",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here means the query string is compiled as a regex"
+    },
+    {
+      "group": "regex injection",
+      "name": "invalid regex '[' (unterminated character class)",
+      "input": "GET /api/search?q='['",
+      "expected": "200 with no matches \u2014 the input is data, not a pattern",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here means the query string is compiled as a regex"
+    },
+    {
+      "group": "regex injection",
+      "name": "invalid regex 'a{99999999}' (absurd repeat count)",
+      "input": "GET /api/search?q='a{99999999}'",
+      "expected": "200 with no matches \u2014 the input is data, not a pattern",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here means the query string is compiled as a regex"
+    },
+    {
+      "group": "regex injection",
+      "name": "invalid regex '(?P<n>a)(?P<n>b)' (duplicate group name)",
+      "input": "GET /api/search?q='(?P<n>a)(?P<n>b)'",
+      "expected": "200 with no matches \u2014 the input is data, not a pattern",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here means the query string is compiled as a regex"
+    },
+    {
+      "group": "regex injection",
+      "name": "invalid regex '\\\\' (trailing backslash)",
+      "input": "GET /api/search?q='\\\\'",
+      "expected": "200 with no matches \u2014 the input is data, not a pattern",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": "a 500 here means the query string is compiled as a regex"
+    },
+    {
+      "group": "regex injection",
+      "name": "ReDoS pattern '(a+)+$' (nested quantifier) is not evaluated",
+      "input": "GET /api/search?q='(a+)+$'",
+      "expected": "returns in under 1s",
+      "actual": "0.01s, status 200",
+      "ok": true,
+      "severity": "high",
+      "note": "567 names x 3 columns per request, and the endpoint is unauthenticated and uncached"
+    },
+    {
+      "group": "regex injection",
+      "name": "ReDoS pattern '(.*a){20}' (repeated group) is not evaluated",
+      "input": "GET /api/search?q='(.*a){20}'",
+      "expected": "returns in under 1s",
+      "actual": "0.01s, status 200",
+      "ok": true,
+      "severity": "high",
+      "note": "567 names x 3 columns per request, and the endpoint is unauthenticated and uncached"
+    },
+    {
+      "group": "regex injection",
+      "name": "ReDoS pattern '(x+x+)+y' (classic evil regex) is not evaluated",
+      "input": "GET /api/search?q='(x+x+)+y'",
+      "expected": "returns in under 1s",
+      "actual": "0.01s, status 200",
+      "ok": true,
+      "severity": "high",
+      "note": "567 names x 3 columns per request, and the endpoint is unauthenticated and uncached"
+    },
+    {
+      "group": "regex injection",
+      "name": "'.*' does not match the entire pool",
+      "input": "GET /api/search?q=.*",
+      "expected": "200, and 0 results \u2014 '.*' is not a substring of any name",
+      "actual": "status 200, 0 results",
+      "ok": true,
+      "severity": "high",
+      "note": "if this returns hundreds of players the argument is being used as a pattern rather than as literal text"
+    },
+    {
+      "group": "XSS",
+      "name": "search does not reflect '<script>alert(1)</script>' unescaped",
+      "input": "GET /api/search?q='<script>alert(1)</script>'",
+      "expected": "no raw <script> or onerror= in the response",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "player route does not reflect '<script>alert(1)</script>'",
+      "input": "GET /player/'<script>alert(1)</script>'",
+      "expected": "404/307, and no raw payload echoed",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "search does not reflect '\"><script>alert(1)</script>' unescaped",
+      "input": "GET /api/search?q='\"><script>alert(1)</script>'",
+      "expected": "no raw <script> or onerror= in the response",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "player route does not reflect '\"><script>alert(1)</script>'",
+      "input": "GET /player/'\"><script>alert(1)</script>'",
+      "expected": "404/307, and no raw payload echoed",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "search does not reflect '<img src=x onerror=alert(1)>' unescaped",
+      "input": "GET /api/search?q='<img src=x onerror=alert(1)>'",
+      "expected": "no raw <script> or onerror= in the response",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "player route does not reflect '<img src=x onerror=alert(1)>'",
+      "input": "GET /player/'<img src=x onerror=alert(1)>'",
+      "expected": "404/307, and no raw payload echoed",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "search does not reflect 'javascript:alert(1)' unescaped",
+      "input": "GET /api/search?q='javascript:alert(1)'",
+      "expected": "no raw <script> or onerror= in the response",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "player route does not reflect 'javascript:alert(1)'",
+      "input": "GET /player/'javascript:alert(1)'",
+      "expected": "404/307, and no raw payload echoed",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "search does not reflect '\\'\"><svg/onload=alert(1)>' unescaped",
+      "input": "GET /api/search?q='\\'\"><svg/onload=alert(1)>'",
+      "expected": "no raw <script> or onerror= in the response",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "player route does not reflect '\\'\"><svg/onload=alert(1)>'",
+      "input": "GET /player/'\\'\"><svg/onload=alert(1)>'",
+      "expected": "404/307, and no raw payload echoed",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "search does not reflect '%3Cscript%3Ealert(1)%3C/script' unescaped",
+      "input": "GET /api/search?q='%3Cscript%3Ealert(1)%3C/script%3E'",
+      "expected": "no raw <script> or onerror= in the response",
+      "actual": "200",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "player route does not reflect '%3Cscript%3Ealert(1)%3C/script'",
+      "input": "GET /player/'%3Cscript%3Ealert(1)%3C/script%3E'",
+      "expected": "404/307, and no raw payload echoed",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "Jinja autoescape is enabled",
+      "input": "main.templates.env.autoescape",
+      "expected": "True",
+      "actual": "true",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "template escapes a script tag",
+      "input": "render(\"{{ v }}\", v=\"<script>alert(1)</script>\")",
+      "expected": "&lt;script&gt;alert(1)&lt;/script&gt;",
+      "actual": "&lt;script&gt;alert(1)&lt;/script&gt;",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "XSS",
+      "name": "obf_mail escapes a hostile address",
+      "input": "obf_mail('\"><script>alert(1)</script>@x.com')",
+      "expected": "no raw <script>",
+      "actual": "<a class=\"obf-mail\" href=\"#\" data-u=\"&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt;\" data-d=\"x.com\">&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt; <span aria-hidden=\"true\">(at)</span> x.com</a>",
+      "ok": true,
+      "severity": "critical",
+      "note": "the only handwritten Markup() in the app"
+    },
+    {
+      "group": "path traversal",
+      "name": "static refuses '../../etc/passwd'",
+      "input": "GET /static/../../etc/passwd",
+      "expected": "404/400/403, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "no file contents leak for '../../etc/passwd'",
+      "input": "GET /static/../../etc/passwd",
+      "expected": "no /etc/passwd or win.ini content",
+      "actual": "checked",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "player route refuses '../../etc/passwd'",
+      "input": "GET /player/../../etc/passwd",
+      "expected": "404/307, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "static refuses '..%2f..%2fetc%2fpasswd'",
+      "input": "GET /static/..%2f..%2fetc%2fpasswd",
+      "expected": "404/400/403, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "no file contents leak for '..%2f..%2fetc%2fpasswd'",
+      "input": "GET /static/..%2f..%2fetc%2fpasswd",
+      "expected": "no /etc/passwd or win.ini content",
+      "actual": "checked",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "player route refuses '..%2f..%2fetc%2fpasswd'",
+      "input": "GET /player/..%2f..%2fetc%2fpasswd",
+      "expected": "404/307, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "static refuses '....//....//etc/passwd'",
+      "input": "GET /static/....//....//etc/passwd",
+      "expected": "404/400/403, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "no file contents leak for '....//....//etc/passwd'",
+      "input": "GET /static/....//....//etc/passwd",
+      "expected": "no /etc/passwd or win.ini content",
+      "actual": "checked",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "player route refuses '....//....//etc/passwd'",
+      "input": "GET /player/....//....//etc/passwd",
+      "expected": "404/307, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "static refuses '/etc/passwd'",
+      "input": "GET /static//etc/passwd",
+      "expected": "404/400/403, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "no file contents leak for '/etc/passwd'",
+      "input": "GET /static//etc/passwd",
+      "expected": "no /etc/passwd or win.ini content",
+      "actual": "checked",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "player route refuses '/etc/passwd'",
+      "input": "GET /player//etc/passwd",
+      "expected": "404/307, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "static refuses '..\\\\..\\\\windows\\\\win.ini'",
+      "input": "GET /static/..\\..\\windows\\win.ini",
+      "expected": "404/400/403, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "no file contents leak for '..\\\\..\\\\windows\\\\win.ini'",
+      "input": "GET /static/..\\..\\windows\\win.ini",
+      "expected": "no /etc/passwd or win.ini content",
+      "actual": "checked",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "player route refuses '..\\\\..\\\\windows\\\\win.ini'",
+      "input": "GET /player/..\\..\\windows\\win.ini",
+      "expected": "404/307, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "static refuses '%2e%2e%2f%2e%2e%2fetc%2fpasswd'",
+      "input": "GET /static/%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+      "expected": "404/400/403, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "no file contents leak for '%2e%2e%2f%2e%2e%2fetc%2fpasswd'",
+      "input": "GET /static/%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+      "expected": "no /etc/passwd or win.ini content",
+      "actual": "checked",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "path traversal",
+      "name": "player route refuses '%2e%2e%2f%2e%2e%2fetc%2fpasswd'",
+      "input": "GET /player/%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+      "expected": "404/307, never 200",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "authentication",
+      "name": "/api/refresh rejects a missing token",
+      "input": "POST /api/refresh (no header, token configured)",
+      "expected": "403",
+      "actual": "403",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "authentication",
+      "name": "/api/refresh rejects a wrong token",
+      "input": "POST /api/refresh x-refresh-token: wrong",
+      "expected": "403",
+      "actual": "403",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "authentication",
+      "name": "/api/refresh rejects an empty token",
+      "input": "POST /api/refresh x-refresh-token: ''",
+      "expected": "403",
+      "actual": "403",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "authentication",
+      "name": "/api/mode rejects a missing token",
+      "input": "POST /api/mode?mode=preseason (no header, token configured)",
+      "expected": "403",
+      "actual": "403",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "authentication",
+      "name": "/api/mode rejects a wrong token",
+      "input": "POST /api/mode?mode=preseason x-refresh-token: wrong",
+      "expected": "403",
+      "actual": "403",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "authentication",
+      "name": "/api/mode rejects an empty token",
+      "input": "POST /api/mode?mode=preseason x-refresh-token: ''",
+      "expected": "403",
+      "actual": "403",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "authentication",
+      "name": "FPL_REFRESH_TOKEN is configured in this environment",
+      "input": "os.environ['FPL_REFRESH_TOKEN']",
+      "expected": "set in production; unset locally is expected",
+      "actual": "unset",
+      "ok": false,
+      "severity": "info",
+      "note": "not a code defect - a deployment requirement. Unset, both /api/refresh and /api/mode are anonymously callable and each costs a full pipeline run"
+    },
+    {
+      "group": "authentication",
+      "name": "/api/mode validates its argument",
+      "input": "POST /api/mode?mode=nonsense",
+      "expected": "rejected",
+      "actual": "error",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "security headers",
+      "name": "x-content-type-options is set",
+      "input": "GET / response headers",
+      "expected": "x-content-type-options present",
+      "actual": "nosniff",
+      "ok": true,
+      "severity": "medium",
+      "note": "stops a browser MIME-sniffing a response into something executable"
+    },
+    {
+      "group": "security headers",
+      "name": "x-frame-options is set",
+      "input": "GET / response headers",
+      "expected": "x-frame-options present",
+      "actual": "SAMEORIGIN",
+      "ok": true,
+      "severity": "medium",
+      "note": "otherwise nothing stops the site being framed and clickjacked"
+    },
+    {
+      "group": "security headers",
+      "name": "referrer-policy is set",
+      "input": "GET / response headers",
+      "expected": "referrer-policy present",
+      "actual": "strict-origin-when-cross-origin",
+      "ok": true,
+      "severity": "low",
+      "note": "otherwise full URLs leak to Ko-fi and the Bootstrap CDN"
+    },
+    {
+      "group": "security headers",
+      "name": "strict-transport-security is set over HTTPS",
+      "input": "GET https://testserver/",
+      "expected": "max-age present",
+      "actual": "max-age=31536000; includeSubDomains",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "security headers",
+      "name": "strict-transport-security is NOT set over HTTP",
+      "input": "GET http://testserver/",
+      "expected": "absent \u2014 would break local dev",
+      "actual": "absent",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "security headers",
+      "name": "content-security-policy is set",
+      "input": "GET / response headers",
+      "expected": "content-security-policy present",
+      "actual": "absent",
+      "ok": false,
+      "severity": "medium",
+      "note": "KNOWN GAP, deliberately deferred: the templates carry inline <script> blocks, so a real policy needs nonces first. No known injection path today \u2014 autoescape is on and no template uses |safe \u2014 so this is defence in depth, not an open hole"
+    },
+    {
+      "group": "security headers",
+      "name": "no server banner leaking a version",
+      "input": "GET / response headers",
+      "expected": "no version in Server",
+      "actual": "absent",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "information disclosure",
+      "name": "no filesystem paths or tracebacks in API errors",
+      "input": "GET five endpoints that return str(e)",
+      "expected": "no paths, no tracebacks",
+      "actual": "none",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "information disclosure",
+      "name": "ai/status does not expose an absolute DB path",
+      "input": "GET /api/ai/status",
+      "expected": "a bare filename, not a directory layout",
+      "actual": "fpl_test_state.db",
+      "ok": true,
+      "severity": "medium",
+      "note": "the endpoint is unauthenticated; the filename keeps the failed-volume-mount diagnostic without publishing the layout"
+    },
+    {
+      "group": "information disclosure",
+      "name": "ai/status still reports DB availability",
+      "input": "GET /api/ai/status",
+      "expected": "'available' present",
+      "actual": "[\"available\", \"path\", \"storage\", \"persisted\", \"journal_mode\", \"counts\"]",
+      "ok": true,
+      "severity": "low",
+      "note": "the redaction must not cost the diagnostic it exists for"
+    },
+    {
+      "group": "information disclosure",
+      "name": "ai/status does not expose an absolute data root",
+      "input": "GET /api/ai/status",
+      "expected": "a bare directory name",
+      "actual": "data",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "information disclosure",
+      "name": "ai/status reports db storage kind",
+      "input": "GET /api/ai/status",
+      "expected": "one of bind/volume/anon/image/unknown",
+      "actual": "image",
+      "ok": true,
+      "severity": "high",
+      "note": "this is what tells you a redeploy will keep the data; it replaced the absolute path that used to serve that purpose"
+    },
+    {
+      "group": "information disclosure",
+      "name": "ai/status reports db persisted flag",
+      "input": "GET /api/ai/status",
+      "expected": "a boolean",
+      "actual": "false",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "information disclosure",
+      "name": "ai/status reports data storage kind",
+      "input": "GET /api/ai/status",
+      "expected": "one of bind/volume/anon/image/unknown",
+      "actual": "image",
+      "ok": true,
+      "severity": "high",
+      "note": "this is what tells you a redeploy will keep the data; it replaced the absolute path that used to serve that purpose"
+    },
+    {
+      "group": "information disclosure",
+      "name": "ai/status reports data persisted flag",
+      "input": "GET /api/ai/status",
+      "expected": "a boolean",
+      "actual": "false",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "information disclosure",
+      "name": "unknown API path returns a clean 404",
+      "input": "GET /api/nonexistent",
+      "expected": "404, no traceback",
+      "actual": "404",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles null byte",
+      "input": "GET /api/search?q='a\\x00b'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles null byte",
+      "input": "GET /api/ratings?position='a\\x00b'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles very long string",
+      "input": "GET /api/search?q='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles very long string",
+      "input": "GET /api/ratings?position='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles unicode",
+      "input": "GET /api/search?q='\ud835\udd4f\ud835\udd50\u2124'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles unicode",
+      "input": "GET /api/ratings?position='\ud835\udd4f\ud835\udd50\u2124'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles rtl override",
+      "input": "GET /api/search?q='\\u202eabc'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles rtl override",
+      "input": "GET /api/ratings?position='\\u202eabc'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles newlines",
+      "input": "GET /api/search?q='a\\nb\\rc'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles newlines",
+      "input": "GET /api/ratings?position='a\\nb\\rc'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles format string",
+      "input": "GET /api/search?q='%s%s%s%n'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles format string",
+      "input": "GET /api/ratings?position='%s%s%s%n'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles template injection",
+      "input": "GET /api/search?q='{{7*7}}'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles template injection",
+      "input": "GET /api/ratings?position='{{7*7}}'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles jinja injection",
+      "input": "GET /api/search?q='{{config.items()}}'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles jinja injection",
+      "input": "GET /api/ratings?position='{{config.items()}}'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles negative",
+      "input": "GET /api/search?q='-1'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles negative",
+      "input": "GET /api/ratings?position='-1'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles huge int",
+      "input": "GET /api/search?q='9999999999999999999999999999999999999999'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles huge int",
+      "input": "GET /api/ratings?position='9999999999999999999999999999999999999999'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles float",
+      "input": "GET /api/search?q='1.5'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles float",
+      "input": "GET /api/ratings?position='1.5'",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "search handles empty",
+      "input": "GET /api/search?q=''",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "ratings position handles empty",
+      "input": "GET /api/ratings?position=''",
+      "expected": "status < 500",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "no server-side template evaluation",
+      "input": "GET /api/search?q={{7*7}}",
+      "expected": "'49' does not appear",
+      "actual": "{\"results\":[]}",
+      "ok": true,
+      "severity": "critical",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "live gameweek rejects 'abc'",
+      "input": "GET /api/live/abc",
+      "expected": "422 or a clean non-5xx",
+      "actual": "422",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "live gameweek rejects '1.5'",
+      "input": "GET /api/live/1.5",
+      "expected": "422 or a clean non-5xx",
+      "actual": "422",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "live gameweek rejects '-1'",
+      "input": "GET /api/live/-1",
+      "expected": "422 or a clean non-5xx",
+      "actual": "200",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "live gameweek rejects '1e999'",
+      "input": "GET /api/live/1e999",
+      "expected": "422 or a clean non-5xx",
+      "actual": "422",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "live gameweek rejects 'null'",
+      "input": "GET /api/live/null",
+      "expected": "422 or a clean non-5xx",
+      "actual": "422",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "input fuzzing",
+      "name": "live gameweek rejects '[]'",
+      "input": "GET /api/live/[]",
+      "expected": "422 or a clean non-5xx",
+      "actual": "422",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "payload limits",
+      "name": "oversized draft body is rejected",
+      "input": "POST 50,000 picks (~2 MB)",
+      "expected": "400, and quickly",
+      "actual": "400",
+      "ok": true,
+      "severity": "high",
+      "note": "rejected on length before any per-pick work"
+    },
+    {
+      "group": "payload limits",
+      "name": "malformed JSON body is a 422",
+      "input": "POST 'not json'",
+      "expected": "422, never 500",
+      "actual": "422",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "payload limits",
+      "name": "15 identical picks are rejected",
+      "input": "POST 15 copies of one player",
+      "expected": "400",
+      "actual": "400",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "payload limits",
+      "name": "deeply nested body does not crash",
+      "input": "POST 200-level nested JSON",
+      "expected": "status < 500",
+      "actual": "400",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "third-party assets",
+      "name": "external assets are enumerated",
+      "input": "GET / markup",
+      "expected": "list of third-party origins",
+      "actual": "[\"https://fpl.mfhost.co.uk/\", \"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css\", \"h ... tasy.premierleague.com/api/bootstrap-static/\", \"http://clubelo.com/API\", \"https://ko-fi.com/mylesfairburn\"]",
+      "ok": true,
+      "severity": "info",
+      "note": ""
+    },
+    {
+      "group": "third-party assets",
+      "name": "SRI on cdn.jsdelivr.net",
+      "input": "https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css",
+      "expected": "integrity= and crossorigin= present",
+      "actual": "<link href=\"https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css\" rel=\"stylesheet\">",
+      "ok": false,
+      "severity": "medium",
+      "note": "without SRI, a compromised CDN executes arbitrary script on every page of the site"
+    },
+    {
+      "group": "third-party assets",
+      "name": "no inline event handlers in the shell",
+      "input": "GET / markup",
+      "expected": "no onclick=/onload=/onerror= attributes",
+      "actual": "[\" onerror=\\\"this.style.display='none'\\\"\", \" onerror=\\\"this.style.display='none'\\\"\"]",
+      "ok": false,
+      "severity": "low",
+      "note": "two logo onerror fallbacks. Harmless in themselves, but each one needs a hash or a refactor before a CSP can be added, so this is part of the same job"
+    },
+    {
+      "group": "privacy",
+      "name": "privacy policy covers what is stored",
+      "input": "GET /privacy",
+      "expected": "one of ['fpl id']",
+      "actual": "[\"fpl id\"]",
+      "ok": true,
+      "severity": "medium",
+      "note": "UK GDPR: the site stores an FPL id and a squad against it"
+    },
+    {
+      "group": "privacy",
+      "name": "privacy policy covers cookies / local storage",
+      "input": "GET /privacy",
+      "expected": "one of ['cookie', 'local storage', 'localstorage']",
+      "actual": "[\"cookie\", \"local storage\"]",
+      "ok": true,
+      "severity": "medium",
+      "note": "UK GDPR: the site stores an FPL id and a squad against it"
+    },
+    {
+      "group": "privacy",
+      "name": "privacy policy covers how long it is kept",
+      "input": "GET /privacy",
+      "expected": "one of ['retention', 'months', 'deleted automatically']",
+      "actual": "[\"months\", \"deleted automatically\"]",
+      "ok": true,
+      "severity": "medium",
+      "note": "UK GDPR: the site stores an FPL id and a squad against it"
+    },
+    {
+      "group": "privacy",
+      "name": "privacy policy covers how to have it removed",
+      "input": "GET /privacy",
+      "expected": "one of ['delete', 'erasure', 'removed']",
+      "actual": "[\"delete\", \"removed\"]",
+      "ok": true,
+      "severity": "medium",
+      "note": "UK GDPR: the site stores an FPL id and a squad against it"
+    },
+    {
+      "group": "privacy",
+      "name": "any caller can read any id's draft",
+      "input": "GET /api/draft/<someone else's id>",
+      "expected": "documented as unauthenticated",
+      "actual": "true",
+      "ok": false,
+      "severity": "medium",
+      "note": "deliberate - FPL id is the whole identity - but it means one guessable integer exposes and overwrites a stored squad"
+    },
+    {
+      "group": "HTTP methods",
+      "name": "TRACE is not enabled",
+      "input": "TRACE /",
+      "expected": "405 or 404",
+      "actual": "405",
+      "ok": true,
+      "severity": "medium",
+      "note": ""
+    },
+    {
+      "group": "HTTP methods",
+      "name": "POST to a GET-only page is 405",
+      "input": "POST /",
+      "expected": "405",
+      "actual": "405",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "HTTP methods",
+      "name": "DELETE on a read endpoint is 405",
+      "input": "DELETE /api/ratings",
+      "expected": "405",
+      "actual": "405",
+      "ok": true,
+      "severity": "low",
+      "note": ""
+    },
+    {
+      "group": "HTTP methods",
+      "name": "no permissive CORS",
+      "input": "OPTIONS /api/ratings Origin: evil.example",
+      "expected": "no Access-Control-Allow-Origin: *",
+      "actual": "absent",
+      "ok": true,
+      "severity": "high",
+      "note": "the API is read-only and public, but a wildcard would also expose the draft write endpoint to any origin"
+    },
+    {
+      "group": "open redirect",
+      "name": "no redirect off-site for '//evil.example'",
+      "input": "GET /player///evil.example",
+      "expected": "no Location pointing at another host",
+      "actual": "no redirect",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "open redirect",
+      "name": "no redirect off-site for 'https://evil.example'",
+      "input": "GET /player/https://evil.example",
+      "expected": "no Location pointing at another host",
+      "actual": "no redirect",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "open redirect",
+      "name": "no redirect off-site for '/\\\\evil.example'",
+      "input": "GET /player//\\evil.example",
+      "expected": "no Location pointing at another host",
+      "actual": "no redirect",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    },
+    {
+      "group": "open redirect",
+      "name": "no redirect off-site for 'http:/evil.example'",
+      "input": "GET /player/http:/evil.example",
+      "expected": "no Location pointing at another host",
+      "actual": "no redirect",
+      "ok": true,
+      "severity": "high",
+      "note": ""
+    }
+  ]
+}
