@@ -36,8 +36,14 @@ USER_AGENT = "FPLBuddy-IndexNow/1.0 (+https://fpl.mfhost.co.uk)"
 APP_URL = os.environ.get("FPL_APP_URL", "").rstrip("/")
 
 # api.indexnow.org forwards to every participating engine, so submitting once
-# here is the same as submitting to each of them separately.
-ENDPOINT = "https://api.indexnow.org/indexnow"
+# here is the same as submitting to each of them separately. Overridable
+# because the shared endpoint and Bing's own endpoint do not always agree about
+# a key: when one returns 403 it is worth asking the other before assuming the
+# key file is wrong.
+#   https://www.bing.com/indexnow
+#   https://yandex.com/indexnow
+ENDPOINT = os.environ.get("FPL_INDEXNOW_ENDPOINT",
+                          "https://api.indexnow.org/indexnow")
 
 # The protocol's own cap on one request. The site is well under it today; the
 # batching below exists so that stays true without anyone having to notice.
@@ -83,10 +89,13 @@ def sitemap_urls():
 def submit(urls):
     """POST one batch. Returns the HTTP status."""
     host = SITE_URL.split("//", 1)[-1]
+    # No keyLocation. It exists to point at a key file kept somewhere other
+    # than the default, and ours is at exactly the default - the root of the
+    # host, named <key>.txt. Sending it anyway is one more field for a receiver
+    # to disagree about while telling us only that "the key did not verify".
     payload = json.dumps({
         "host": host,
         "key": KEY,
-        "keyLocation": f"{SITE_URL}/{KEY}.txt",
         "urlList": urls,
     }).encode("utf-8")
     try:
