@@ -24,6 +24,17 @@ import urllib.request
 SITE_URL = os.environ.get("FPL_SITE_URL", "https://fpl.mfhost.co.uk").rstrip("/")
 KEY = os.environ.get("FPL_INDEXNOW_KEY", "").strip()
 
+# The site sits behind Cloudflare, which 403s urllib's default User-Agent
+# ("Python-urllib/3.13") as a bot. Nothing is wrong with the request - the same
+# URL returns 200 the moment a real one is sent - so every outbound call here
+# identifies itself properly.
+USER_AGENT = "FPLBuddy-IndexNow/1.0 (+https://fpl.mfhost.co.uk)"
+
+# Set inside the container, so a run via `docker exec` can read the sitemap
+# from the app directly instead of leaving the host and coming back in through
+# the CDN. Unset (a laptop run) the public URL is used instead.
+APP_URL = os.environ.get("FPL_APP_URL", "").rstrip("/")
+
 # api.indexnow.org forwards to every participating engine, so submitting once
 # here is the same as submitting to each of them separately.
 ENDPOINT = "https://api.indexnow.org/indexnow"
@@ -48,9 +59,23 @@ MEANING = {
 }
 
 
+def fetch(url, data=None, content_type=None):
+    """urlopen with a User-Agent Cloudflare will accept."""
+    headers = {"User-Agent": USER_AGENT}
+    if content_type:
+        headers["Content-Type"] = content_type
+    return urllib.request.urlopen(
+        urllib.request.Request(url, data=data, headers=headers), timeout=60)
+
+
 def sitemap_urls():
-    """Every <loc> in the live sitemap."""
-    with urllib.request.urlopen(f"{SITE_URL}/sitemap.xml", timeout=60) as fh:
+    """Every <loc> in the live sitemap.
+
+    Read over APP_URL when there is one: the <loc> values are absolute and
+    built from SITE_URL either way, so the URLs submitted are identical, but
+    the request never leaves the host."""
+    base = APP_URL or SITE_URL
+    with fetch(f"{base}/sitemap.xml") as fh:
         xml = fh.read().decode("utf-8")
     return re.findall(r"<loc>(.*?)</loc>", xml)
 
@@ -64,11 +89,9 @@ def submit(urls):
         "keyLocation": f"{SITE_URL}/{KEY}.txt",
         "urlList": urls,
     }).encode("utf-8")
-    request = urllib.request.Request(
-        ENDPOINT, data=payload,
-        headers={"Content-Type": "application/json; charset=utf-8"})
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with fetch(ENDPOINT, data=payload,
+                   content_type="application/json; charset=utf-8") as response:
             return response.status
     except urllib.error.HTTPError as e:
         # A non-2xx is the normal way IndexNow reports a bad key, so it's a
@@ -93,15 +116,25 @@ def main():
     # Submitting a key that isn't being served is the single most common way
     # this fails, and it fails with a 403 that reads like a bad key rather than
     # a missing file. Checking first turns that into a clear message.
+    # Checked over the public URL, never APP_URL: what matters is what the
+    # search engine can fetch, and an internal request proves nothing about it.
     try:
-        with urllib.request.urlopen(f"{SITE_URL}/{KEY}.txt", timeout=30) as fh:
+        with fetch(f"{SITE_URL}/{KEY}.txt") as fh:
             served = fh.read().decode("utf-8").strip()
         if served != KEY:
             sys.exit(f"Key file does not contain the key (got {served!r}).")
         print("Key file verified.")
     except urllib.error.HTTPError as e:
-        sys.exit(f"Key file not reachable ({e.code}). Is FPL_INDEXNOW_KEY set "
-                 f"on the server and the container restarted?")
+        if e.code == 404:
+            sys.exit("Key file 404s. FPL_INDEXNOW_KEY is not reaching the "
+                     "container - check `docker compose config | grep INDEXNOW` "
+                     "and that the container was recreated, not just started.")
+        # Anything else is the CDN talking, not the app: a 403 here means the
+        # request was blocked before it reached the origin, which says nothing
+        # about whether the key file exists. Worth reporting, not worth
+        # refusing to submit over - the engine fetches it from its own network.
+        print(f"Could not verify the key file ({e.code}) - most likely the CDN "
+              f"blocking this request rather than a missing file. Continuing.")
 
     if dry_run:
         for u in urls[:10]:
