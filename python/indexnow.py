@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -35,15 +36,19 @@ USER_AGENT = "FPLBuddy-IndexNow/1.0 (+https://fpl.mfhost.co.uk)"
 # the CDN. Unset (a laptop run) the public URL is used instead.
 APP_URL = os.environ.get("FPL_APP_URL", "").rstrip("/")
 
-# api.indexnow.org forwards to every participating engine, so submitting once
-# here is the same as submitting to each of them separately. Overridable
-# because the shared endpoint and Bing's own endpoint do not always agree about
-# a key: when one returns 403 it is worth asking the other before assuming the
-# key file is wrong.
-#   https://www.bing.com/indexnow
+# Bing's endpoint rather than the shared api.indexnow.org one, which returned
+# 403 "key not valid" for this key while Bing accepted the identical payload
+# against the identical key file. Nothing is lost by picking one: participating
+# engines share submissions with each other, so Yandex, Seznam and Naver still
+# receive what is sent here.
+#
+# Overridable so the other endpoints can be tried without a code change - if
+# this one ever starts refusing the key, ask another before concluding the key
+# file is broken:
+#   https://api.indexnow.org/indexnow
 #   https://yandex.com/indexnow
 ENDPOINT = os.environ.get("FPL_INDEXNOW_ENDPOINT",
-                          "https://api.indexnow.org/indexnow")
+                          "https://www.bing.com/indexnow")
 
 # The protocol's own cap on one request. The site is well under it today; the
 # batching below exists so that stays true without anyone having to notice.
@@ -81,9 +86,22 @@ def sitemap_urls():
     built from SITE_URL either way, so the URLs submitted are identical, but
     the request never leaves the host."""
     base = APP_URL or SITE_URL
-    with fetch(f"{base}/sitemap.xml") as fh:
-        xml = fh.read().decode("utf-8")
-    return re.findall(r"<loc>(.*?)</loc>", xml)
+    # Retried because the obvious way to run this is straight after a deploy -
+    # `docker compose up -d && docker exec ... indexnow.py` - and the app needs
+    # a few seconds before it is listening. Without this that race surfaces as
+    # a bare ConnectionRefusedError traceback, which reads like a broken script
+    # rather than "try again in a moment".
+    for attempt in range(3):
+        try:
+            with fetch(f"{base}/sitemap.xml") as fh:
+                return re.findall(r"<loc>(.*?)</loc>", fh.read().decode("utf-8"))
+        except urllib.error.URLError as e:
+            # Only a refused connection is worth waiting out. An HTTP error is
+            # an answer, and retrying it just repeats the same answer.
+            if isinstance(e, urllib.error.HTTPError) or attempt == 2:
+                raise
+            print(f"{base} not answering yet ({e.reason}); retrying in 5s")
+            time.sleep(5)
 
 
 def submit(urls):
