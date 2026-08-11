@@ -47,6 +47,24 @@ REFRESH_TOKEN = os.environ.get("FPL_REFRESH_TOKEN", "")
 SITE_URL = os.environ.get("FPL_SITE_URL", "https://fpl.mfhost.co.uk").rstrip("/")
 SITE_NAME = "FPL Buddy"
 
+# IndexNow: push changed URLs to Bing, Yandex, Seznam and Naver instead of
+# waiting to be crawled. Google has never adopted the protocol, so this does
+# nothing for Google rankings.
+#
+# Ownership is proved by serving the key back as plain text at /<key>.txt, so
+# the route's path IS the key and the route can only be declared once one is
+# configured. The file has to be at the root: a key hosted under a subdirectory
+# limits submissions to URLs beneath that directory, which would exclude
+# everything except the directory itself.
+INDEXNOW_KEY = os.environ.get("FPL_INDEXNOW_KEY", "").strip()
+# Validated rather than trusted, because the value is interpolated into a route
+# path. The spec allows 8-128 characters of a-z, A-Z, 0-9 and dashes; anything
+# else would either fail verification or register a nonsense route.
+if INDEXNOW_KEY and not re.fullmatch(r"[A-Za-z0-9-]{8,128}", INDEXNOW_KEY):
+    print("FPL_INDEXNOW_KEY is not a valid IndexNow key (8-128 chars of "
+          "a-z, A-Z, 0-9, -); the key route will not be served.")
+    INDEXNOW_KEY = ""
+
 # Role addresses rather than personal ones, so they can be reassigned without
 # rewriting the site. Kept server-side and rendered obfuscated - see the note in
 # the contact template about scrapers.
@@ -599,6 +617,21 @@ def robots():
         "\n"
         f"Sitemap: {SITE_URL}/sitemap.xml\n",
         headers={"Cache-Control": "public, max-age=86400"})
+
+
+# Declared conditionally because the path is the key itself. Unset, the route
+# simply doesn't exist and /<anything>.txt 404s as before - no catch-all route
+# that has to guess whether a request is an IndexNow probe or a typo.
+if INDEXNOW_KEY:
+    @app.get(f"/{INDEXNOW_KEY}.txt", response_class=PlainTextResponse)
+    def indexnow_key():
+        """Proof of ownership for IndexNow: the key, served back as plain text.
+
+        The body must be the key and nothing else - no trailing newline is
+        required, and a search engine comparing byte-for-byte will reject a file
+        with extra content."""
+        return PlainTextResponse(
+            INDEXNOW_KEY, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/sitemap.xml")

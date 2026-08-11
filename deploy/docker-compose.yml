@@ -29,3 +29,8 @@ services:
       # openssl rand -hex 32 > /srv/fpl-companion/refresh_token
       FPL_REFRESH_TOKEN: ${FPL_REFRESH_TOKEN:?set this, or /api/refresh stays open}
       FPL_APP_URL: http://127.0.0.1:8000
+      # Serves /<key>.txt so IndexNow can verify ownership. Optional: unset,
+      # the route doesn't exist and nothing else changes. Not a secret - the
+      # whole point is that it's publicly readable - but it lives in .env with
+      # the others so the compose file stays the same everywhere.
+      FPL_INDEXNOW_KEY: ${FPL_INDEXNOW_KEY:-}
