@@ -406,6 +406,12 @@ def page_context(request, path, meta=None, **extra):
         "page_title": meta["title"],
         "page_description": meta["description"],
         "canonical": SITE_URL + path,
+        # Google reads the WebSite name only from a site's home page, so the
+        # structured data block is emitted there and nowhere else. Stated as a
+        # flag rather than worked out in the template from request.url.path:
+        # this module owns the routing table, and /player/<slug> pages render
+        # through the same head partial.
+        "is_home": path == "/",
         "today": datetime.now(timezone.utc).strftime("%-d %B %Y")
                  if os.name != "nt" else datetime.now(timezone.utc).strftime("%d %B %Y").lstrip("0"),
         **extra,

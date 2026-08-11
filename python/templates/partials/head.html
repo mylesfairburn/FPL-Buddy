@@ -21,6 +21,21 @@
    <meta name="twitter:description" content="{{ page_description }}">
    <meta name="twitter:image" content="{{ site_url }}/static/icon_180.png">
 
+   {# Without this Google falls back to the domain for the name above the
+      result, and on a subdomain that means it prints "mfhost.co.uk" rather
+      than "FPL Buddy". og:site_name alone is a weak signal and loses to the
+      domain; WebSite structured data is the one Google documents as
+      authoritative. Home page only - see is_home in main.py.
+
+      No SearchAction here: that markup claims a URL where a visitor can run a
+      site search and read the results, and /api/search returns JSON. #}
+{% if is_home %}
+   <script type="application/ld+json">
+   {"@context": "https://schema.org", "@type": "WebSite",
+   "name": {{ site_name|tojson }}, "url": {{ (site_url + "/")|tojson }}}
+   </script>
+{% endif %}
+
    <meta name="theme-color" content="#8B5CF6">
 
    <link rel="apple-touch-icon" href="/static/icon_180.png">
