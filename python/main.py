@@ -23,9 +23,12 @@ import ai_team
 import db
 import drafts
 import gameweek as gw_clock
+import gw_report
+import kits
 import manager_history
 import player_pages
 import seasons
+import social
 from pipeline import run_pipeline
 from rating_model import get_rated_position_dfs
 from fixture_rotator import (get_rotation_data, rank_rotation_pairs, recommend_pair_players, team_fixture_map)
@@ -65,6 +68,32 @@ if INDEXNOW_KEY and not re.fullmatch(r"[A-Za-z0-9-]{8,128}", INDEXNOW_KEY):
           "a-z, A-Z, 0-9, -); the key route will not be served.")
     INDEXNOW_KEY = ""
 
+# Lets the gameweek social drafts be read from a phone. The drafts are also
+# served at /api/social/<gw> behind the X-Refresh-Token header, which is the
+# stronger protection but is unusable on a phone: no mobile browser can set a
+# custom header, so that endpoint needs curl and a laptop.
+#
+# So this is a capability URL - the secret is the path itself, and anyone
+# holding the link can read it. That is genuinely weaker than a header: it
+# lands in browser history, and a link tapped from it could leak the path in a
+# Referer. The trade is deliberate and narrow. What's behind it is draft post
+# text assembled from a page anybody can already read, so the realistic cost of
+# a leak is that a stranger sees next week's tweet early.
+#
+# Set it to something unguessable and treat it as a password anyway:
+#   openssl rand -hex 32
+#
+# Unset, the route doesn't exist. Deliberately under /api/, which robots.txt
+# already disallows, so no crawler follows it even if the URL escapes.
+SOCIAL_KEY = os.environ.get("FPL_SOCIAL_KEY", "").strip()
+# Same reasoning as the IndexNow key: this value is interpolated into a route
+# path, so it's validated rather than trusted. 24 characters minimum because a
+# capability URL with a short key is a URL someone can guess.
+if SOCIAL_KEY and not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", SOCIAL_KEY):
+    print("FPL_SOCIAL_KEY must be 24-128 chars of a-z, A-Z, 0-9, - or _ "
+          "(try: openssl rand -hex 32); the phone route will not be served.")
+    SOCIAL_KEY = ""
+
 # Role addresses rather than personal ones, so they can be reassigned without
 # rewriting the site. Kept server-side and rendered obfuscated - see the note in
 # the contact template about scrapers.
@@ -103,57 +132,61 @@ TAB_PANES = {t["path"]: t["pane"] for t in TABS}
 # without them Google writes the snippet itself, usually by grabbing whatever
 # text it finds first. `priority`/`changefreq` feed the sitemap; both default
 # below, so a route only states them when it differs.
+#
+# Descriptions are kept to 160 characters. That is Bing's stated limit - it
+# reports anything longer as an error - and Google truncates around the same
+# point, so the tail of a longer one is written for nobody. The check in
+# tests/suite_routes.py fails the build if one drifts back over.
 PAGES = {
     "/": {
         "title": "FPL Buddy — Fantasy Premier League ratings and AI teams",
-        "description": ("Free Fantasy Premier League tools: player ratings from a trained "
-                        "points model, two AI-picked squads each gameweek, a fixture "
-                        "rotation planner and your own team analysed. Enter your FPL ID "
-                        "to get started."),
+        "description": ("Free FPL tools: player ratings from a trained points model, two "
+                        "AI-picked squads each gameweek, a fixture rotation planner and "
+                        "your own team analysed."),
         "priority": "1.0",
         "changefreq": "weekly",
     },
     "/my-team": {
         "title": "My FPL team — squad, lineup and transfer analysis | FPL Buddy",
         "h1": "My FPL team",
-        "description": ("Load your Fantasy Premier League squad from your FPL ID: predicted "
-                        "points for every player, an optimised starting XI, transfer "
-                        "suggestions, chip advice and live gameweek scoring."),
+        "description": ("Load your FPL squad by ID: predicted points for every player, an "
+                        "optimised starting XI, transfer suggestions, chip advice and live "
+                        "gameweek scoring."),
         "priority": "0.9",
         "changefreq": "daily",
     },
     "/ai-teams": {
         "title": "AI Fantasy Premier League teams — AI Manager and best XV",
         "h1": "AI Fantasy Premier League teams",
-        "description": ("Two AI-picked Fantasy Premier League squads: a manager bot that "
-                        "plays every gameweek with real transfers and chips, and the "
-                        "highest-scoring XV for the upcoming gameweek."),
+        "description": ("Two AI-picked FPL squads: a manager bot that plays every gameweek "
+                        "with real transfers and chips, and the highest-scoring XV for the "
+                        "upcoming gameweek."),
         "priority": "0.9",
         "changefreq": "daily",
     },
     "/players": {
         "title": "FPL player ratings and predicted points | FPL Buddy",
         "h1": "FPL player ratings",
-        "description": ("Every Fantasy Premier League player rated by a trained points model, "
-                        "with predicted points for the next gameweeks, price, form, ownership "
-                        "and the players underperforming their underlying numbers."),
+        "description": ("Every FPL player rated by a trained points model, with predicted "
+                        "points, price, form, ownership and the players underperforming "
+                        "their underlying numbers."),
         "priority": "0.9",
         "changefreq": "daily",
     },
     "/fixture-rotator": {
         "title": "FPL fixture rotation planner — best team pairs | FPL Buddy",
         "h1": "FPL fixture rotation planner",
-        "description": ("Find Fantasy Premier League defence and attack rotation pairs: two "
-                        "clubs whose fixtures alternate so one of them always has a good "
-                        "game, ranked over the next eight gameweeks."),
+        "description": ("Find FPL defence and attack rotation pairs: two clubs whose "
+                        "fixtures alternate so one always has a good game, ranked over the "
+                        "next eight gameweeks."),
         "priority": "0.9",
         "changefreq": "daily",
     },
     "/players/a-z": {
         "title": "Every Fantasy Premier League player A-Z | FPL Buddy",
-        "description": ("A complete list of every player in Fantasy Premier League, "
-                        "grouped by surname, each linking to their price, ownership, "
-                        "form, underlying numbers and predicted points."),
+        "description": ("A complete list of every Fantasy Premier League player, grouped by "
+                        "surname, each linking to their price, ownership, form and predicted "
+                        "points."),
         "priority": "0.8",
         "changefreq": "weekly",
     },
@@ -161,6 +194,21 @@ PAGES = {
         "title": "About FPL Buddy — how the ratings and AI squads work",
         "description": ("How FPL Buddy rates players, how the two AI squads are picked, "
                         "and what the numbers on the site actually mean."),
+    },
+    "/gameweek": {
+        "title": "FPL gameweek briefings — form, differentials and fixtures",
+        "description": ("Every gameweek written up: who is in form, the best differentials, "
+                        "the kindest fixture runs and the fitness flags that matter."),
+        "priority": "0.8",
+        "changefreq": "weekly",
+    },
+    "/faq": {
+        "title": "FPL Buddy FAQ — ratings, AI squads and your FPL ID",
+        "description": ("Answers to the common questions: where to find your FPL ID, how "
+                        "the predicted points are worked out, how accurate they are, and "
+                        "what the AI squads do."),
+        "priority": "0.7",
+        "changefreq": "monthly",
     },
     "/privacy": {
         "title": "Privacy policy — FPL Buddy",
@@ -172,6 +220,118 @@ PAGES = {
         "description": "How to report a bug, ask a question, or raise a rights or security issue.",
     },
 }
+
+# The FAQ, as data rather than as markup.
+#
+# One list feeding both the visible page and the FAQPage structured data is the
+# point: Google treats an answer in the JSON-LD that doesn't appear in the
+# readable HTML as a spam signal, and the usual way that happens is two copies
+# drifting apart after an edit. Written once, they can't.
+#
+# Worth being honest about what this earns. Google restricted FAQ rich results
+# to government and health sites in 2023, so this will not put a dropdown under
+# the search result. It's here because the markup is still read by Bing and,
+# more to the point, because a question-and-answer block in plain server-side
+# HTML is the format language models quote from most readily - and unlike the
+# four tool pages, this content is fully visible without JavaScript.
+#
+# Answers may contain inline HTML; the same string is used in both places, so
+# `text` in the JSON-LD carries the same markup, which the spec allows.
+FAQ_ITEMS = [
+    {
+        "q": "What is FPL Buddy?",
+        "a": ("A free set of Fantasy Premier League tools. It rates every player with a "
+              "trained points model, picks two AI squads each gameweek, finds pairs of "
+              "clubs whose fixtures rotate well, and analyses your own squad from your "
+              "FPL ID. It is an unofficial fan project with no connection to the "
+              "Premier League."),
+    },
+    {
+        "q": "How do I find my FPL ID?",
+        "a": ("Log in at fantasy.premierleague.com, open the Points tab, and look at the "
+              "address bar. The URL reads <code>/entry/1234567/event/5</code> and your ID "
+              "is the number after <code>/entry/</code>. It is public, it is not a "
+              "password, and it is safe to share."),
+    },
+    {
+        "q": "Does FPL Buddy need my Fantasy Premier League password?",
+        "a": ("No, and it never will. Everything here uses the public read-only FPL API, "
+              "which needs nothing but your numeric team ID. That also means the site "
+              "cannot make your transfers for you — it can only recommend them, and you "
+              "apply them yourself in the official app."),
+    },
+    {
+        "q": "How are the predicted points calculated?",
+        "a": ("A ridge regression trained separately for each position, because "
+              "goalkeepers, defenders, midfielders and forwards earn points in different "
+              "ways. The inputs are rolling three-gameweek averages of expected goal "
+              "involvements, minutes and bonus points, plus home or away and the strength "
+              "of the opponent. Rolling averages are shifted back a gameweek so a "
+              "player's own result can never leak into the features predicting it. "
+              "<a href=\"/about\">Full detail on the about page</a>."),
+    },
+    {
+        "q": "How accurate are the predictions?",
+        "a": ("Useful for comparing players against each other; poor as a forecast of any "
+              "single score. Football over ninety minutes is not very predictable, and a "
+              "model working from a handful of inputs will be wrong about individual "
+              "players most weeks. The honest use is \"who is the better pick\", not "
+              "\"how many will he get\"."),
+    },
+    {
+        "q": "What is the difference between AI Best XV and AI Manager?",
+        "a": ("AI Best XV is rebuilt from scratch every gameweek with no memory: the "
+              "highest-scoring legal £100m squad for the week ahead, spending almost "
+              "nothing on the bench because it has no transfers to plan for. AI Manager "
+              "plays the actual game — one squad across the season, a bank balance, free "
+              "transfers, four-point hits when a move earns one, and a single set of "
+              "chips — so it judges players over several gameweeks rather than one."),
+    },
+    {
+        "q": "Why do the two AI squads disagree?",
+        "a": ("Because they are answering different questions. Buying the best captain "
+              "for one Saturday and selling him a fortnight later costs a hit and a free "
+              "transfer, which Best XV never pays and AI Manager always does. When they "
+              "agree on a player, that is a stronger signal than either on its own."),
+    },
+    {
+        "q": "How does the fixture rotator work?",
+        "a": ("It looks for pairs of clubs whose fixtures alternate, so that in most "
+              "gameweeks at least one of the two has a favourable game. Own a defender "
+              "from each and you can start whichever has the better fixture that week. "
+              "Pairs are ranked over the next eight gameweeks, separately for defence "
+              "and attack."),
+    },
+    {
+        "q": "What does \"underperforming\" mean on the players page?",
+        "a": ("A player whose returns are behind their underlying numbers: attackers "
+              "scoring fewer goals than their expected goals suggest, or goalkeepers and "
+              "defenders conceding more than their expected goals conceded. It is a list "
+              "of players who may be due a correction, not a list of players who "
+              "definitely are."),
+    },
+    {
+        "q": "What is a differential, and how do I find one?",
+        "a": ("A player owned by a small share of managers, so that when they return "
+              "points you gain ground on almost everyone. Sort the "
+              "<a href=\"/players\">player ratings</a> by predicted points and look for "
+              "low ownership — a high projection at low ownership is the combination "
+              "worth having."),
+    },
+    {
+        "q": "How often is the data updated?",
+        "a": ("The full pipeline runs nightly at 03:00 UK time: prices, ownership, form, "
+              "injuries, fixtures and every projection. A lighter check runs hourly to "
+              "catch deadlines and freeze the AI squads' predictions before each one. "
+              "Live scores update during matches."),
+    },
+    {
+        "q": "Is FPL Buddy free?",
+        "a": ("Yes, entirely, with no account and no sign-up. There is a Ko-fi link in "
+              "the footer if you want to help with the server bill, but nothing on the "
+              "site is behind it."),
+    },
+]
 
 app = FastAPI()
 
@@ -432,6 +592,12 @@ def page_context(request, path, meta=None, **extra):
         "is_home": path == "/",
         "today": datetime.now(timezone.utc).strftime("%-d %B %Y")
                  if os.name != "nt" else datetime.now(timezone.utc).strftime("%d %B %Y").lstrip("0"),
+        # Club colours for the server-rendered pages. A callable rather than a
+        # dict so a template asks for one club instead of carrying all twenty
+        # into every render, and so an unknown team_code returns the neutral
+        # fallback instead of raising mid-template.
+        "club_colours": kits.colours_for,
+        "fixture_horizon": gw_report.FIXTURE_HORIZON,
         **extra,
     }
 
@@ -598,6 +764,120 @@ def privacy(request: Request):
                          retention_months=db.RETENTION_MONTHS)
 
 
+@app.get("/faq", response_class=HTMLResponse)
+def faq(request: Request):
+    return html_response("pages/faq.html", request, "/faq", faq_items=FAQ_ITEMS)
+
+
+# =========================================================================
+#  Gameweek reports
+# =========================================================================
+# The one part of the site that accumulates. Every other page is a view of
+# today's data and is worth exactly one URL forever; these are dated editions,
+# so by the end of a season there are 38 of them, each answering a question
+# ("FPL GW17 differentials") that a single rotating page can never rank for.
+#
+# Written by `jobs.py gameweek-report` into SQLite, frozen at the deadline, and
+# only read here. Nothing in the request path computes a report - a page that
+# built itself on demand would produce a different edition per visitor and
+# would put the whole rating pipeline behind a URL a crawler can hit.
+
+def _gw_report_meta(gw, report):
+    """Per-edition title and description.
+
+    Built from the edition's own contents rather than a template string,
+    because 38 pages differing only by a number is the textbook way to get a
+    site's own pages classed as near-duplicates of each other. Naming the
+    actual players makes each one about something."""
+    title = f"FPL Gameweek {gw} — form, differentials and fixtures | {SITE_NAME}"
+    names = [p["name"] for p in report.get("in_form", [])][:3]
+    if names:
+        desc = (f"Fantasy Premier League Gameweek {gw}: {', '.join(names)} lead on form, "
+                "plus the best differentials, the kindest fixture runs and the "
+                "fitness flags on widely-owned players.")
+    else:
+        desc = (f"The Fantasy Premier League Gameweek {gw} briefing: form picks, "
+                "differentials, fixture swings and team news, from a trained "
+                "points model.")
+    return {"title": title, "description": desc[:160]}
+
+
+@app.get("/gameweek", response_class=HTMLResponse)
+def gameweek_archive(request: Request):
+    """Every published edition, newest first.
+
+    A real page rather than a redirect to the latest one. The editions need
+    something linking to them or they're orphans that only the sitemap knows
+    about, and "latest" as a URL competes with the dated URL it points at for
+    the same content."""
+    editions = db.gw_report_index()
+    return html_response("pages/gameweek_index.html", request, "/gameweek",
+                         editions=editions)
+
+
+@app.get("/gameweek/feed.xml")
+def gameweek_feed():
+    """RSS for the editions.
+
+    Declared before /gameweek/{n} because FastAPI matches in declaration order
+    and "feed.xml" would otherwise be tried as a gameweek number.
+
+    The safe half of the distribution plan: aggregators and some crawlers poll
+    a feed, and unlike an automated post it can't get an account banned."""
+    editions = db.gw_report_index()[:20]
+    items = []
+    for ed in editions:
+        gw = ed["gameweek"]
+        rec = db.get_gw_report(gw)
+        if not rec:
+            continue
+        summary = rec["payload"].get("summary", "")
+        # RFC 822 dates, which is what RSS wants - not the ISO strings stored.
+        stamp = ed.get("frozen_at") or ed["generated_at"]
+        try:
+            pub = datetime.fromisoformat(stamp).strftime("%a, %d %b %Y %H:%M:%S +0000")
+        except (TypeError, ValueError):
+            pub = ""
+        items.append(
+            "<item>"
+            f"<title>{xml_escape(f'Gameweek {gw}')}</title>"
+            f"<link>{SITE_URL}/gameweek/{gw}</link>"
+            f"<guid isPermaLink=\"true\">{SITE_URL}/gameweek/{gw}</guid>"
+            f"<description>{xml_escape(summary)}</description>"
+            + (f"<pubDate>{pub}</pubDate>" if pub else "")
+            + "</item>")
+
+    xml = ('<?xml version="1.0" encoding="UTF-8"?>'
+           '<rss version="2.0"><channel>'
+           f"<title>{xml_escape(SITE_NAME)} — gameweek briefings</title>"
+           f"<link>{SITE_URL}/gameweek</link>"
+           "<description>Form, differentials, fixture swings and team news, "
+           "every gameweek.</description>"
+           "<language>en-gb</language>"
+           f"{''.join(items)}"
+           "</channel></rss>")
+    return Response(content=xml, media_type="application/rss+xml",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/gameweek/{gw}", response_class=HTMLResponse)
+def gameweek_report_page(request: Request, gw: int):
+    """One edition.
+
+    404s rather than generating on demand when an edition doesn't exist: a
+    gameweek with no published page is a gameweek nobody wrote about, and
+    inventing one at request time would date it wrong."""
+    rec = db.get_gw_report(gw)
+    if not rec:
+        raise HTTPException(status_code=404, detail="No report for that gameweek")
+    report = rec["payload"]
+    return html_response(
+        "pages/gameweek.html", request, f"/gameweek/{gw}",
+        meta=_gw_report_meta(gw, report),
+        report=report, frozen=bool(rec["frozen"]),
+        generated_at=rec["generated_at"], frozen_at=rec.get("frozen_at"))
+
+
 @app.get("/contact", response_class=HTMLResponse)
 def contact(request: Request):
     return html_response("pages/contact.html", request, "/contact")
@@ -656,11 +936,91 @@ def sitemap():
         f"<url><loc>{SITE_URL}{xml_escape(rec['path'])}</loc><lastmod>{today}</lastmod>"
         f"<changefreq>weekly</changefreq><priority>0.6</priority></url>"
         for rec in player_page_index().values())
+
+    # Plus one per published gameweek edition. These are the only URLs on the
+    # site with an honest `lastmod`: a frozen edition genuinely has not changed
+    # since the deadline, and saying so is what stops Google recrawling 38 dead
+    # pages every day looking for an edit that will never come. `changefreq`
+    # follows the same logic - `never` is a real value in the spec and this is
+    # what it's for.
+    for ed in db.gw_report_index():
+        lastmod = (ed.get("frozen_at") or ed["generated_at"] or "")[:10] or today
+        freq = "never" if ed["frozen"] else "daily"
+        urls += (f"<url><loc>{SITE_URL}/gameweek/{ed['gameweek']}</loc>"
+                 f"<lastmod>{lastmod}</lastmod><changefreq>{freq}</changefreq>"
+                 f"<priority>0.7</priority></url>")
+
     xml = ('<?xml version="1.0" encoding="UTF-8"?>'
            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
            f"{urls}</urlset>")
     return Response(content=xml, media_type="application/xml",
                     headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/llms.txt", response_class=PlainTextResponse)
+def llms_txt():
+    """A map of the site for language models, in Markdown.
+
+    llms.txt is a proposed convention, not a standard, and no model provider
+    has committed to reading it. It's here because it costs one route: the
+    downside if it's ignored is a file nobody fetches, and the upside if it
+    isn't is that a model answering "what is FPL Buddy" gets the answer from
+    the site rather than inferring it from whatever page it happened to crawl.
+
+    Deliberately prose rather than a link dump. The four tool pages draw their
+    tables from /api/* after the page loads, and crawlers generally don't run
+    JavaScript, so a model that fetches /players sees headings and an empty
+    table. Describing what each page holds is the only way that content is
+    represented at all until those tables are server-rendered.
+
+    The player pages are the exception - those are fully server-rendered, which
+    is why they're the ones pointed at for per-player questions."""
+    return PlainTextResponse(
+        f"# {SITE_NAME}\n"
+        "\n"
+        "> Free Fantasy Premier League tools: every player rated by a ridge\n"
+        "> regression trained on per-gameweek data, two AI-picked squads a week,\n"
+        "> a fixture rotation planner, and your own squad analysed from your FPL\n"
+        "> ID. Unofficial fan project, not affiliated with the Premier League.\n"
+        "\n"
+        "Data comes from the public Fantasy Premier League API and from ClubElo\n"
+        "for team strength. Projections are per-position ridge regressions over\n"
+        "rolling three-gameweek expected goal involvements, minutes, bonus, home\n"
+        "or away, and opponent strength. Predictions are frozen at each deadline\n"
+        "and never recalculated, so the published track record is unedited.\n"
+        "\n"
+        "## Pages\n"
+        "\n"
+        f"- [Home]({SITE_URL}/): what the site does and how to find your FPL ID.\n"
+        f"- [Player ratings]({SITE_URL}/players): every player with predicted\n"
+        "  points for the next eight gameweeks, price, form, ownership, and the\n"
+        "  players whose returns are behind their underlying numbers.\n"
+        f"- [AI teams]({SITE_URL}/ai-teams): two squads picked by integer linear\n"
+        "  programming. AI Best XV is the highest-scoring legal squad for the\n"
+        "  coming gameweek, rebuilt weekly. AI Manager keeps one squad across the\n"
+        "  season with a real bank balance, free transfers, hits and chips.\n"
+        f"- [Fixture rotator]({SITE_URL}/fixture-rotator): pairs of clubs whose\n"
+        "  fixtures alternate, so one of the two always has a good game.\n"
+        f"- [My team]({SITE_URL}/my-team): enter an FPL ID for predicted points,\n"
+        "  an optimised XI, transfer suggestions and live scoring.\n"
+        f"- [Players A-Z]({SITE_URL}/players/a-z): index of every player page.\n"
+        f"- [About]({SITE_URL}/about): how the model works and what it can't do.\n"
+        f"- [FAQ]({SITE_URL}/faq): common questions about the ratings and squads.\n"
+        "\n"
+        "## For per-player questions\n"
+        "\n"
+        f"Each player has a page at {SITE_URL}/player/<name-slug> carrying price,\n"
+        "ownership, form, expected goals and assists, availability and projected\n"
+        "points. These are server-rendered and readable without JavaScript.\n"
+        "\n"
+        "## Notes\n"
+        "\n"
+        "- Projections compare players against each other. Read as a forecast of\n"
+        "  any individual score they will be wrong most weeks.\n"
+        "- The site is read-only. It cannot change anyone's team, and never asks\n"
+        "  for a Fantasy Premier League password.\n"
+        f"- Corrections: {SITE_URL}/contact\n",
+        headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/.well-known/security.txt", response_class=PlainTextResponse)
@@ -1100,6 +1460,52 @@ def set_mode(mode: str, x_refresh_token: str = Header(default="")):
         return {"status": "ok", "mode": state["mode"]}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
+
+
+def _drafts_or_404(gw=None):
+    """The drafts for `gw`, or for the most recent gameweek that has any.
+
+    Defaulting to the latest is what makes one bookmark useful all season: the
+    alternative is a URL with a gameweek number in it that has to be edited
+    every week, which is exactly the friction that stops the posting routine
+    happening at all."""
+    if gw is None:
+        available = social.list_drafts()
+        if not available:
+            raise HTTPException(status_code=404,
+                                detail="No drafts yet - has the report been built?")
+        gw = available[0]
+    text = social.read_drafts(gw)
+    if text is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No drafts for GW{gw} - has the report been built?")
+    # Belt and braces alongside the Disallow on /api/: robots.txt asks a crawler
+    # not to fetch, this tells anything that fetched anyway not to index.
+    return PlainTextResponse(text, headers={"X-Robots-Tag": "noindex, nofollow"})
+
+
+@app.get("/api/social/{gw}", response_class=PlainTextResponse)
+def social_drafts(gw: int, x_refresh_token: str = Header(default="")):
+    """The draft post text for a gameweek. Needs a header, so: curl, not a
+    phone. See the keyed route below for the phone case."""
+    require_refresh_token(x_refresh_token)
+    return _drafts_or_404(gw)
+
+
+# Declared conditionally, like the IndexNow key route: unset, the path simply
+# doesn't exist rather than existing and refusing. See FPL_SOCIAL_KEY above for
+# why this is a capability URL and what that costs.
+if SOCIAL_KEY:
+    @app.get(f"/api/social/{SOCIAL_KEY}/latest", response_class=PlainTextResponse)
+    def social_drafts_latest():
+        """The newest gameweek's drafts. This is the one to bookmark."""
+        return _drafts_or_404()
+
+    @app.get(f"/api/social/{SOCIAL_KEY}/{{gw}}", response_class=PlainTextResponse)
+    def social_drafts_keyed(gw: int):
+        """A specific gameweek, for going back to an earlier week."""
+        return _drafts_or_404(gw)
 
 
 @app.post("/api/refresh")

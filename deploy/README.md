@@ -16,6 +16,26 @@ written inside it is destroyed each time you ship.
 |---|---|---|
 | `/srv/fpl-companion/state` | `/app/state` | SQLite — saved teams, AI snapshots, the deadline ledger |
 | `/srv/fpl-companion/data` | `/app/data-live` | Everything the nightly job writes: `gameweek_stats.csv`, the bootstrap cache, per-player summaries |
+| `/srv/fpl-companion/secrets` | `/app/secrets` (read-only) | The Google service-account JSON that `GSC_KEY` points at |
+
+**These host paths still say `fpl-companion` after the rename to FPL Buddy, on
+purpose.** They hold the live database and every file the nightly job has
+written, and renaming a directory the app is mid-flight over is the one step
+here that can lose data. The container, the image and the cron jobs are all
+called `fpl-buddy`; only these paths lag, and nothing reads them but this file
+and `docker-compose.yml`. If you do want to rename them later, do it on its own
+rather than alongside anything else:
+
+```bash
+docker compose down                                  # not `stop` - release the mounts
+mv /srv/fpl-companion /srv/fpl-buddy
+sed -i 's#/srv/fpl-companion#/srv/fpl-buddy#g' docker-compose.yml
+docker compose up -d
+curl -s localhost:8000/api/ai/status | python3 -m json.tool   # storage must read `bind`
+```
+
+If that last check reports `anon`, stop and read *Recovering data from orphaned
+anonymous volumes* below — the app will look healthy with an empty database.
 
 The second one is easy to miss. Without it the app still runs, but every
 nightly write lands in the image layer and is wiped on the next deploy — which
@@ -32,13 +52,13 @@ mkdir -p /srv/fpl-companion/state /srv/fpl-companion/data
 ```
 
 ```bash
-docker run -d --name fpl-companion \
+docker run -d --name fpl-buddy \
   -p 8000:8000 \
   -v /srv/fpl-companion/state:/app/state \
   -v /srv/fpl-companion/data:/app/data-live \
   -e FPL_DATA_ROOT=/app/data-live \
   -e FPL_REFRESH_TOKEN="$(cat /srv/fpl-companion/refresh_token)" \
-  ghcr.io/mylesfairburn/fpl-companion:latest
+  ghcr.io/mylesfairburn/fpl-buddy:latest
 ```
 
 Or with compose — see `deploy/docker-compose.yml`, which sets both.
@@ -143,8 +163,8 @@ run risks freezing provisional scores that later change.
 Install with:
 
 ```bash
-cp deploy/fpl-companion.cron /etc/cron.d/fpl-companion
-chmod 644 /etc/cron.d/fpl-companion
+cp deploy/fpl-buddy.cron /etc/cron.d/fpl-buddy
+chmod 644 /etc/cron.d/fpl-buddy
 ```
 
 Edit the paths and token at the top of that file first.
@@ -152,8 +172,8 @@ Edit the paths and token at the top of that file first.
 ## 4. First run
 
 ```bash
-docker exec fpl-companion python jobs.py init-db
-docker exec fpl-companion python jobs.py deadline-watch
+docker exec fpl-buddy python jobs.py init-db
+docker exec fpl-buddy python jobs.py deadline-watch
 ```
 
 The first `deadline-watch` against a mid-season DB marks every already-passed
@@ -165,7 +185,7 @@ gameweek's numbers. A visible gap is better than a fabricated record.
 To force a specific gameweek (testing, or catching up within the 24h window):
 
 ```bash
-docker exec fpl-companion python jobs.py deadline-watch --gameweek 5
+docker exec fpl-buddy python jobs.py deadline-watch --gameweek 5
 ```
 
 ## Data layout

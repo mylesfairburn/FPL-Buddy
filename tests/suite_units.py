@@ -5,10 +5,13 @@ the functions whose output ends up in a URL, a page title or a sentence a
 reader sees, so they're worth pinning down precisely.
 """
 
+import json
 import math
 
-import player_pages as pp
 import drafts
+import gw_report as gwr
+import kits
+import player_pages as pp
 from harness import check, expect, group, safe
 
 
@@ -280,6 +283,169 @@ def test_horizon_points():
                "defensive rather than a live fault")
 
 
+
+
+def _fake_player(**over):
+    """A page record shaped like the ones build_index produces.
+
+    Written out rather than pulled from a fixture so each test can state the
+    one field it cares about and the defaults stay obviously boring."""
+    rec = {
+        "code": 1, "web_name": "Player", "full_name": "A Player",
+        "path": "/player/a-player-1", "pos": "MID", "team_code": 3,
+        "team_name": "Arsenal", "team_short": "ARS", "cost": 7.0,
+        "status": "a", "chance_of_playing_next_round": None, "news": "",
+        "next_gameweeks": [{"event": 5, "points": 5.0, "opponent": "CHE",
+                            "was_home": True}],
+        "stats": {"minutes": 900, "form": 6.0, "selected_by_percent": 2.0,
+                  "expected_goal_involvements": 4.0, "goals_scored": 3,
+                  "assists": 2},
+    }
+    stats = over.pop("stats", None)
+    rec.update(over)
+    if stats:
+        rec["stats"] = {**rec["stats"], **stats}
+    return rec
+
+
+def test_gw_report_predicted_for():
+    group("gw_report projections", "high")
+
+    # The key is `points`. Reading `predicted_points` here - the name the same
+    # number goes by in the API payload - returns None for everyone and empties
+    # two sections without raising, so this pins the field name down.
+    rec = _fake_player()
+    expect("reads the `points` key", "next_gameweeks[{event:5, points:5.0}]",
+           5.0, safe(gwr._predicted_for, rec, 5), severity="high")
+
+    # Matching on `event` rather than taking the first entry. A report built
+    # after a round completes would otherwise print next week's projection.
+    multi = _fake_player(next_gameweeks=[
+        {"event": 6, "points": 9.9}, {"event": 7, "points": 1.1}])
+    expect("matches the requested gameweek, not the first entry",
+           "events 6 and 7, asking for 7", 1.1,
+           safe(gwr._predicted_for, multi, 7), severity="critical",
+           note="the bug the AI squads already had to fix once")
+    expect("a gameweek with no fixture gives None", "events 6 and 7, asking for 9",
+           None, safe(gwr._predicted_for, multi, 9))
+    expect("an empty fixture list gives None", "next_gameweeks=[]", None,
+           safe(gwr._predicted_for, _fake_player(next_gameweeks=[]), 5))
+
+
+def test_gw_report_availability():
+    group("gw_report availability", "high")
+
+    expect("a fit player is recommendable", "status='a', chance=None",
+           True, safe(gwr._is_available, _fake_player()))
+    expect("an injured player is not", "status='i'", False,
+           safe(gwr._is_available, _fake_player(status="i")), severity="high")
+    expect("a doubt is not", "status='a', chance=75", False,
+           safe(gwr._is_available, _fake_player(chance_of_playing_next_round=75)),
+           severity="high",
+           note="a recommendation carrying an asterisk is worse than none")
+    expect("100% chance is still recommendable", "status='a', chance=100",
+           True, safe(gwr._is_available, _fake_player(chance_of_playing_next_round=100)))
+
+
+def test_gw_report_sections():
+    group("gw_report sections", "high")
+
+    # Preseason FPL reports every player at 0.0 form. Without the >0 guard the
+    # In Form section ranks a field of ties and prints "on 0.0 form".
+    flat = {i: _fake_player(code=i, stats={"form": 0.0}) for i in range(5)}
+    expect("zero form is not 'in form'", "5 players all on 0.0 form",
+           0, len(safe(gwr.in_form, flat, 5) or []), severity="high")
+
+    ranked = {1: _fake_player(code=1, web_name="Low", stats={"form": 2.0}),
+              2: _fake_player(code=2, web_name="High", stats={"form": 8.0}),
+              3: _fake_player(code=3, web_name="Mid", stats={"form": 5.0})}
+    names = [p["name"] for p in (safe(gwr.in_form, ranked, 5) or [])]
+    expect("in form is ranked by form, highest first", "forms 2.0/8.0/5.0",
+           ["High", "Mid", "Low"], names, severity="high")
+
+    thin = {1: _fake_player(code=1, stats={"minutes": 20, "form": 9.0})}
+    expect("a player with almost no minutes is excluded", "20 minutes, 9.0 form",
+           0, len(safe(gwr.in_form, thin, 5) or []),
+           note="two substitute appearances shouldn't set the form table")
+
+    # Differentials: the ownership ceiling and the projection floor both bite.
+    owned = {1: _fake_player(code=1, stats={"selected_by_percent": 40.0})}
+    expect("a widely-owned player is not a differential", "40% owned", 0,
+           len(safe(gwr.differentials, owned, 5) or []), severity="high")
+    poor = {1: _fake_player(code=1, stats={"selected_by_percent": 1.0},
+                            next_gameweeks=[{"event": 5, "points": 0.4}])}
+    expect("a low-owned player the model doesn't rate is not a differential",
+           "1% owned, 0.4 projected", 0,
+           len(safe(gwr.differentials, poor, 5) or []),
+           note="otherwise this section is just the cheapest reserves in the league")
+    good = {1: _fake_player(code=1, stats={"selected_by_percent": 1.0})}
+    expect("a low-owned player the model rates is", "1% owned, 5.0 projected",
+           1, len(safe(gwr.differentials, good, 5) or []), severity="high")
+
+    # Team news is filtered by ownership, not by severity.
+    quiet = {1: _fake_player(code=1, status="i",
+                             stats={"selected_by_percent": 1.0})}
+    expect("an injury to a barely-owned player is not news", "1% owned, injured",
+           0, len(safe(gwr.team_news, quiet, 5) or []))
+    loud = {1: _fake_player(code=1, status="i",
+                            stats={"selected_by_percent": 45.0})}
+    expect("an injury to a widely-owned player is", "45% owned, injured", 1,
+           len(safe(gwr.team_news, loud, 5) or []), severity="high")
+
+
+def test_gw_report_build():
+    group("gw_report assembly", "high")
+
+    pages = {1: _fake_player(code=1)}
+    report = safe(gwr.build, pages, 5)
+    check("build returns every expected section", "one fit, in-form player",
+          "all five section keys present", report,
+          lambda r: isinstance(r, dict) and all(
+              k in r for k in ("gameweek", "in_form", "differentials",
+                               "attack_runs", "defence_runs", "news", "summary")),
+          severity="high")
+
+    # The whole edition is stored as JSON, so anything not serialisable - a
+    # numpy float from pandas, a Timestamp - breaks the save rather than the
+    # page, and does it in a cron job nobody is watching.
+    check("the report is JSON-serialisable", "build() output",
+          "json.dumps succeeds", report,
+          lambda r: isinstance(json.dumps(r), str), severity="critical",
+          note="it is written to SQLite as a JSON string by a nightly job")
+
+    empty = safe(gwr.build, {}, 5)
+    check("an empty pool still produces a usable edition", "no players at all",
+          "a summary explaining the page is thin", empty,
+          lambda r: isinstance(r, dict) and len(r.get("summary", "")) > 40,
+          note="normal preseason; must not look like a failed job")
+
+
+def test_kit_colours():
+    group("club colours", "medium")
+
+    colours = safe(kits.team_colours)
+    check("every club in kits.js is parsed", "static/kits.js",
+          "20 clubs", colours,
+          lambda c: isinstance(c, dict) and len(c) >= 20, severity="high",
+          note="a chip with no colour is the visible symptom")
+    check("colours are hex values", "parsed table", "#RRGGBB", colours,
+          lambda c: all(v["primary"].startswith("#") and v["secondary"].startswith("#")
+                        for v in c.values()) if c else False)
+    # Nott'm Forest is written with double quotes in kits.js because its name
+    # contains an apostrophe - the one row a naive single-quote regex misses.
+    check("a club whose name contains an apostrophe is parsed", "team_code 17",
+          "Nott'm Forest present", colours,
+          lambda c: 17 in c and "Forest" in c[17]["name"], severity="medium")
+
+    expect("an unknown club falls back rather than raising", "team_code 9999",
+           kits.FALLBACK, safe(kits.colours_for, 9999))
+    expect("a None code falls back", "team_code None", kits.FALLBACK,
+           safe(kits.colours_for, None),
+           note="a promoted club not yet in kits.js hits this")
+
+
 SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_a_to_z_grouping, test_draft_validation, test_storage_kind,
-          test_horizon_points]
+          test_horizon_points, test_gw_report_predicted_for,
+          test_gw_report_availability, test_gw_report_sections,
+          test_gw_report_build, test_kit_colours]

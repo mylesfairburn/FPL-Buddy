@@ -1,0 +1,17 @@
+{# A club's colours as a small two-tone chip.
+
+   Used instead of a badge, deliberately. Club crests are trademarks and not
+   ours to reproduce; colours are facts about a club, which is the same
+   reasoning that has kits.js drawing its own shirt rather than hotlinking
+   FPL's. Nothing on this page comes from an image URL we don't control.
+
+   Rendered inline with a style attribute rather than a class per club: there
+   are twenty of them, they change when a club is promoted, and the colours
+   already live in kits.js - a parallel set of CSS classes would be a second
+   place to update and forget.
+
+   Expects `code` (FPL team_code) and `label` (the club's short name). #}
+{%- set c = club_colours(code) -%}
+<span class="club-chip" aria-hidden="true"
+      style="--club-a: {{ c.primary }}; --club-b: {{ c.secondary }};"></span>
+<span class="club-name">{{ label or c.name }}</span>

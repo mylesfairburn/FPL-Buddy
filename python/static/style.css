@@ -1367,6 +1367,23 @@ body {
     border-radius: 4px; font-size: 0.88em; word-break: break-all;
 }
 
+/* FAQ. Each question is a card so the eye can find the one it wants without
+   reading the answers - a plain run of h2/p is fine for an essay like /about
+   but poor for a page people scan. Left rule rather than a full border keeps
+   twelve of them from looking like twelve boxes. */
+.faq-list { margin-top: 22px; }
+.faq-item {
+    border-left: 3px solid var(--accent);
+    background: #fafcfc;
+    border-radius: 0 8px 8px 0;
+    padding: 12px 16px;
+    margin-bottom: 12px;
+}
+.content-page .faq-item h2.faq-q {
+    font-size: 1.02rem; margin: 0 0 6px; color: var(--accent-dark);
+}
+.content-page .faq-item p.faq-a { margin: 0; color: #333; }
+
 /* Landing page ID entry. Reuses .id-prompt so it's the same card the app
    shows, just given more room to breathe as the first thing on the page. */
 .home-id-prompt { margin: 22px auto 34px; background: #fbfdfd; }
@@ -1622,4 +1639,244 @@ a.navbar-brand.brand:hover { color: #ffffff !important; opacity: 0.92; }
 .brand-icon { transition: transform 0.15s ease; }
 a.navbar-brand.brand:focus-visible {
     outline: 2px solid #ffffff; outline-offset: 3px; border-radius: 8px;
+}
+
+/* ============================================================
+   RESERVED SPACE FOR JS-POPULATED CONTENT
+   ============================================================
+
+   Every block below starts empty in the HTML and is filled once its /api/
+   response lands. Without a reserved height each one grows from nothing to
+   several hundred pixels after first paint, shoving everything underneath it
+   down the page - which is exactly what Cumulative Layout Shift measures, and
+   what took the Players tab to 0.231 (the pass mark is 0.1).
+
+   The values are the height each block settles at once full, so the box the
+   reader sees before the data arrives is the same box they see after. Slightly
+   too tall is harmless - a little empty space at the bottom of a scroll pane.
+   Too short still shifts, so these round up rather than down. */
+
+/* The whole player-search widget - controls, scroll pane and table - is built
+   by createPlayerSearch() into an empty div, so the reserved height is the
+   .ps-list max-height (70vh, set above) plus the controls row above it. */
+#playersTabSearch, #playerSearch { min-height: calc(70vh + 46px); }
+
+/* Tables whose <thead> is server-rendered but whose <tbody> starts empty: the
+   underperforming list, the AI squad and both AI history tables. These collapse
+   to the header row until data arrives rather than to nothing, so they need
+   less than the full pane height. */
+.ps-list { min-height: 260px; }
+
+/* Rotation pairs are cards, not a table, and the row of them is about this
+   tall on every breakpoint. */
+#pairsContainer { min-height: 300px; }
+
+/* One row per team, always 20 of them, drawn after /api/rotation returns. */
+#rotationTable { min-height: 620px; }
+
+@media (max-width: 575.98px) {
+    /* Phones: the pane is already near-full-height and an over-reserved box
+       means scrolling past emptiness on a small screen, which is a worse
+       experience than the shift it prevents. Reserve enough to stop the jump
+       being violent, not enough to be exact. */
+    #playersTabSearch, #playerSearch { min-height: 420px; }
+    .ps-list { min-height: 200px; }
+    #pairsContainer { min-height: 240px; }
+    #rotationTable { min-height: 480px; }
+}
+
+/* ============================================================
+   GAMEWEEK BRIEFING  (/gameweek/<n>)
+   ============================================================
+
+   Newspaper treatment, for a reason beyond decoration: this is the one part
+   of the site that is prose rather than a tool, and it needs to look unlike
+   the tables so a reader knows immediately which of the two they're on.
+
+   A serif face for the headings against the sans body does most of that work.
+   The stack is system serifs only - Georgia is on essentially every Windows
+   and Mac, and the fallbacks cover Linux and Android. A web font would be a
+   third-party connection and a render-blocking request on a page whose whole
+   point is being fast and self-contained.
+
+   Widths are wider than .content-page's 760px: the card grids need the room,
+   and a masthead constrained to essay width doesn't read as a masthead. */
+
+.gw-masthead, .gw-section, .gw-footer, .gw-empty { max-width: 980px; margin-inline: auto; }
+.content-page:has(.gw-masthead) { max-width: 980px; }
+
+/* --- Masthead --- */
+.gw-masthead { margin-bottom: 32px; }
+.gw-masthead-rule {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border-top: 3px solid var(--accent-dark);
+    border-bottom: 1px solid #ddd;
+    padding: 8px 0; margin-bottom: 18px;
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.08em;
+}
+.gw-edition { font-weight: 700; color: var(--accent-dark); }
+.gw-season { color: #777; }
+.gw-status { margin-left: auto; padding: 2px 8px; border-radius: 3px; font-weight: 600; }
+.gw-status.is-final { background: #eef6f6; color: var(--accent-dark); }
+.gw-status.is-live { background: #fff4e5; color: #A85B00; }
+
+.content-page h1.gw-title {
+    font-family: Georgia, "Times New Roman", "Liberation Serif", serif;
+    font-size: clamp(1.9rem, 5vw, 3rem);
+    line-height: 1.1; font-weight: 700; letter-spacing: -0.02em;
+    color: #1a1a1a; margin: 0 0 12px;
+}
+.gw-standfirst {
+    font-family: Georgia, "Times New Roman", "Liberation Serif", serif;
+    font-size: 1.12rem; line-height: 1.55; color: #333; margin-bottom: 10px;
+}
+.gw-byline { font-size: 0.82rem; color: #777; line-height: 1.5; margin: 0; }
+.gw-empty {
+    font-size: 1rem; color: #555; background: #fafafa;
+    border: 1px dashed #ddd; border-radius: 8px; padding: 20px; margin: 24px auto;
+}
+
+/* --- Section headings: rule through the middle, label knocked out of it --- */
+.gw-section { margin-bottom: 40px; }
+.content-page h2.gw-section-head {
+    font-family: Georgia, "Times New Roman", "Liberation Serif", serif;
+    font-size: 1.5rem; font-weight: 700; color: #1a1a1a;
+    margin: 0 0 4px; position: relative; text-align: center;
+}
+.gw-section-head::before {
+    content: ""; position: absolute; top: 50%; left: 0; right: 0;
+    border-top: 1px solid #ddd; z-index: 0;
+}
+.gw-section-head span { position: relative; z-index: 1; background: #fff; padding: 0 16px; }
+.gw-section-sub {
+    text-align: center; font-size: 0.85rem; color: #777;
+    margin: 0 auto 20px; max-width: 620px; line-height: 1.5;
+}
+
+/* --- Player cards --- */
+.gw-cards { display: grid; gap: 16px; }
+.gw-cards-3 { grid-template-columns: repeat(3, 1fr); }
+.gw-card {
+    border: 1px solid #e6e6e6; border-top: 3px solid var(--accent);
+    border-radius: 0 0 8px 8px; padding: 14px 16px 16px; background: #fff;
+}
+.gw-card-diff { border-top-color: #A85B00; }
+.gw-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.gw-pos {
+    margin-left: auto; font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em;
+    background: #f1f1f1; color: #555; padding: 2px 6px; border-radius: 3px;
+}
+.content-page h3.gw-card-name {
+    font-family: Georgia, "Times New Roman", "Liberation Serif", serif;
+    font-size: 1.28rem; font-weight: 700; margin: 0 0 2px; color: #1a1a1a;
+}
+.gw-card-name a { color: inherit; text-decoration: none; }
+.gw-card-name a:hover { color: var(--accent-dark); text-decoration: underline; }
+.gw-card-figure {
+    font-size: 0.8rem; font-weight: 700; color: var(--accent-dark);
+    text-transform: uppercase; letter-spacing: 0.05em; margin: 0 0 8px;
+}
+.gw-card-diff .gw-card-figure { color: #A85B00; }
+.content-page p.gw-card-why { font-size: 0.86rem; line-height: 1.5; color: #444; margin: 0 0 12px; }
+
+/* --- The little stat strip on each card --- */
+.gw-stats { display: flex; gap: 14px; margin: 0 0 10px; flex-wrap: wrap; }
+.gw-stats div { display: flex; flex-direction: column; }
+.gw-stats dt {
+    font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em;
+    color: #999; font-weight: 600;
+}
+.gw-stats dd { margin: 0; font-size: 0.94rem; font-weight: 700; color: #222; }
+
+/* --- Fixture pills --- */
+.gw-fixtures { display: flex; gap: 4px; flex-wrap: wrap; margin: 0; }
+.gw-fixtures span {
+    font-size: 0.68rem; background: #f4f8f8; color: #555;
+    border: 1px solid #e4eded; border-radius: 3px; padding: 2px 6px; white-space: nowrap;
+}
+
+/* --- Club chip: two-tone, standing in for a badge we can't use --- */
+.club-chip {
+    display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+    background: linear-gradient(135deg, var(--club-a) 0%, var(--club-a) 50%,
+                                        var(--club-b) 50%, var(--club-b) 100%);
+    border: 1px solid rgba(0, 0, 0, 0.25);  /* or white kits vanish */
+    flex: 0 0 auto; vertical-align: middle;
+}
+.club-name { font-size: 0.78rem; color: #666; font-weight: 600; }
+
+/* --- Fixture section: two columns of team runs --- */
+.gw-fixture-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+.content-page h3.gw-sub-head {
+    font-family: Georgia, "Times New Roman", "Liberation Serif", serif;
+    font-size: 1.05rem; font-weight: 700; color: #1a1a1a;
+    border-bottom: 2px solid var(--accent); padding-bottom: 5px; margin: 0 0 4px;
+}
+.gw-hint { font-size: 0.76rem; color: #888; margin: 0 0 12px; }
+.gw-run { border-bottom: 1px solid #eee; padding: 10px 0; }
+.gw-run:last-child { border-bottom: none; }
+.gw-run-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.gw-run-score {
+    margin-left: auto; font-size: 0.78rem; font-weight: 700; color: var(--accent-dark);
+}
+.gw-run-players { list-style: none; padding: 0; margin: 8px 0 0; }
+.content-page .gw-run-players li { font-size: 0.82rem; margin-bottom: 3px; }
+.gw-run-meta { color: #888; font-size: 0.74rem; }
+
+/* --- Treatment table --- */
+.gw-news-list { list-style: none; padding: 0; margin: 0; }
+.gw-news-item {
+    border-left: 3px solid #ccc; background: #fafafa;
+    border-radius: 0 6px 6px 0; padding: 10px 14px; margin-bottom: 8px;
+}
+/* Status letters are FPL's own: i injured, s suspended, d doubtful,
+   u/n unavailable or not in the squad. */
+.gw-news-i, .gw-news-u, .gw-news-n { border-left-color: #C4122E; background: #fdf6f7; }
+.gw-news-s { border-left-color: #A85B00; background: #fdfaf5; }
+.gw-news-d { border-left-color: #E0A800; background: #fdfcf5; }
+.gw-news-who { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 3px; }
+.gw-news-who a { color: #1a1a1a; text-decoration: none; }
+.gw-news-who a:hover { color: var(--accent-dark); text-decoration: underline; }
+.gw-news-owned { font-size: 0.72rem; color: #888; margin-left: auto; }
+.content-page p.gw-news-why { font-size: 0.84rem; color: #555; margin: 0; line-height: 1.45; }
+
+/* --- Footer --- */
+.gw-footer { border-top: 1px solid #ddd; padding-top: 16px; margin-top: 8px; }
+.content-page .gw-footer p { font-size: 0.82rem; color: #777; line-height: 1.55; }
+.gw-footer-nav { display: flex; gap: 18px; }
+
+/* --- Archive index --- */
+.gw-archive { list-style: none; padding: 0; margin: 22px 0; }
+.gw-archive-item {
+    display: flex; align-items: center; gap: 12px;
+    border-bottom: 1px solid #eee; padding: 10px 2px;
+}
+.gw-archive-link { display: flex; align-items: baseline; gap: 12px; text-decoration: none; flex: 1; }
+.gw-archive-num {
+    font-family: Georgia, "Times New Roman", "Liberation Serif", serif;
+    font-weight: 700; font-size: 1.05rem; color: var(--accent-dark); min-width: 58px;
+}
+.gw-archive-label { color: #333; }
+.gw-archive-link:hover .gw-archive-label { color: var(--accent-dark); text-decoration: underline; }
+.gw-archive-state {
+    font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.06em;
+    font-weight: 700; padding: 2px 8px; border-radius: 3px;
+}
+.gw-archive-state.is-final { background: #eef6f6; color: var(--accent-dark); }
+.gw-archive-state.is-live { background: #fff4e5; color: #A85B00; }
+
+/* Tablet: three cards across is too tight, two columns of fixtures too narrow. */
+@media (max-width: 900px) {
+    .gw-cards-3 { grid-template-columns: repeat(2, 1fr); }
+    .gw-fixture-cols { grid-template-columns: 1fr; gap: 24px; }
+}
+
+/* Phone: single column throughout, and the masthead loses its dramatic size
+   because a 3rem headline on a 375px screen is four words per line. */
+@media (max-width: 575.98px) {
+    .gw-cards-3 { grid-template-columns: 1fr; }
+    .content-page h1.gw-title { font-size: 1.65rem; }
+    .gw-standfirst { font-size: 1rem; }
+    .gw-status { margin-left: 0; }
+    .gw-news-owned { margin-left: 0; }
 }

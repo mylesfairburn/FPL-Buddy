@@ -1,0 +1,55 @@
+{% extends 'pages/_layout.html' %}
+
+{% block head_extra %}
+    {# FAQPage markup, generated from the same FAQ_ITEMS list the visible page
+       below is rendered from. Google reads a mismatch between the two as a
+       spam signal, and the only realistic way that happens is two copies of
+       the text drifting apart - so there is only one copy.
+
+       `|safe` inside tojson is not needed and would be wrong: tojson escapes
+       for a JSON string literal, which is exactly what's wanted here. The
+       answers contain inline HTML, which the FAQPage spec permits. #}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "url": "{{ canonical }}",
+      "mainEntity": [
+{%- for item in faq_items %}
+        {"@type": "Question",
+         "name": {{ item.q | tojson }},
+         "acceptedAnswer": {"@type": "Answer", "text": {{ item.a | tojson }}}}{{ "," if not loop.last }}
+{%- endfor %}
+      ]
+    }
+    </script>
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Frequently asked questions</h1>
+<p class="page-lede">
+    What the numbers mean, where they come from, and how much to trust them.
+    If your question isn't here, <a href="/contact">ask</a> — it probably
+    belongs on this page.
+</p>
+
+{# Plain headings and paragraphs rather than an accordion. Collapsed answers
+   are hidden text as far as some crawlers are concerned, and this page exists
+   to be read by machines as much as by people. #}
+<div class="faq-list">
+{% for item in faq_items %}
+    <section class="faq-item">
+        <h2 class="faq-q">{{ item.q }}</h2>
+        <p class="faq-a">{{ item.a | safe }}</p>
+    </section>
+{% endfor %}
+</div>
+
+<h2>Still stuck?</h2>
+<p>
+    The <a href="/about">about page</a> goes into how the model is trained and
+    what it deliberately leaves out. For anything else — a bug, a player whose
+    numbers look wrong, or a disagreement about the model — the
+    <a href="/contact">contact page</a> has the address.
+</p>
+{% endblock %}

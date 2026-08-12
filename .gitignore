@@ -7,6 +7,15 @@ tests/reports/
 venv/
 build/
 .vscode/
+# Live credentials. `deploy/env.example` is the committed template; the real
+# .env lives beside docker-compose.yml on the server and holds the refresh
+# token, the Bing API key and the social-drafts key. secrets/ is where the
+# Google service-account JSON goes - that file contains an RSA private key.
+.env
+.env.*
+!deploy/env.example
+secrets/
+
 # SQLite state — lives on a mounted volume in production, never in the image
 state/
 *.db

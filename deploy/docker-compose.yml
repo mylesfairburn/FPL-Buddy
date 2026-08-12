@@ -1,13 +1,29 @@
 services:
-  app:
-    image: ghcr.io/mylesfairburn/fpl-companion:latest
-    container_name: fpl-companion
+  fpl-buddy:
+    image: ghcr.io/mylesfairburn/fpl-buddy:latest
+    # Pinned explicitly, which is worth one line. Without it Compose names the
+    # container <project>-<service>-<n>, where <project> is the DIRECTORY the
+    # stack happens to live in - so the same file produced `apps-fpl-buddy-1`
+    # in /root/apps and would produce something else if the directory were ever
+    # renamed. Every cron job addresses this container by name, and the failure
+    # mode when that name drifts is silent: `docker exec` against a container
+    # that doesn't exist fails into a log nobody reads, and the only symptom is
+    # that the nightly jobs quietly stop happening.
+    container_name: fpl-buddy
     restart: unless-stopped
     # Bound to localhost: the reverse proxy terminates TLS and is the only
     # thing that should be able to reach /api/refresh from outside.
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
+      # The host paths stay /srv/fpl-companion after the rename to FPL Buddy,
+      # deliberately. They hold the live database and every file the nightly
+      # job has written; renaming them means stopping the container, moving
+      # data, and editing this file, with a real chance of the app coming back
+      # up pointing at an empty directory and looking like it works. A
+      # directory name that reads slightly stale is a much smaller problem than
+      # that, and it can be done later on its own - see deploy/README.md.
+      #
       # SQLite must outlive the image. NOT /app/data - that would shadow the
       # CSVs baked into the image.
       - /srv/fpl-companion/state:/app/state
@@ -23,6 +39,13 @@ services:
       # missing-only, so a nightly-updated file is never reverted to the
       # image's stale copy.
       - /srv/fpl-companion/data:/app/data-live
+      # Read-only, and holding one file: the Google service-account JSON whose
+      # path GSC_KEY points at. A file rather than an env var because that JSON
+      # contains an RSA private key, and `docker inspect` prints environment
+      # values in full to anyone who can talk to the Docker socket. Read-only
+      # because the app only ever reads it, so nothing that compromises the app
+      # process can rewrite the credential.
+      - /srv/fpl-companion/secrets:/app/secrets:ro
     environment:
       FPL_DB_PATH: /app/state/fpl_companion.db
       FPL_DATA_ROOT: /app/data-live
@@ -34,3 +57,18 @@ services:
       # whole point is that it's publicly readable - but it lives in .env with
       # the others so the compose file stays the same everywhere.
       FPL_INDEXNOW_KEY: ${FPL_INDEXNOW_KEY:-}
+      # Lets the weekly social drafts be read from a phone, where a browser
+      # can't send the X-Refresh-Token header the other route needs. The secret
+      # IS the URL - see the note on FPL_SOCIAL_KEY in main.py for what that
+      # trade costs. Unset, the route doesn't exist.
+      #   openssl rand -hex 32
+      FPL_SOCIAL_KEY: ${FPL_SOCIAL_KEY:-}
+      # --- Search Console / Bing reporting -----------------------------------
+      # Both optional: unset, the reporting job skips that source and says so
+      # rather than failing.
+      #
+      # GSC_KEY is a PATH, not the key itself - it points into the read-only
+      # secrets mount above. BINGWEBMASTER_KEY is a short opaque string, so it
+      # is fine as an environment value.
+      GSC_KEY: ${GSC_KEY:-}
+      BINGWEBMASTER_KEY: ${BINGWEBMASTER_KEY:-}

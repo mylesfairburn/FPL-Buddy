@@ -4,6 +4,7 @@ Everything a crawler or a first-time visitor touches. A failure here is usually
 invisible in a browser and expensive in search rankings.
 """
 
+import json
 import re
 import xml.etree.ElementTree as ET
 
@@ -77,9 +78,12 @@ def test_seo_tags():
         m = re.search(r'<meta name="description" content="(.*?)">', body, re.S)
         desc = m.group(1).strip() if m else ""
         descs[path] = desc
+        # 160 is Bing's limit - it reports anything longer as an error - and
+        # Google truncates at roughly the same width, so a longer description
+        # has a tail no search result will ever show.
         check(f"{path} has a description of usable length", f"GET {path}",
-              "50-320 characters", f"{len(desc)} chars",
-              lambda _, d=desc: 50 <= len(d) <= 320)
+              "50-160 characters", f"{len(desc)} chars",
+              lambda _, d=desc: 50 <= len(d) <= 160)
 
         m = re.search(r'<link rel="canonical" href="(.*?)">', body)
         canonical = m.group(1) if m else ""
@@ -119,6 +123,144 @@ def test_robots_and_security_txt():
           "both RFC 9116 mandatory fields", r.text,
           lambda b: "Contact:" in b and "Expires:" in b)
 
+    r = c.get("/llms.txt")
+    expect("llms.txt 200", "GET /llms.txt", 200, r.status_code)
+    check("llms.txt links are absolute", "GET /llms.txt",
+          "no relative hrefs - the file may be read out of context", r.text,
+          lambda b: "](/" not in b, severity="medium")
+    check("llms.txt points at pages that exist", "GET /llms.txt",
+          "every linked path returns 200", r.text,
+          lambda b: all(c.get(p).status_code == 200
+                        for p in re.findall(r"\]\(%s(/[a-z0-9/-]*)\)"
+                                            % re.escape(main.SITE_URL), b)),
+          severity="medium",
+          note="a stale link here misinforms exactly the readers it exists for")
+
+
+def test_faq():
+    group("FAQ page", "medium")
+    c = _client()
+    r = c.get("/faq")
+    expect("/faq 200", "GET /faq", 200, r.status_code, severity="high")
+
+    m = re.search(r'<script type="application/ld\+json">(.*?)</script>', r.text, re.S)
+    check("/faq carries FAQPage JSON-LD", "GET /faq", "one ld+json block", bool(m),
+          lambda v: v, severity="medium")
+    if not m:
+        return
+    try:
+        data = json.loads(m.group(1))
+    except json.JSONDecodeError as exc:
+        check("/faq JSON-LD parses", "GET /faq", "valid JSON", str(exc),
+              lambda _: False, severity="high",
+              note="invalid JSON-LD is ignored wholesale, not partially")
+        return
+    check("/faq JSON-LD parses", "GET /faq", "valid JSON", "parsed",
+          lambda _: True, severity="high")
+    expect("/faq JSON-LD is a FAQPage", "GET /faq", "FAQPage", data.get("@type"))
+    questions = data.get("mainEntity", [])
+    expect("/faq JSON-LD has every question", "GET /faq",
+           len(main.FAQ_ITEMS), len(questions))
+
+    # The failure this guards against: someone edits FAQ_ITEMS' wording, the
+    # markup updates, the visible page doesn't (or vice versa) - and Google
+    # treats structured data that isn't on the page as a manual-action risk.
+    # Both come from one list today, so this stays green unless that changes.
+    for item in main.FAQ_ITEMS:
+        check(f"FAQ question is visible on the page: {item['q'][:40]}",
+              "GET /faq", "question text present in the HTML body", item["q"],
+              lambda q, b=r.text: q.replace('"', "&#34;") in b or q in b,
+              severity="medium")
+
+
+def test_gameweek_pages():
+    group("gameweek briefings", "high")
+    c = _client()
+
+    r = c.get("/gameweek")
+    expect("/gameweek archive 200", "GET /gameweek", 200, r.status_code,
+           severity="high")
+
+    # An unpublished gameweek must 404 rather than generating on demand: a page
+    # built at request time would be dated wrong and would put the whole rating
+    # pipeline behind a URL a crawler can hit.
+    r = c.get("/gameweek/99")
+    expect("an unpublished gameweek 404s", "GET /gameweek/99", 404, r.status_code,
+           severity="high")
+
+    r = c.get("/gameweek/feed.xml")
+    expect("the RSS feed 200s", "GET /gameweek/feed.xml", 200, r.status_code)
+    check("the feed is XML", "GET /gameweek/feed.xml", "application/rss+xml",
+          r.headers.get("content-type", ""), lambda v: "xml" in v)
+    check("the feed parses", "GET /gameweek/feed.xml", "well-formed XML", r.text,
+          lambda b: ET.fromstring(b) is not None, severity="high",
+          note="an aggregator drops a malformed feed silently")
+    # Declaration order matters here: /gameweek/{gw} would swallow "feed.xml"
+    # and try to read it as an integer if it were declared first.
+    check("feed.xml is not matched as a gameweek number",
+          "GET /gameweek/feed.xml", "not a 404 or 422", r.status_code,
+          lambda v: v == 200, severity="high")
+
+    # Publish a real edition and read it back, so the template is exercised
+    # rather than just the empty-archive path.
+    import db as _db
+    payload = {
+        "gameweek": 1, "season": "2026-27", "deadline": None,
+        "summary": "Test edition for the suite.",
+        "in_form": [{"name": "Tester", "path": "/player/tester-1", "pos": "MID",
+                     "team_code": 3, "team_name": "Arsenal", "cost": 7.0,
+                     "owned": 12.5, "predicted": 5.5, "form": 6.0,
+                     "headline": "6.0 form", "why": "Because this is a test.",
+                     "fixtures": [{"event": 1, "label": "CHE (H)"}]}],
+        "differentials": [], "attack_runs": [], "defence_runs": [], "news": [],
+    }
+    wrote = _db.save_gw_report(1, payload)
+    check("an edition can be published", "save_gw_report(1)", True, wrote,
+          lambda v: v is True, severity="high")
+
+    r = c.get("/gameweek/1")
+    expect("a published edition renders", "GET /gameweek/1", 200, r.status_code,
+           severity="critical")
+    check("the edition names its players", "GET /gameweek/1",
+          "'Tester' in the server-rendered HTML", r.text,
+          lambda b: "Tester" in b, severity="critical",
+          note="the whole point is being readable without JavaScript")
+    check("the edition carries Article structured data", "GET /gameweek/1",
+          '"@type": "Article"', r.text, lambda b: '"Article"' in b)
+    m = re.search(r"<title>(.*?)</title>", r.text, re.S)
+    check("the edition has its own <title>", "GET /gameweek/1",
+          "a title naming this gameweek", m.group(1).strip() if m else "",
+          lambda t: "Gameweek 1" in t, severity="medium",
+          note="38 near-identical titles get classed as duplicates")
+
+    # Freezing is what makes the archive trustworthy: after it, a nightly run
+    # must not be able to rewrite the page.
+    froze = _db.freeze_gw_report(1)
+    check("an edition can be frozen", "freeze_gw_report(1)", True, froze,
+          lambda v: v is True, severity="high")
+    again = _db.save_gw_report(1, {**payload, "summary": "OVERWRITTEN"})
+    check("a frozen edition refuses to be rewritten", "save_gw_report on a frozen row",
+          "False, and the payload unchanged", again,
+          lambda v: v is False, severity="critical",
+          note="this refusal is the only thing making the archive honest")
+    check("the frozen edition kept its original text", "GET /gameweek/1",
+          "the original summary, not 'OVERWRITTEN'", c.get("/gameweek/1").text,
+          lambda b: "OVERWRITTEN" not in b, severity="critical")
+    check("re-freezing is idempotent", "freeze_gw_report(1) twice",
+          "False the second time", _db.freeze_gw_report(1),
+          lambda v: v is False,
+          note="the hourly watcher may call it more than once in the window")
+
+    r = c.get("/sitemap.xml")
+    check("a published edition is in the sitemap", "GET /sitemap.xml",
+          "/gameweek/1 present", r.text,
+          lambda b: f"{main.SITE_URL}/gameweek/1<" in b, severity="high")
+    check("a frozen edition is marked changefreq never", "GET /sitemap.xml",
+          "<changefreq>never</changefreq> on the frozen edition", r.text,
+          lambda b: "never" in b, severity="low",
+          note="stops Google recrawling dead pages looking for an edit "
+               "that will never come")
+
 
 def test_sitemap():
     group("sitemap.xml", "high")
@@ -142,8 +284,13 @@ def test_sitemap():
     check("sitemap parses as XML", "GET /sitemap.xml", "valid urlset",
           f"{len(locs)} <loc> entries", lambda _: True, severity="critical")
 
-    expected = len(main.PAGES) + len(main.player_page_index())
-    expect("sitemap URL count", "len(PAGES) + len(player_page_index())",
+    # Three sources now: the routing table, one page per player, and one per
+    # published gameweek edition. The edition count is read live rather than
+    # hardcoded because it grows by one a week during a season.
+    expected = (len(main.PAGES) + len(main.player_page_index())
+                + len(main.db.gw_report_index()))
+    expect("sitemap URL count",
+           "len(PAGES) + len(player_page_index()) + published editions",
            expected, len(locs), severity="high")
     check("every loc is absolute", "all <loc> values",
           f"all start with {main.SITE_URL}", len(locs),
@@ -294,5 +441,6 @@ def test_static_assets():
 
 
 SUITES = [test_page_routes, test_tab_panes, test_seo_tags,
-          test_robots_and_security_txt, test_sitemap, test_player_pages,
-          test_az_index, test_compression, test_static_assets]
+          test_robots_and_security_txt, test_faq, test_gameweek_pages,
+          test_sitemap, test_player_pages, test_az_index, test_compression,
+          test_static_assets]

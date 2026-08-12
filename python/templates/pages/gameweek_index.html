@@ -1,0 +1,44 @@
+{% extends 'pages/_layout.html' %}
+
+{% block content %}
+<h1 class="page-title">Gameweek briefings</h1>
+<p class="page-lede">
+    One write-up per gameweek: who is in form, the best differentials, whose
+    fixtures turn, and which widely-owned players are carrying a knock. Each
+    edition is rebuilt nightly until its deadline, then frozen &mdash; so an old
+    briefing still says what it said at the time, rather than being quietly
+    corrected afterwards.
+</p>
+
+{% if editions %}
+<ul class="gw-archive">
+    {% for ed in editions %}
+    <li class="gw-archive-item">
+        <a class="gw-archive-link" href="/gameweek/{{ ed.gameweek }}">
+            <span class="gw-archive-num">GW{{ ed.gameweek }}</span>
+            <span class="gw-archive-label">Gameweek {{ ed.gameweek }} briefing</span>
+        </a>
+        <span class="gw-archive-state {{ 'is-final' if ed.frozen else 'is-live' }}">
+            {{ "Final" if ed.frozen else "Live" }}
+        </span>
+    </li>
+    {% endfor %}
+</ul>
+{% else %}
+{# Expected for most of a preseason, and on a first deploy before the nightly
+   job has run. Says so plainly rather than showing an empty list, which reads
+   as a broken page. #}
+<p class="gw-empty">
+    No briefings published yet. The first one appears once the season's opening
+    gameweek is in sight &mdash; they're generated overnight.
+</p>
+{% endif %}
+
+<h2>Following along</h2>
+<p>
+    New editions appear in the <a href="/gameweek/feed.xml">RSS feed</a>. If you
+    want the underlying numbers rather than the write-up, the
+    <a href="/players">player ratings</a> and the
+    <a href="/fixture-rotator">fixture planner</a> are where they come from.
+</p>
+{% endblock %}

@@ -156,6 +156,38 @@ CREATE TABLE IF NOT EXISTS manager_draft_picks (
     UNIQUE (draft_id, position)
 );
 CREATE INDEX IF NOT EXISTS idx_draft_picks ON manager_draft_picks (draft_id);
+
+-- One published gameweek report per gameweek: the newspaper page at
+-- /gameweek/<n>.
+--
+-- Stored as a JSON payload rather than as normalised rows, which is a
+-- deliberate exception to the rule the other tables follow. Three reasons.
+-- The report is heterogeneous - form picks, differentials, fixture runs and
+-- injury news have almost no columns in common, so a relational shape is four
+-- more tables carrying one page. Nothing ever queries inside it: the only read
+-- is "give me the whole of gameweek 17". And it must render identically
+-- forever, which means the player names and numbers have to be frozen INTO the
+-- row rather than joined out of a pipeline that has moved on since - a page
+-- dated GW17 that quietly restates itself with GW30 prices is not an archive,
+-- it's a lie.
+--
+-- That last point is why this duplicates player names the roadmap says not to
+-- duplicate. The rule exists so live views don't drift out of sync with the
+-- pipeline; a frozen edition has the opposite requirement.
+--
+-- `frozen` is the lifecycle flag. 0 = regenerated nightly, still moving with
+-- the injury news. 1 = the deadline has passed, the edition is final and
+-- nothing writes to it again. The same pre-deadline window that commits the AI
+-- squads flips this, so the page and the squads are honest about the same
+-- moment in time.
+CREATE TABLE IF NOT EXISTS gw_report (
+    gameweek      INTEGER PRIMARY KEY,
+    payload       TEXT NOT NULL,               -- JSON: the whole edition
+    deadline_time TEXT,
+    frozen        INTEGER NOT NULL DEFAULT 0,
+    generated_at  TEXT NOT NULL,
+    frozen_at     TEXT
+);
 """
 
 
@@ -227,7 +259,18 @@ def storage_kind(path=None):
 
 # One table whose presence stands in for "the schema is applied". Checked per
 # connection rather than latched per process - see connect().
-_SENTINEL_TABLE = "ai_team_snapshot"
+# Every table SCHEMA creates, read out of SCHEMA itself rather than listed by
+# hand. This used to be a single sentinel table, which worked exactly once: the
+# check passed as soon as that one table existed, so a schema that grew a NEW
+# table never applied it to a database created before the change. The symptom
+# is "no such table" on a deployment that has been running fine for months and
+# has just been updated - the one case where it is most expensive to debug.
+#
+# Every statement is CREATE TABLE IF NOT EXISTS, so re-running the whole script
+# on an existing file is free and idempotent. That makes adding a table a
+# one-line change here with no migration to remember.
+_SCHEMA_TABLES = tuple(re.findall(
+    r"CREATE TABLE IF NOT EXISTS\s+(\w+)", SCHEMA))
 
 
 def _schema_present(conn):
@@ -236,10 +279,14 @@ def _schema_present(conn):
     SQLite caches a connection's schema in memory, so this is a microsecond
     lookup rather than a disk read - cheap enough to do on every connection,
     which is what makes the check trustworthy instead of a guess.
+
+    Checks for EVERY table, not one of them. A file missing any single table
+    needs the script re-run, and running it when it wasn't needed costs
+    nothing.
     """
-    return conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
-        (_SENTINEL_TABLE,)).fetchone() is not None
+    have = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    return all(t in have for t in _SCHEMA_TABLES)
 
 
 def _open(path):
@@ -369,6 +416,73 @@ def processed_deadlines():
     with connect() as conn:
         return [dict(r) for r in conn.execute(
             "SELECT * FROM processed_deadline ORDER BY gameweek")]
+
+
+# ---- gameweek reports -----------------------------------------------------
+
+def save_gw_report(gameweek, payload, deadline_time=None):
+    """Write (or rewrite) a gameweek's edition.
+
+    Refuses to touch a frozen row. That refusal is the whole guarantee the
+    archive rests on: once a deadline has passed, the only way to change what
+    GW17 said is to go into SQLite by hand, which is a decision someone has to
+    make deliberately rather than something a stray nightly run can do.
+
+    Returns True if it wrote, False if the edition was already final."""
+    import json
+    with connect() as conn:
+        row = conn.execute("SELECT frozen FROM gw_report WHERE gameweek = ?",
+                           (int(gameweek),)).fetchone()
+        if row and row["frozen"]:
+            return False
+        conn.execute(
+            """INSERT INTO gw_report
+                   (gameweek, payload, deadline_time, frozen, generated_at)
+               VALUES (?, ?, ?, 0, ?)
+               ON CONFLICT(gameweek) DO UPDATE SET
+                   payload = excluded.payload,
+                   deadline_time = excluded.deadline_time,
+                   generated_at = excluded.generated_at""",
+            (int(gameweek), json.dumps(payload, separators=(",", ":")),
+             deadline_time, utcnow()))
+        return True
+
+
+def freeze_gw_report(gameweek):
+    """Mark an edition final. Idempotent - the hourly watcher may call this
+    more than once in the window before a deadline, and calling it on an
+    already-frozen row must not move `frozen_at`."""
+    with connect() as conn:
+        cur = conn.execute(
+            """UPDATE gw_report SET frozen = 1, frozen_at = ?
+               WHERE gameweek = ? AND frozen = 0""",
+            (utcnow(), int(gameweek)))
+        return cur.rowcount > 0
+
+
+def get_gw_report(gameweek):
+    """One edition, payload already decoded. None if it was never published."""
+    import json
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM gw_report WHERE gameweek = ?",
+                           (int(gameweek),)).fetchone()
+    if not row:
+        return None
+    rec = dict(row)
+    rec["payload"] = json.loads(rec["payload"])
+    return rec
+
+
+def gw_report_index():
+    """Every published edition, newest first, WITHOUT the payloads.
+
+    The archive list and the sitemap both only need to know which gameweeks
+    exist and when they changed; pulling a few dozen full editions to render a
+    list of links would be a waste that grows every week."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            """SELECT gameweek, frozen, generated_at, frozen_at, deadline_time
+                 FROM gw_report ORDER BY gameweek DESC""")]
 
 
 # ---- retention ------------------------------------------------------------

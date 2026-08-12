@@ -1,0 +1,202 @@
+{% extends 'pages/_layout.html' %}
+
+{% block head_extra %}
+    {# Article markup rather than the FAQPage used on /faq. This is a dated
+       piece of writing with a publication time, and `dateModified` is what
+       tells a search engine a frozen edition genuinely stopped changing -
+       otherwise 38 pages all look like they were edited this morning.
+
+       No `author` block: an author must be a Person or Organization with a
+       real identity behind it, and inventing one for a page assembled by a
+       cron job would be a claim rather than a description. #}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Article",
+      "headline": {{ ("Fantasy Premier League Gameweek " ~ report.gameweek ~ " briefing") | tojson }},
+      "description": {{ report.summary | tojson }},
+      "url": "{{ canonical }}",
+      "datePublished": {{ generated_at | tojson }},
+      "dateModified": {{ (frozen_at or generated_at) | tojson }},
+      "isAccessibleForFree": true,
+      "publisher": {"@type": "Organization", "name": {{ site_name | tojson }},
+                    "url": {{ (site_url ~ "/") | tojson }}}
+    }
+    </script>
+{% endblock %}
+
+{% block content %}
+{# ============================ MASTHEAD ============================ #}
+<header class="gw-masthead">
+    <div class="gw-masthead-rule">
+        <span class="gw-edition">Gameweek {{ report.gameweek }}</span>
+        {% if report.season %}<span class="gw-season">{{ report.season }}</span>{% endif %}
+        <span class="gw-status {{ 'is-final' if frozen else 'is-live' }}">
+            {{ "Final edition" if frozen else "Updated nightly" }}
+        </span>
+    </div>
+    <h1 class="gw-title">The Gameweek {{ report.gameweek }} Briefing</h1>
+    <p class="gw-standfirst">{{ report.summary }}</p>
+    <p class="gw-byline">
+        {% if frozen %}
+            Frozen at the Gameweek {{ report.gameweek }} deadline. Nothing on this page
+            has changed since, and nothing will &mdash; it is what the model said
+            <em>before</em> the games were played.
+        {% else %}
+            Rebuilt every night on the latest prices, form and team news. This edition
+            is frozen at the deadline and becomes a permanent record.
+        {% endif %}
+    </p>
+</header>
+
+{% if not (report.in_form or report.differentials or report.attack_runs or report.news) %}
+<p class="gw-empty">
+    Nothing worth reporting yet. Form, ownership and fixture difficulty all need
+    matches to have been played, so this edition fills out once the season is
+    under way.
+</p>
+{% endif %}
+
+{# ============================ LEAD: IN FORM ============================ #}
+{% if report.in_form %}
+<section class="gw-section gw-lead">
+    <h2 class="gw-section-head"><span>In Form</span></h2>
+    <p class="gw-section-sub">The three highest form figures among players who are fit and playing regularly.</p>
+    <div class="gw-cards gw-cards-3">
+    {% for p in report.in_form %}
+        <article class="gw-card">
+            <div class="gw-card-top">
+                {% with code = p.team_code, label = p.team_name %}{% include 'partials/club_chip.html' %}{% endwith %}
+                <span class="gw-pos">{{ p.pos }}</span>
+            </div>
+            <h3 class="gw-card-name">
+                {% if p.path %}<a href="{{ p.path }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}
+            </h3>
+            <p class="gw-card-figure">{{ p.headline }}</p>
+            <p class="gw-card-why">{{ p.why }}</p>
+            <dl class="gw-stats">
+                {% if p.cost %}<div><dt>Price</dt><dd>&pound;{{ '%.1f'|format(p.cost) }}m</dd></div>{% endif %}
+                {% if p.owned is not none %}<div><dt>Owned</dt><dd>{{ '%.1f'|format(p.owned) }}%</dd></div>{% endif %}
+                {% if p.predicted is not none %}<div><dt>Projected</dt><dd>{{ '%.1f'|format(p.predicted) }}</dd></div>{% endif %}
+            </dl>
+            {% if p.fixtures %}
+            <p class="gw-fixtures">{% for f in p.fixtures %}<span>{{ f.label }}</span>{% endfor %}</p>
+            {% endif %}
+        </article>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{# ============================ DIFFERENTIALS ============================ #}
+{% if report.differentials %}
+<section class="gw-section">
+    <h2 class="gw-section-head"><span>Differentials</span></h2>
+    <p class="gw-section-sub">Well rated by the model, owned by almost nobody &mdash; where rank is actually won.</p>
+    <div class="gw-cards gw-cards-3">
+    {% for p in report.differentials %}
+        <article class="gw-card gw-card-diff">
+            <div class="gw-card-top">
+                {% with code = p.team_code, label = p.team_name %}{% include 'partials/club_chip.html' %}{% endwith %}
+                <span class="gw-pos">{{ p.pos }}</span>
+            </div>
+            <h3 class="gw-card-name">
+                {% if p.path %}<a href="{{ p.path }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}
+            </h3>
+            <p class="gw-card-figure">{{ p.headline }}</p>
+            <p class="gw-card-why">{{ p.why }}</p>
+            <dl class="gw-stats">
+                {% if p.cost %}<div><dt>Price</dt><dd>&pound;{{ '%.1f'|format(p.cost) }}m</dd></div>{% endif %}
+                {% if p.predicted is not none %}<div><dt>Projected</dt><dd>{{ '%.1f'|format(p.predicted) }}</dd></div>{% endif %}
+                {# `if p.form` not `is not none`: between seasons every player
+                   reads 0.0, and a stat strip that always says "Form 0.0" is
+                   noise rather than information. #}
+                {% if p.form %}<div><dt>Form</dt><dd>{{ '%.1f'|format(p.form) }}</dd></div>{% endif %}
+            </dl>
+            {% if p.fixtures %}
+            <p class="gw-fixtures">{% for f in p.fixtures %}<span>{{ f.label }}</span>{% endfor %}</p>
+            {% endif %}
+        </article>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{# ============================ FIXTURES ============================ #}
+{% if report.attack_runs or report.defence_runs %}
+<section class="gw-section">
+    <h2 class="gw-section-head"><span>The Fixture List</span></h2>
+    <p class="gw-section-sub">
+        Scored out of 10 across all twenty clubs, over the next {{ fixture_horizon }}
+        gameweeks &mdash; 10 is the kindest run in the division. It weighs each club's
+        own strength against its opponent's, so a good defence facing a weak attack
+        rates as easy.
+    </p>
+    <div class="gw-fixture-cols">
+        {% for group, heading, hint in [
+            (report.attack_runs, 'Kindest for attackers', 'Target the forwards and attacking midfielders.'),
+            (report.defence_runs, 'Kindest for defences', 'Target the defenders and the goalkeeper.')] %}
+        {% if group %}
+        <div class="gw-fixture-col">
+            <h3 class="gw-sub-head">{{ heading }}</h3>
+            <p class="gw-hint">{{ hint }}</p>
+            {% for r in group %}
+            <article class="gw-run">
+                <div class="gw-run-head">
+                    {% with code = r.team_code, label = r.team_name %}{% include 'partials/club_chip.html' %}{% endwith %}
+                    <span class="gw-run-score">{{ '%.1f'|format(r.ease if r.ease is not none else 0) }}<small>/10</small></span>
+                </div>
+                <p class="gw-fixtures">{% for f in r.fixtures %}<span>{{ f.label }}</span>{% endfor %}</p>
+                {% if r.players %}
+                <ul class="gw-run-players">
+                    {% for pl in r.players %}
+                    <li>
+                        {% if pl.path %}<a href="{{ pl.path }}">{{ pl.name }}</a>{% else %}{{ pl.name }}{% endif %}
+                        <span class="gw-run-meta">{{ pl.pos }}{% if pl.cost %} &middot; &pound;{{ '%.1f'|format(pl.cost) }}m{% endif %} &middot; {{ '%.1f'|format(pl.predicted) }} pts</span>
+                    </li>
+                    {% endfor %}
+                </ul>
+                {% endif %}
+            </article>
+            {% endfor %}
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{# ============================ TEAM NEWS ============================ #}
+{% if report.news %}
+<section class="gw-section gw-news">
+    <h2 class="gw-section-head"><span>The Treatment Table</span></h2>
+    <p class="gw-section-sub">Fitness flags on players enough people own for it to matter.</p>
+    <ul class="gw-news-list">
+    {% for p in report.news %}
+        <li class="gw-news-item gw-news-{{ p.status }}">
+            <div class="gw-news-who">
+                {% with code = p.team_code, label = p.team_name %}{% include 'partials/club_chip.html' %}{% endwith %}
+                <strong>{% if p.path %}<a href="{{ p.path }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}</strong>
+                {% if p.owned is not none %}<span class="gw-news-owned">{{ '%.1f'|format(p.owned) }}% owned</span>{% endif %}
+            </div>
+            <p class="gw-news-why">{{ p.why }}</p>
+        </li>
+    {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
+{# ============================ FOOTER ============================ #}
+<footer class="gw-footer">
+    <p>
+        Every figure on this page comes from the same trained model behind the
+        <a href="/players">player ratings</a>, and every sentence restates a number
+        printed beside it &mdash; this page is assembled from thresholds, not written
+        by hand. How the model works is on the <a href="/about">about page</a>.
+    </p>
+    <p class="gw-footer-nav">
+        <a href="/gameweek">&larr; All gameweek briefings</a>
+        <a href="/gameweek/feed.xml">RSS</a>
+    </p>
+</footer>
+{% endblock %}

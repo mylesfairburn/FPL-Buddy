@@ -33,7 +33,11 @@ import ai_team
 import db
 import drafts
 import gameweek as gw_clock
+import gw_report as gw_report_builder
 import manager_history
+import player_pages
+import seasons
+import social
 from pipeline import run_pipeline
 from rating_model import get_rated_position_dfs
 from fetch_data import refresh_gameweek_stats
@@ -175,6 +179,14 @@ def pre_deadline_commit(events, budget=DEFAULT_BUDGET):
     for gw, _deadline, minutes_left in upcoming:
         log(f"GW{gw}: deadline in {minutes_left} min - committing AI teams on the latest team news")
         pool, _ = commit_ai_teams(gw, budget=budget, pool=pool)
+        # The gameweek page freezes in the same window and for the same reason:
+        # both are claims made on pre-deadline information, and an archive page
+        # that kept updating after the deadline would be quietly rewriting
+        # advice to match results nobody could have known.
+        try:
+            freeze_gameweek_report(gw)
+        except Exception as e:
+            log(f"GW{gw}: freezing the edition FAILED: {e}")
     return pool
 
 
@@ -256,6 +268,114 @@ def refresh_season_stats():
     return result
 
 
+def _page_index(position_dfs):
+    """Player page records with club names attached.
+
+    Same two-step the app does: names come from a lookup that can hit the
+    network, so a failure there costs the club names rather than the whole
+    index. A report with a blank team column is still worth publishing."""
+    pages = player_pages.build_index(position_dfs)
+    try:
+        from fetch_data import get_bootstrap_data
+        teams = get_bootstrap_data()["teams"]
+        names = {t["id"]: t["name"] for t in teams}
+        shorts = {t["id"]: t["short_name"] for t in teams}
+    except Exception as e:
+        log(f"  club names unavailable ({e}); report will omit them")
+        names, shorts = {}, {}
+    return player_pages.attach_team_names(pages, names, shorts)
+
+
+def build_gameweek_report(force_gameweek=None, position_dfs=None, events=None):
+    """Regenerate the current gameweek's edition of /gameweek/<n>.
+
+    Nightly. Rewrites in place until the deadline, at which point the edition
+    is frozen and this becomes a no-op for that gameweek - so this can run
+    every night of the season without ever disturbing a published archive.
+
+    Which gameweek: the NEXT one, not the current one. The page is read by
+    people deciding transfers before a deadline, so its subject is the round
+    being picked, not the round being played."""
+    db.init_db()
+    events = events if events is not None else gw_clock.get_events()
+
+    gw = force_gameweek if force_gameweek is not None else gw_clock.next_gameweek(events)
+    if gw is None:
+        log("No upcoming gameweek (season over, or the API is unreachable) - nothing to build.")
+        return 0
+
+    existing = db.get_gw_report(gw)
+    if existing and existing["frozen"]:
+        log(f"GW{gw}: edition is frozen - leaving it alone.")
+        return 0
+
+    if position_dfs is None:
+        _pool, position_dfs = _rated_pool()
+    pages = _page_index(position_dfs)
+    if not pages:
+        log(f"GW{gw}: no rated player pool - nothing to report on.")
+        return 1
+
+    # The rotation table is the one input that can fail on its own (it needs
+    # fixtures and team strength). The other three sections don't depend on it,
+    # so a failure here costs one section rather than the edition.
+    rotation_df = None
+    try:
+        from fixture_rotator import get_rotation_data
+        rotation_df = get_rotation_data(mode=gw_clock.detect_mode(),
+                                        n_gameweeks=gw_report_builder.FIXTURE_HORIZON + 2)
+    except Exception as e:
+        log(f"  rotation table unavailable ({e}); skipping the fixtures section")
+
+    deadline = None
+    for ev in events or []:
+        if ev.get("id") == gw:
+            deadline = ev.get("deadline_time")
+            break
+
+    report = gw_report_builder.build(
+        pages, gw, rotation_df=rotation_df, deadline=deadline,
+        season_label=seasons.current_season())
+
+    written = db.save_gw_report(gw, report, deadline_time=deadline)
+    if not written:
+        log(f"GW{gw}: edition became frozen mid-run - not written.")
+        return 0
+
+    counts = (f"form={len(report['in_form'])} diff={len(report['differentials'])} "
+              f"attack={len(report['attack_runs'])} defence={len(report['defence_runs'])} "
+              f"news={len(report['news'])}")
+    log(f"GW{gw}: edition rebuilt ({counts})")
+
+    # Drafts are rewritten on every rebuild so the text always matches the page
+    # as it currently stands. They're only worth posting once the edition is
+    # frozen, which is what the header inside the file says.
+    try:
+        path = social.write_drafts(report, frozen=False)
+        log(f"  social drafts -> {path}")
+    except Exception as e:
+        log(f"  social drafts FAILED (edition is still published): {e}")
+
+    ping_refresh()
+    return 0
+
+
+def freeze_gameweek_report(gameweek):
+    """Make an edition final. Called from the pre-deadline window, so the page
+    freezes on the same team news the AI squads were committed on."""
+    if db.freeze_gw_report(gameweek):
+        log(f"GW{gameweek}: edition frozen - it is now a permanent archive page.")
+        rec = db.get_gw_report(gameweek)
+        if rec:
+            try:
+                path = social.write_drafts(rec["payload"], frozen=True)
+                log(f"  social drafts ready to post -> {path}")
+            except Exception as e:
+                log(f"  social drafts FAILED: {e}")
+        return True
+    return False
+
+
 def daily_refresh(skip_stats=False):
     """Once daily, late. Heavy pipeline rerun plus backfilling real scores onto
     frozen snapshots for any gameweek FPL has now finalised."""
@@ -313,6 +433,11 @@ def main(argv=None):
     sub.add_parser("refresh-stats", help="pull this season's gameweek stats only")
     sub.add_parser("init-db", help="create the SQLite file and schema, then exit")
 
+    report = sub.add_parser("gameweek-report",
+                            help="nightly: rebuild the current /gameweek page")
+    report.add_argument("--gameweek", type=int, default=None,
+                        help="force a specific gameweek (testing / manual catch-up)")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "deadline-watch":
@@ -325,6 +450,8 @@ def main(argv=None):
         if args.command == "init-db":
             log(f"Initialised {db.init_db()}")
             return 0
+        if args.command == "gameweek-report":
+            return build_gameweek_report(force_gameweek=args.gameweek)
     except Exception:
         traceback.print_exc()
         return 1
