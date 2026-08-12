@@ -76,3 +76,16 @@ CRON_TZ=Europe/London
 # is unset the app serves no key file and the script exits non-zero with a
 # clear message rather than silently doing nothing.
 30 3 * * * root docker exec fpl-buddy python indexnow.py >> /var/log/fpl-buddy-indexnow.log 2>&1
+
+# Pull Search Console, Bing and PageSpeed into state/seo/<date>.json.
+#
+# 04:00 rather than alongside the others: the PageSpeed calls take 10-30
+# seconds each and this is the one job nothing else waits on, so it gets the
+# quiet slot after the pipeline has finished competing for four cores.
+#
+# Daily even though Search Console only updates once a day and lags 2-3 days
+# behind. The window it asks for ends three days back, so consecutive files
+# overlap heavily - that redundancy is the point. It means a few nights of
+# failed runs cost nothing, because the next successful one still carries the
+# whole 28-day window.
+0 4 * * * root docker exec fpl-buddy python seo_report.py >> /var/log/fpl-buddy-seo.log 2>&1

@@ -9,3 +9,8 @@ joblib
 matplotlib
 requests
 pulp
+# Service-account auth for seo_report.py: RS256 JWT signing and the token
+# exchange against Google's endpoint. Only this one library, deliberately -
+# google-api-python-client would pull in a large client stack to call two
+# endpoints that are plain REST, and `requests` above already covers those.
+google-auth

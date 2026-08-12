@@ -16,6 +16,14 @@ build/
 !deploy/env.example
 secrets/
 
+# Somewhere to drop exports for analysis - Lighthouse JSON, Search Console and
+# Bing CSVs, whatever else. Deliberately untracked: they are point-in-time
+# dumps that go stale, several are large, and the Search Console exports carry
+# query data that doesn't belong in a public repo. Keep the folder, ignore the
+# contents.
+reports/*
+!reports/.gitkeep
+
 # SQLite state — lives on a mounted volume in production, never in the image
 state/
 *.db

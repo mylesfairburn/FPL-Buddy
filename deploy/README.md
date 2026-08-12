@@ -114,6 +114,84 @@ docker run --rm -v <volume-id>:/v -v /srv/fpl-companion/state:/out \
 Stop the container first, and take a copy of whatever is currently in
 `/srv/fpl-companion/state` before overwriting it.
 
+## 1a. Authenticating to a private GHCR package
+
+The image is published to `ghcr.io/mylesfairburn/fpl-buddy` as a **private**
+package, so the host has to log in before it can pull. Two things need those
+credentials, and forgetting the second is the one that hurts.
+
+### The token
+
+Not your GitHub password — GHCR doesn't accept one. Create a **classic**
+personal access token at *GitHub → Settings → Developer settings → Personal
+access tokens → Tokens (classic)*, with **`read:packages` and nothing else**.
+The server only ever pulls; a token that can also write or reach your repos is
+a token that can do more damage than the job requires if the box is
+compromised.
+
+Fine-grained tokens are the usual recommendation elsewhere, but their package
+support is patchy — classic is the reliable path for GHCR.
+
+### Logging in
+
+```bash
+read -rs GHCR_TOKEN                                  # paste, then Enter
+echo "$GHCR_TOKEN" | docker login ghcr.io -u mylesfairburn --password-stdin
+unset GHCR_TOKEN
+```
+
+`read -rs` keeps the token off the screen, and `--password-stdin` keeps it out
+of shell history and out of `ps` output, where `-p <token>` would put it for
+any other user on the box to read.
+
+Verify:
+
+```bash
+docker pull ghcr.io/mylesfairburn/fpl-buddy:latest
+```
+
+### Watchtower needs the same credentials
+
+**This is the step that gets missed.** Watchtower polls the registry to decide
+whether a newer image exists. Against a private package with no credentials it
+gets a 401, treats it as "nothing new", and simply stops deploying — no error
+you'd notice, just pushes that never reach the server. You find out weeks later
+when a change you shipped isn't live.
+
+Watchtower reads `/config.json` inside its own container, so mount the host's
+Docker credentials at that path:
+
+```yaml
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /root/.docker/config.json:/config.json:ro
+```
+
+Read-only: Watchtower has no reason to write to it, and that socket already
+gives the container root-equivalent access to the host.
+
+Check it took:
+
+```bash
+docker logs apps-watchtower-1 --tail 30
+```
+
+A successful poll names the image and reports whether it's up to date. A 401 or
+"unauthorized" means the mount isn't right.
+
+### Two things that will bite later
+
+`~/.docker/config.json` stores the token **base64-encoded, not encrypted**.
+That is obfuscation, not protection — anyone who can read the file has the
+token. `chmod 600 /root/.docker/config.json`, and treat a host compromise as a
+token compromise: revoke it on GitHub rather than assuming it's still private.
+
+If you set an expiry on the token, **write the date down**. When it lapses,
+deploys stop in exactly the silent way described above. GitHub emails a warning
+first, which is easy to miss.
+
 ## 2. Lock down `/api/refresh`
 
 It triggers a full pipeline run (about a minute of CPU) and now drives DB
