@@ -31,7 +31,15 @@
 {% endblock %}
 
 {% block content %}
-            <h1 class="page-title">Fantasy Premier League, worked out for you</h1>
+            {# The brand belongs in the H1 on the home page specifically. Google
+               reads the site name from several places and weighs them together
+               - the WebSite structured data in the head, og:site_name, the
+               <title>, and the top-level heading - and this was the one of the
+               four that didn't say "FPL Buddy" anywhere. The tagline is kept
+               after it: a heading that is nothing but a brand name tells a
+               reader arriving from a search result nothing about what they
+               found. #}
+            <h1 class="page-title">FPL Buddy &mdash; Fantasy Premier League, worked out for you</h1>
             {# This paragraph is what Google quotes as the search snippet - it
                picks the lede over the meta description on the branded query.
                Google cuts a snippet around 155-160 characters, so the first

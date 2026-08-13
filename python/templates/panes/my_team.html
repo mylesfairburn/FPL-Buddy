@@ -1,6 +1,48 @@
         <!-- ============ MY TEAM ============ -->
         <div id="pane-team" class="tab-pane{{ '' if initial_pane == 'pane-team' else ' d-none' }}">
 
+            {# The one pane with nothing to server-render. Everything below is
+               drawn from one person's squad, which needs an FPL ID that only
+               they can supply - so to anyone arriving without one, including
+               every crawler, this page was about forty words of markup.
+
+               Prose rather than a sample squad. Inventing an illustrative team
+               on a page headed "My FPL team" would be presenting made-up picks
+               as somebody's, and a reader who didn't notice the caveat would be
+               reading fiction. This says what the tab does instead, which is
+               also the thing a search for "analyse my FPL team" is asking. #}
+            <section class="tool-intro" id="toolIntro">
+                <p>
+                    Paste your FPL ID below and this page loads your real squad from the public
+                    Fantasy Premier League API — no password, no account, nothing to install.
+                    It never writes anything back: every suggestion here is applied by you, in
+                    the official app.
+                </p>
+                <p>What you get for the gameweek being picked:</p>
+                <ul>
+                    <li><strong>Predicted points for all fifteen</strong>, from the same
+                        <a href="/players">rated pool</a> the rest of the site uses, with each
+                        player's next three fixtures and their difficulty.</li>
+                    <li><strong>An optimised starting XI</strong> — the legal eleven with the
+                        highest projected total, and the bench ordered so auto-subs bring on the
+                        strongest replacement first.</li>
+                    <li><strong>Transfer suggestions</strong> costed against your bank and your
+                        estimated free transfers, so a move that would take a hit is marked as
+                        one.</li>
+                    <li><strong>Chip advice</strong> — what your bench is actually projected to
+                        score before you play a Bench Boost, and what your captain is worth
+                        tripled.</li>
+                    <li><strong>Live scoring</strong> once the gameweek is underway, plus your
+                        league positions and the fitness news on players you own.</li>
+                </ul>
+                <p class="text-muted small">
+                    Your FPL ID is the number in the address bar when you open the Points tab at
+                    fantasy.premierleague.com — <code>/entry/1234567/event/5</code> makes it
+                    1234567. It's public, it isn't a password, and the
+                    <a href="/faq">FAQ</a> has more on finding it.
+                </p>
+            </section>
+
             <!-- First-run prompt for the FPL ID -->
             <div id="idPrompt" class="id-prompt d-none">
                 <h5 class="mb-2">Connect your FPL team</h5>

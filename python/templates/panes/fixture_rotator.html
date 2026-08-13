@@ -6,14 +6,38 @@
             </ul>
 
             <h6 class="section-heading">Best rotation partners</h6>
-            <div id="pairsContainer" class="mb-4"></div>
+            {# Server-rendered defensive pairs, replaced in place by
+               renderPairs() once /api/rotation answers. Only the defensive view
+               is rendered here - see the note in seo_tables.rotation_block for
+               why publishing both would be two near-duplicate halves of one
+               page rather than twice the content. #}
+            <div id="pairsContainer" class="mb-4">
+{% for pair in (ssr.rotation.pairs if ssr and ssr.rotation else []) %}
+                <div class="pair-card ssr-pair">
+                    <div class="pair-teams"><strong>{{ pair.team_a }}</strong> &amp; <strong>{{ pair.team_b }}</strong></div>
+                    <div class="text-muted small">Worst week {{ pair.worst_week }} &middot; average difficulty {{ pair.avg_difficulty }}</div>
+                </div>
+{% endfor %}
+            </div>
 
             <h6 class="section-heading">Full fixture list</h6>
             <p class="text-muted small">Click a team to highlight and pin it to the top.</p>
             <div class="table-responsive">
                 <table class="table table-sm rotation-table" id="rotationTable">
-                    <thead><tr id="rotationHeader"></tr></thead>
-                    <tbody id="rotationBody"></tbody>
+                    <thead><tr id="rotationHeader">
+{% if ssr and ssr.rotation %}
+                        <th>Team</th>{% for gw in ssr.rotation.gameweeks %}<th>GW{{ gw }}</th>{% endfor %}<th>Avg</th>
+{% endif %}
+                    </tr></thead>
+                    <tbody id="rotationBody">
+{% for t in (ssr.rotation.teams if ssr and ssr.rotation else []) %}
+                        <tr>
+                            <td class="rot-team">{{ t.team_name }}</td>
+{% for c in t.cells %}<td>{% if c.opponent %}<span class="fixture-cell" style="background-color:{{ c.colour }}">{{ c.opponent }}</span>{% endif %}</td>{% endfor %}
+                            <td>{{ t.average }}</td>
+                        </tr>
+{% endfor %}
+                    </tbody>
                 </table>
             </div>
         </div>

@@ -18,6 +18,71 @@ body { background-color: #ffffff; }
 }
 .btn-primary:hover { background-color: var(--accent-dark) !important; }
 .nav-pills .nav-link, .nav-tabs .nav-link { color: var(--accent-dark); }
+
+/* ---- Reading links on the tab bar (Gameweek briefings, Players A–Z) ----
+   Same row as the four tool tabs, pushed to the far right, and deliberately
+   quieter: lighter weight and a muted colour, so the eye still lands on the
+   tools first. `margin-left: auto` on the first of them is what does the
+   pushing - it's only applied when tool tabs precede them (see tabs.html), so
+   on a prose page they sit at the left instead of floating on an empty bar. */
+#mainTabs { align-items: flex-end; }
+.content-link-first { margin-left: auto; }
+.content-link .nav-link {
+    color: #6b7280;
+    font-weight: 400;
+    border-color: transparent;
+    white-space: nowrap;
+}
+.content-link .nav-link:hover { color: var(--accent-dark); }
+/* The current page, when you're standing on one of them. Underlined rather
+   than given the tabs' filled pill: these aren't panes of this document, and
+   dressing them as the active tab would say they were. */
+.content-link .nav-link.active {
+    background-color: transparent !important;
+    border-color: transparent !important;
+    color: var(--accent-dark) !important;
+    font-weight: 600;
+    box-shadow: inset 0 -2px 0 var(--accent);
+}
+/* A hairline between the tools and the reading links. Only where they actually
+   touch - with margin-left:auto there's a gap on desktop and the rule would be
+   floating in it, but on a narrow screen the bar is a tight scroller and the
+   two sets sit shoulder to shoulder. */
+.content-link-first { border-left: 1px solid #e9e9ef; padding-left: 4px; }
+
+/* The short label, for the widths where the full one doesn't fit. Both are in
+   the markup and CSS picks; the alternative - swapping text in JavaScript on
+   resize - would mean the label a crawler reads depends on a viewport it
+   doesn't have. */
+.cl-short { display: none; }
+
+/* Below 992px six items stop fitting across one row. Two things happen, and
+   the order matters: the labels shorten first, because that alone gets a
+   tablet back to a single comfortable row, and only what still doesn't fit
+   scrolls.
+
+   Wrapping is what's being avoided. A wrapped tab bar puts a second row of
+   chrome above every page and moves the content down with it, which is both
+   the clutter this was meant to avoid and a layout shift on a slow font load.
+   `nowrap` plus a scrolling bar means the row height is fixed at every width
+   and the page below never moves. */
+@media (max-width: 991.98px) {
+    .cl-full { display: none; }
+    .cl-short { display: inline; }
+    #mainTabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scrollbar-width: none;          /* Firefox */
+        -webkit-overflow-scrolling: touch;
+    }
+    #mainTabs::-webkit-scrollbar { display: none; }   /* Safari / Chrome */
+    #mainTabs .nav-item { flex: 0 0 auto; }
+    /* An overflowing flex line has no free space, so the auto margin collapses
+       to nothing and the reading links simply follow the tools. Stated rather
+       than relied on, so the intent survives a refactor. */
+    .content-link-first { margin-left: 0; }
+}
 /* Navbar action button (Change ID) — sits where the old mode toggle did */
 #changeId {
     background-color: rgba(255,255,255,0.15);
@@ -1674,6 +1739,78 @@ a.navbar-brand.brand:focus-visible {
 /* One row per team, always 20 of them, drawn after /api/rotation returns. */
 #rotationTable { min-height: 620px; }
 
+/* Server-rendered tables (see seo_tables.py). These are replaced in place by
+   the interactive versions, so the only styling here is what stops the two
+   looking different in the moment before that happens.
+
+   .ssr-controls stands in for the search-and-filter row app.js builds. It holds
+   that row's height and nothing else - controls that did nothing without
+   JavaScript would be worse than no controls. */
+.ssr-controls { min-height: 46px; }
+/* The next-three-fixtures column, as plain text rather than the coloured tiles
+   the script draws. Small and muted so it reads as a footnote to the row. */
+.ssr-fixtures { white-space: nowrap; }
+.ssr-fix { font-size: 0.7rem; color: #6b7280; margin-right: 6px; }
+.ssr-pair { padding: 8px 10px; }
+.ssr-pair .pair-teams { font-size: 0.9rem; }
+
+/* The My Team explainer. Prose on a pane that is otherwise entirely one
+   person's data, shown until a squad is loaded. */
+.tool-intro { max-width: 62ch; margin-bottom: 20px; }
+.tool-intro ul { padding-left: 20px; }
+.tool-intro li { margin-bottom: 6px; }
+
+/* The AI tabs. Both squads are drawn as a skeleton pitch before either endpoint
+   answers (see renderAiSkeletons in app.js), so the pitch itself needs no
+   reservation - it is already the right size. These are the blocks around it
+   that genuinely start empty: the stat chips above, the chip strip, and the two
+   text panels beside the AI Manager's pitch. Left unreserved they each grew
+   from nothing after their fetch and pushed the track-record tables down. */
+.stat-chips { min-height: 58px; }
+.chips-bar { min-height: 92px; }
+#mgrMoves { min-height: 180px; }
+#mgrChipPlan { min-height: 96px; }
+
+/* `.chips-bar:empty { display: none }` further up is what My Team wants - no
+   chip strip at all until a squad is loaded. The AI Manager's copy is
+   different: it is always going to be filled, a moment later, with the same
+   four cards, so hiding it in the meantime removes 92px from the layout and
+   then puts it back. Reserved instead. */
+#mgrChipsBar:empty { display: flex; }
+
+/* The skeleton itself: real cards at real size, with the text and the coloured
+   pills blanked out so nothing on screen can be read as a projection. Removed
+   by clearAiSkeleton() the moment data lands. Deliberately not an animated
+   shimmer - this block is typically filled within a few hundred milliseconds,
+   and a pulse that brief reads as a flicker rather than as progress. */
+.ai-skeleton .player-name-pill,
+.ai-skeleton .ai-mini,
+.ai-skeleton .avail-band,
+.ai-skeleton .bench-pos,
+.ai-skeleton .player-stat { color: transparent !important; }
+.ai-skeleton .ai-mini,
+.ai-skeleton .avail-band,
+.ai-skeleton .player-stat { background: #e9ecef !important; }
+.ai-skeleton .player-name-pill { background: rgba(255, 255, 255, 0.55); }
+/* The shirt is the one part of a card that can't be faked: a placeholder has
+   no team_code, so shirtImg() correctly draws nothing - and an empty .player-kit
+   is 0px where a real one is 44, which is the single biggest height difference
+   between a skeleton card and a filled one. Hold the space instead of inventing
+   a club's kit to fill it. 44px and 30px are the two sizes .kit itself takes -
+   there is a 36px rule under 576px too, but a later one at the same breakpoint
+   overrides it to 30. These have to move if those do. */
+.ai-skeleton .player-kit {
+    display: inline-block;
+    height: 44px;
+    width: 44px;
+    /* An empty inline-block sits on the text baseline and drags its parent's
+       line box down by the descender - 6px taller than the real card, which
+       would leave the skeleton overshooting instead of undershooting. Taking
+       it off the baseline lands the two at exactly the same height. */
+    vertical-align: top;
+}
+@media (max-width: 575.98px) { .ai-skeleton .player-kit { height: 30px; width: 30px; } }
+
 @media (max-width: 575.98px) {
     /* Phones: the pane is already near-full-height and an over-reserved box
        means scrolling past emptiness on a small screen, which is a worse
@@ -1683,6 +1820,22 @@ a.navbar-brand.brand:focus-visible {
     .ps-list { min-height: 200px; }
     #pairsContainer { min-height: 240px; }
     #rotationTable { min-height: 480px; }
+    /* The chips wrap to more rows on a narrow screen, and the two AI Manager
+       text panels sit under the pitch rather than beside it, so both settle
+       taller here than on a desktop. */
+    .stat-chips { min-height: 108px; }
+    .chips-bar { min-height: 80px; }
+    #mgrChipPlan { min-height: 80px; }
+    /* The one block here whose height genuinely varies with its content: the
+       transfer list is 150px for the common nothing-worth-doing week and 187px
+       for two moves. Reserved for two, per the "round up rather than down" rule
+       above - a quiet week then carries 37px of white space, where the other
+       way round every busy week would shift. Three moves in one week still
+       overflows this, and is rare enough to accept.
+       Only matters on a phone: above this breakpoint the list sits in a column
+       beside the pitch, which is taller, so it can grow without moving
+       anything. */
+    #mgrMoves { min-height: 190px; }
 }
 
 /* ============================================================
@@ -1719,6 +1872,11 @@ a.navbar-brand.brand:focus-visible {
 .gw-status { margin-left: auto; padding: 2px 8px; border-radius: 3px; font-weight: 600; }
 .gw-status.is-final { background: #eef6f6; color: var(--accent-dark); }
 .gw-status.is-live { background: #fff4e5; color: #A85B00; }
+/* Between the two, and deliberately so: a preview edition is settled enough to
+   act on but not yet final. Green rather than the amber of "still moving
+   nightly", because arriving here from a post the day before the deadline, the
+   thing to know is that it's ready. */
+.gw-status.is-preview { background: #eaf7ef; color: #1F7A47; }
 
 .content-page h1.gw-title {
     font-family: Georgia, "Times New Roman", "Liberation Serif", serif;

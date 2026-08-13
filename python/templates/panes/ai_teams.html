@@ -25,7 +25,14 @@
 
             <div id="mgrState" class="alert alert-secondary d-none"></div>
 
-            <div id="mgrContent" class="d-none">
+            {# Not d-none. This block used to be hidden until /api/ai/manager
+               answered, and then appeared all at once - six hundred pixels of
+               pitch and chips shoving "Track record" down the page after first
+               paint, which is precisely what Cumulative Layout Shift measures.
+               app.js draws a blanked-out skeleton squad into it synchronously
+               instead, so the box is the right size from the first frame and
+               the real data lands into space already reserved for it. #}
+            <div id="mgrContent" class="ai-skeleton">
                 <div class="stat-chips" id="mgrChips"></div>
                 <div class="ai-body row g-3 mt-1">
                     <div class="col-lg-5">
@@ -51,7 +58,19 @@
                         <th>GW</th><th>Value</th><th>Bank</th>
                         <th>Chip</th><th>Predicted</th><th>Actual</th>
                     </tr></thead>
-                    <tbody id="mgrHistoryBody"></tbody>
+                    {# Same reasoning as the Best XI track record below. #}
+                    <tbody id="mgrHistoryBody">
+{% for h in (ssr.manager_history if ssr else []) %}
+                        <tr>
+                            <td>GW{{ h.gameweek }}</td>
+                            <td>£{{ h.value }}m</td>
+                            <td>£{{ h.bank }}m</td>
+                            <td>{{ h.chip }}</td>
+                            <td>{{ h.predicted }}</td>
+                            <td>{{ h.actual }}</td>
+                        </tr>
+{% endfor %}
+                    </tbody>
                 </table>
             </div>
         
@@ -77,7 +96,8 @@
 
             <div id="aiState" class="alert alert-secondary d-none"></div>
 
-            <div id="aiContent" class="d-none">
+            {# Same skeleton treatment as the AI Manager block above. #}
+            <div id="aiContent" class="ai-skeleton">
                 <div class="stat-chips" id="aiChips"></div>
                 <div class="ai-body row g-3 mt-1">
                     <div class="col-lg-5">
@@ -94,7 +114,13 @@
                                     <th>Player</th><th>Pos</th><th>Team</th>
                                     <th>£m</th><th>Pred</th><th>Act</th>
                                 </tr></thead>
-                                <tbody id="aiSquadBody"></tbody>
+                                {# Server-rendered, and replaced in place by
+                                   renderAiSquadTable() once /api/ai/best_xv
+                                   answers. This is the AI's actual squad for
+                                   the coming gameweek in the raw HTML - the
+                                   one thing on this page a crawler could not
+                                   previously see at all. #}
+                                <tbody id="aiSquadBody">{% if ssr and ssr.best_xv %}{% include 'partials/ssr_best_xv.html' %}{% endif %}</tbody>
                             </table>
                         </div>
                     </div>
@@ -112,7 +138,23 @@
                         <th>GW</th><th>Formation</th><th>Cost</th>
                         <th>Predicted</th><th>Actual</th><th>Diff</th>
                     </tr></thead>
-                    <tbody id="aiHistoryBody"></tbody>
+                    {# The published track record, server-rendered. Of
+                       everything on the site this is the part with something to
+                       say that nothing else does - predictions frozen before
+                       the fact and never edited - so it should not need
+                       JavaScript to be readable or quotable. #}
+                    <tbody id="aiHistoryBody">
+{% for s in (ssr.best_xv_history if ssr else []) %}
+                        <tr>
+                            <td>GW{{ s.gameweek }}</td>
+                            <td>{{ s.formation }}</td>
+                            <td>£{{ s.squad_cost }}m</td>
+                            <td>{{ s.predicted }}</td>
+                            <td>{{ s.actual }}</td>
+                            <td><span class="{{ 'ai-over' if s.diff_positive else 'ai-under' }}">{{ s.diff }}</span></td>
+                        </tr>
+{% endfor %}
+                    </tbody>
                 </table>
             </div>
         

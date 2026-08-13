@@ -28,6 +28,7 @@ import kits
 import manager_history
 import player_pages
 import seasons
+import seo_tables as seo_tables_builder
 import social
 from pipeline import run_pipeline
 from rating_model import get_rated_position_dfs
@@ -114,8 +115,9 @@ EMAILS = {
 # The four tabs used to be fragments of one document (#pane-players and so on).
 # A fragment is discarded before a request is ever made, so to a crawler they
 # were all the same URL - four different tools competing to rank as one page,
-# and that page's server-rendered HTML is barely forty words. Each pane now has
-# a real path that renders the same shell with that tab already open.
+# and that page's server-rendered HTML was barely forty words. Each pane now has
+# a real path that renders the same shell with that tab already open, and the
+# tables inside it come down as HTML too - see seo_tables.py.
 #
 # This is the one definition of the tab bar: the routes below, the links the
 # template renders and the pane app.js opens all come from here, so a fifth tab
@@ -127,6 +129,26 @@ TABS = [
     {"path": "/fixture-rotator", "pane": "pane-rotator", "label": "Fixture Rotator"},
 ]
 TAB_PANES = {t["path"]: t["pane"] for t in TABS}
+
+# The two pages that are reading rather than tools. Both were reachable only
+# from the footer, which is the one place on a page a reader never looks and a
+# crawler weights least - and they are the site's only accumulating content
+# (38 dated editions a season) and its index of several hundred player pages.
+# Being one click from every page is worth more to them than to anything else
+# on the site.
+#
+# Rendered at the far right of the same bar as the four tool tabs, styled
+# lighter: they are a different kind of destination, and the tools should still
+# read as the primary choice. Same list feeds the prose pages, where there are
+# no tool tabs and these sit on their own at the left.
+#
+# `short` is the label used below 992px, where six full-length items stop
+# fitting on one row. Both labels are rendered and CSS picks between them, so
+# the choice can't depend on a viewport a crawler doesn't have.
+CONTENT_LINKS = [
+    {"path": "/gameweek", "label": "Gameweek briefings", "short": "Briefings"},
+    {"path": "/players/a-z", "label": "Players A–Z", "short": "A–Z"},
+]
 
 # Per-route metadata. Every indexable page needs its own title and description:
 # without them Google writes the snippet itself, usually by grabbing whatever
@@ -488,6 +510,19 @@ def load_data(mode=None):
     state["position_dfs"] = position_dfs
     state["rotation_df"] = rotation_df
     clear_preview_cache()   # ratings moved; any cached AI squad is now stale
+
+    # Build the server-rendered tables now rather than leaving them to whoever
+    # asks first. Assembling them solves the Best-XI ILP, and the first request
+    # after a refresh is as likely to be a crawler as a person - making a bot
+    # wait on a linear program is how a crawl budget gets spent on timeouts.
+    # Non-fatal by design: these are an addition to the pages, never a
+    # precondition for serving them.
+    try:
+        seo_tables()
+    except Exception as e:
+        print(f"couldn't prebuild the server-rendered tables ({e}); "
+              "the pages will render without them.")
+
     print(f"Ready ({mode}).")
 
 
@@ -509,6 +544,7 @@ def clear_preview_cache():
     _preview_cache["best_xv"].clear()
     _preview_cache["manager"].clear()
     _player_pages["index"] = None
+    _seo_tables["data"] = None
 
 
 # Several hundred page records, each walking every rated DataFrame row. Building
@@ -531,6 +567,64 @@ def player_page_index():
             pages = player_pages.attach_team_names(pages, {}, {})
         _player_pages["index"] = pages
     return _player_pages["index"]
+
+
+# The server-rendered tables for /players, /ai-teams and /fixture-rotator.
+#
+# Built on first request after a data load and cleared by clear_preview_cache()
+# with everything else, so it can never describe a different set of ratings than
+# the API does. Lazy rather than built inside load_data(): assembling it solves
+# an ILP and asks the season clock what gameweek it is, and neither belongs on
+# the path that has to complete before the app can serve anything.
+_seo_tables = {"data": None}
+
+# The empty shape, so a template can always ask for a key. Falling back to this
+# rather than to None means a build failure costs the tables and nothing else -
+# the pages still render, exactly as they did before any of this existed.
+_EMPTY_SEO_TABLES = {"players": [], "rotation": None, "best_xv": None,
+                     "best_xv_history": [], "manager_history": []}
+
+
+def seo_tables():
+    """Display-ready rows for the tables the panes otherwise draw in JS.
+
+    Every input is fetched defensively. This runs on the four pages a crawler
+    hits most, and none of it is load-bearing for a reader - so a database
+    fault, an unreachable season clock or an unsolvable squad has to cost the
+    server-rendered table only, never the page."""
+    if _seo_tables["data"] is None:
+        players = []
+        try:
+            pool = _player_pool()
+            paths = {code: rec["path"] for code, rec in player_page_index().items()}
+            players = [dict(p, path=paths.get(p.get("code"))) for p in pool]
+        except Exception as e:
+            print(f"couldn't build the server-rendered player table: {e}")
+
+        best_xv = None
+        try:
+            target = gw_clock.next_gameweek()
+            if target is not None and players:
+                stored = ai_team.get_snapshot(target, players)
+                best_xv = stored or cached_best_xv(target)
+        except Exception as e:
+            print(f"couldn't build the server-rendered AI squad: {e}")
+
+        def _safe(fn, label):
+            try:
+                return fn()
+            except Exception as e:
+                print(f"couldn't build the server-rendered {label}: {e}")
+                return []
+
+        _seo_tables["data"] = seo_tables_builder.build(
+            players=players,
+            rotation_df=state["rotation_df"],
+            best_xv=best_xv,
+            snapshots=_safe(ai_team.list_snapshots, "Best XI track record"),
+            mgr_history=_safe(ai_manager.history, "AI Manager track record"),
+        )
+    return _seo_tables["data"] or _EMPTY_SEO_TABLES
 
 
 def cached_best_xv(gameweek, budget=DEFAULT_BUDGET):
@@ -590,6 +684,11 @@ def page_context(request, path, meta=None, **extra):
         # this module owns the routing table, and /player/<slug> pages render
         # through the same head partial.
         "is_home": path == "/",
+        # Marked active here rather than compared in the template: this module
+        # owns the routing table, and `path` is already the canonical answer to
+        # "which page is this" - reading it back off request.url.path would be a
+        # second source that can disagree (trailing slashes, redirects).
+        "content_links": [dict(c, active=c["path"] == path) for c in CONTENT_LINKS],
         "today": datetime.now(timezone.utc).strftime("%-d %B %Y")
                  if os.name != "nt" else datetime.now(timezone.utc).strftime("%d %B %Y").lstrip("0"),
         # Club colours for the server-rendered pages. A callable rather than a
@@ -643,9 +742,13 @@ def tab_response(request, path):
     them hidden - is what a crawler would otherwise be handed."""
     tabs = [dict(t, title=PAGES[t["path"]]["title"], h1=PAGES[t["path"]]["h1"])
             for t in TABS]
+    # The tables, server-rendered. All four panes are in the DOM on all four
+    # URLs, so this goes out with every one of them rather than only with the
+    # tab it belongs to - which is also what a crawler needs, since it has no
+    # way to click through to a pane it can't see.
     return html_response("index.html", request, path, mode=state["mode"],
                          initial_pane=TAB_PANES[path], tabs=tabs,
-                         page_h1=PAGES[path]["h1"])
+                         page_h1=PAGES[path]["h1"], ssr=seo_tables())
 
 
 @app.get("/my-team", response_class=HTMLResponse)
@@ -967,14 +1070,12 @@ def llms_txt():
     isn't is that a model answering "what is FPL Buddy" gets the answer from
     the site rather than inferring it from whatever page it happened to crawl.
 
-    Deliberately prose rather than a link dump. The four tool pages draw their
-    tables from /api/* after the page loads, and crawlers generally don't run
-    JavaScript, so a model that fetches /players sees headings and an empty
-    table. Describing what each page holds is the only way that content is
-    represented at all until those tables are server-rendered.
-
-    The player pages are the exception - those are fully server-rendered, which
-    is why they're the ones pointed at for per-player questions."""
+    Deliberately prose rather than a link dump. The tool pages now serve their
+    tables in the HTML as well as building them in JavaScript (see
+    seo_tables.py), so a model fetching /players gets the top hundred rated
+    players rather than an empty <tbody> - but what it gets is a snapshot of one
+    view, and prose is still the better way to say what the page is FOR and how
+    to read the numbers on it."""
     return PlainTextResponse(
         f"# {SITE_NAME}\n"
         "\n"
@@ -1011,12 +1112,25 @@ def llms_txt():
         "\n"
         f"Each player has a page at {SITE_URL}/player/<name-slug> carrying price,\n"
         "ownership, form, expected goals and assists, availability and projected\n"
-        "points. These are server-rendered and readable without JavaScript.\n"
+        f"points. Every one of them is linked from {SITE_URL}/players/a-z.\n"
+        "\n"
+        "## Reading without JavaScript\n"
+        "\n"
+        "Every page listed above serves its content in the HTML. The tool pages\n"
+        f"additionally build interactive versions in the browser: {SITE_URL}/players\n"
+        "carries the hundred highest-rated players with form, price and the next\n"
+        f"three fixtures; {SITE_URL}/ai-teams carries the current AI squad and the\n"
+        f"predicted-versus-actual record of every past one; {SITE_URL}/fixture-rotator\n"
+        "carries all twenty clubs' fixture difficulty over the coming gameweeks.\n"
+        "The /api/ endpoints behind those tables are disallowed in robots.txt and\n"
+        "should not be fetched; the pages themselves carry the same numbers.\n"
         "\n"
         "## Notes\n"
         "\n"
         "- Projections compare players against each other. Read as a forecast of\n"
         "  any individual score they will be wrong most weeks.\n"
+        "- A player with no chance of playing is projected at zero for the rounds\n"
+        "  he is out for, not at what he would have scored fit.\n"
         "- The site is read-only. It cannot change anyone's team, and never asks\n"
         "  for a Fantasy Premier League password.\n"
         f"- Corrections: {SITE_URL}/contact\n",

@@ -57,10 +57,28 @@ def test_tab_panes():
               lambda body, t=tab: re.search(
                   r'class="nav-link active"[^>]*href="%s"' % re.escape(t["path"]), body)
               or re.search(r'href="%s"[^>]*class="nav-link active"' % re.escape(t["path"]), body))
+        # Every tool tab has to be a real <a href>, checked per path rather than
+        # by counting anchors in the bar. The bar also carries the Gameweek
+        # briefings and Players A-Z links now, so a bare count says nothing
+        # about whether the four tabs are all there - it only says how many
+        # things happen to be in the bar today.
         check(f"{tab['path']} renders all four tab links as anchors",
-              f"GET {tab['path']}", "4 <a class=nav-link> elements", r.text,
-              lambda body: len(re.findall(r'<a class="nav-link', body)) == 4,
+              f"GET {tab['path']}", "an <a href> for each of the four tabs", r.text,
+              lambda body: all(
+                  re.search(r'<a class="nav-link[^"]*"[^>]*href="%s"' % re.escape(t["path"]), body)
+                  for t in main.TABS),
               note="anchors not buttons, or a crawler cannot follow them")
+
+    # The two reading pages were footer-only, which is the weakest place on a
+    # page to be linked from. They're in the tab bar now, on the tool pages and
+    # on the prose pages - so this checks both kinds of page, not just one.
+    for path in [t["path"] for t in main.TABS] + ["/about", "/faq", "/privacy"]:
+        body = c.get(path).text
+        check(f"{path} links the reading pages from the tab bar", f"GET {path}",
+              " and ".join(c_["path"] for c_ in main.CONTENT_LINKS), body,
+              lambda b: all(f'href="{c_["path"]}"' in b for c_ in main.CONTENT_LINKS),
+              note="the gameweek archive and the A-Z index need a link from "
+                   "every page or they rank on footer links alone")
 
 
 def test_seo_tags():
@@ -419,7 +437,8 @@ def test_static_assets():
     group("static assets", "medium")
     c = _client()
     for path in ["/static/app.js", "/static/style.css", "/static/kits.js",
-                 "/static/favicon.png", "/static/icon_180.png"]:
+                 "/static/favicon.png", "/static/favicon_144.png",
+                 "/static/icon_180.png"]:
         r = c.get(path)
         expect(f"{path} served", f"GET {path}", 200, r.status_code, severity="high")
         check(f"{path} is cacheable", f"GET {path}", "max-age=86400",
@@ -440,7 +459,139 @@ def test_static_assets():
                   note="without the token a phone can pin itself to stale CSS")
 
 
+def test_site_name_signals():
+    """The markup Google reads to print "FPL Buddy" above a search result.
+
+    It was printing "mfhost.co.uk" instead, which is what it falls back to when
+    it can't establish a name for a subdomain. Every signal below is one it
+    documents as feeding that decision, and every one of them is a single line
+    that a refactor can drop without anything on the page looking wrong.
+    """
+    group("site name", "high")
+    c = _client()
+    body = c.get("/").text
+
+    blocks = re.findall(
+        r'<script type="application/ld\+json">(.*?)</script>', body, re.S)
+    check("the home page carries JSON-LD", "GET /", "at least one ld+json block",
+          len(blocks), lambda v: v >= 1)
+
+    parsed = []
+    for block in blocks:
+        try:
+            parsed.append(json.loads(block))
+        except json.JSONDecodeError as e:
+            parsed.append({"_error": str(e)})
+    check("the JSON-LD parses", "GET /", "valid JSON in every block",
+          [p.get("_error") for p in parsed if isinstance(p, dict)],
+          lambda errs: not any(errs),
+          note="malformed structured data is ignored wholesale, so this fails "
+               "silently in production - nothing on the page looks wrong")
+
+    nodes = []
+    for p in parsed:
+        nodes.extend(p.get("@graph", [p]) if isinstance(p, dict) else [])
+    by_type = {n.get("@type"): n for n in nodes if isinstance(n, dict)}
+
+    for kind in ("WebSite", "Organization"):
+        check(f"{kind} names the site", "GET /", main.SITE_NAME,
+              (by_type.get(kind) or {}).get("name"),
+              lambda v: v == main.SITE_NAME,
+              note="this is the field Google documents as authoritative for "
+                   "the name shown above a result")
+
+    check("Organization carries a logo", "GET /", "an ImageObject url",
+          ((by_type.get("Organization") or {}).get("logo") or {}).get("url"),
+          lambda v: bool(v),
+          note="the name and the icon beside it are one block; without a logo "
+               "Google has nothing to pair the name with")
+
+    # Google's favicon guidance: a square, at least 48px, ideally a multiple of
+    # 48. The original 32x32 was below that floor, which is why a large one was
+    # added rather than the small one being replaced.
+    icons = re.findall(r'<link rel="icon"[^>]*sizes="(\d+)x(\d+)"[^>]*>', body)
+    check("a favicon of at least 48px is declared", "GET /",
+          "one <link rel=icon> at 48px or more", icons,
+          lambda found: any(int(w) >= 48 and w == h for w, h in found),
+          note="under 48px Google will not use the icon at all")
+
+    check("the home page h1 names the site", "GET /", main.SITE_NAME,
+          (re.search(r"<h1[^>]*>(.*?)</h1>", body, re.S) or [None, ""])[1],
+          lambda v: main.SITE_NAME in v)
+
+    # The other three signals, checked as they are actually served.
+    for name, pattern in [
+            ("og:site_name", r'<meta property="og:site_name" content="([^"]*)"'),
+            ("<title>", r"<title>(.*?)</title>")]:
+        found = (re.search(pattern, body, re.S) or [None, ""])[1]
+        check(f"{name} carries the site name", "GET /", main.SITE_NAME, found,
+              lambda v: main.SITE_NAME in v)
+
+
+def test_server_rendered_tables():
+    """The tool pages have to carry their tables in the HTML.
+
+    This is the invariant the whole of seo_tables.py exists to hold: the panes
+    draw their tables from /api/*, robots.txt disallows /api/, and crawlers
+    don't run JavaScript - so if these rows stop appearing in the raw response,
+    the site's best content goes back to being invisible to search engines and
+    language models, and nothing else about the site would look wrong. It is
+    exactly the kind of regression that survives for months unnoticed, which is
+    what makes it worth a test.
+    """
+    group("server-rendered tables", "high")
+    c = _client()
+    body = c.get("/players").text
+
+    check("the players table has rows in the raw HTML", "GET /players",
+          "at least 50 <tr> inside #playersTabSearch", body,
+          lambda b: len(re.findall(r'<tr>\s*<td class="ps-name"', b)) >= 50,
+          note="without these a crawler sees an empty table where the ratings are")
+
+    # A named player, not just a row count: rows of dashes would pass a count.
+    top = main.seo_tables()["players"]
+    if top:
+        name = top[0]["name"]
+        check("the top-rated player is named in the HTML", "GET /players",
+              name, body, lambda b, n=name: n in b,
+              note="rows exist but carry no player names")
+
+    check("player rows link to their own pages", "GET /players",
+          "at least 50 /player/<slug> links", body,
+          lambda b: len(re.findall(r'href="/player/', b)) >= 50,
+          note="the internal links are what make the several hundred player "
+               "pages reachable from the ratings table rather than from the "
+               "sitemap alone")
+
+    rot = c.get("/fixture-rotator").text
+    check("the rotation grid has a row per club", "GET /fixture-rotator",
+          "20 rows in #rotationBody", rot,
+          lambda b: len(re.findall(r'<td class="rot-team">', b)) >= 18,
+          note="the fixture difficulty grid is the content of this page")
+
+    # Only assert the AI squad when there is a gameweek to have solved one for.
+    # Out of season - or with the FPL API unreachable, which is how this suite
+    # usually runs - there is legitimately no squad, and a test that failed for
+    # that reason would be noise rather than signal.
+    squad = main.seo_tables().get("best_xv")
+    if squad and squad.get("rows"):
+        ai = c.get("/ai-teams").text
+        first = squad["rows"][0]["name"]
+        check("the AI squad is in the raw HTML", "GET /ai-teams",
+              f"{first} and 14 team-mates", ai,
+              lambda b, n=first: n in b and b.count('<td class="ps-name">') >= 15,
+              note="the solved squad is the one thing on this page a crawler "
+                   "could never see before")
+
+    check("/my-team explains itself without an FPL ID", "GET /my-team",
+          "a server-rendered intro section", c.get("/my-team").text,
+          lambda b: 'id="toolIntro"' in b and "optimised starting XI" in b,
+          note="this pane renders nothing at all without an ID, so the prose "
+               "is the only thing a crawler can read on it")
+
+
 SUITES = [test_page_routes, test_tab_panes, test_seo_tags,
           test_robots_and_security_txt, test_faq, test_gameweek_pages,
           test_sitemap, test_player_pages, test_az_index, test_compression,
-          test_static_assets]
+          test_static_assets, test_site_name_signals,
+          test_server_rendered_tables]

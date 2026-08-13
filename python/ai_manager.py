@@ -27,7 +27,8 @@ Best-XV and against real managers.
 
 from db import AI_MANAGER_FPL_ID, connect, utcnow
 from squad_optimiser import (DEFAULT_BUDGET, MAX_PER_CLUB, OptimisationError,
-                             SQUAD_QUOTA, availability, optimise_squad, verify)
+                             SQUAD_QUOTA, availability, optimise_squad,
+                             team_rating, verify)
 
 # How far ahead a transfer decision looks, and how quickly later gameweeks stop
 # mattering. 0.75 means gameweek n+2 counts for about half of the next one -
@@ -478,6 +479,10 @@ def run_gameweek(pool, gameweek, budget=DEFAULT_BUDGET, persist=True):
         "squad": (lineup or {}).get("squad", squad),
         "formation": (lineup or {}).get("formation"),
         "squad_cost": round(sum(p.get("cost") or 0 for p in squad), 1),
+        # Built from the pool passed in, so this is a live figure - which is
+        # what the caller wants for the gameweek being picked. get_gameweek()
+        # returns None for it on a stored week; see the note there.
+        "team_rating": team_rating((lineup or {}).get("squad", squad)),
         "predicted_points": predicted,
         "transfers": [{"out": m["out"]["web_name"], "in": m["in"]["web_name"],
                        "gain": m["gain"], "hit": m["hit"], "free": m["free"],
@@ -543,6 +548,10 @@ def get_gameweek(gameweek, pool=None):
         "total_points": total_points_to(head["gameweek"]),
         "active_chip": head["active_chip"], "captured_at": head["captured_at"],
         "squad": squad, "transfers": transfers,
+        # None for the same reason as ai_team.get_snapshot: ratings move every
+        # night, so one derived now would describe today's players rather than
+        # the squad as it stood when this gameweek was committed.
+        "team_rating": None,
     }
 
 

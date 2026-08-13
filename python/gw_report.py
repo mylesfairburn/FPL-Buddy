@@ -17,6 +17,7 @@ is only ever building the *current* one. It never reconstructs a past week.
 """
 
 import math
+from datetime import datetime, timezone
 
 import player_pages
 
@@ -357,6 +358,26 @@ def team_news(pages, gameweek, limit=6):
 
 # ---- assembly -------------------------------------------------------------
 
+def deadline_label(deadline):
+    """FPL's deadline timestamp as something a person reads.
+
+    "Sat 22 Aug, 11:00" rather than "2026-08-22T11:00:00Z". Times are printed
+    as UTC because that is what the API states and the site does not ask where
+    anyone is - and for most of the season UK time is UTC anyway. Returns an
+    empty string rather than raising: a briefing with no deadline on it is
+    worth publishing, a job that dies formatting one is not."""
+    if not deadline:
+        return ""
+    try:
+        when = datetime.fromisoformat(str(deadline).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return ""
+    when = when.astimezone(timezone.utc)
+    # %-d isn't portable to Windows, where this gets run by hand for testing.
+    day = str(when.day)
+    return f"{when:%a} {day} {when:%b}, {when:%H:%M} UK"
+
+
 def build(pages, gameweek, rotation_df=None, deadline=None, season_label=None):
     """The whole edition, as the JSON-serialisable dict stored in `gw_report`.
 
@@ -370,6 +391,14 @@ def build(pages, gameweek, rotation_df=None, deadline=None, season_label=None):
         "gameweek": int(gameweek),
         "season": season_label,
         "deadline": deadline,
+        # A readable form of the same timestamp, for the page and for the social
+        # drafts. Written here rather than formatted at each use so the deadline
+        # a reader sees on the page is the one the post links to it with.
+        "deadline_label": deadline_label(deadline),
+        # Publishing stage: draft while it's still being rebuilt nightly,
+        # preview once it's worth posting a day out, final once frozen. Set by
+        # jobs.py as the edition moves through them; see social.STAGES.
+        "stage": "draft",
         "in_form": in_form(pages, gameweek),
         "differentials": differentials(pages, gameweek),
         "attack_runs": runs["attack"],

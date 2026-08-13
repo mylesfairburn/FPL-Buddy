@@ -33,7 +33,7 @@ function activatePane(pane, opts) {
     if (!PANES.includes(pane)) pane = 'pane-team';
     const btn = document.querySelector(`#mainTabs [data-pane="${pane}"]`);
     if (!btn) return;
-    document.querySelectorAll('#mainTabs .nav-link').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('#mainTabs [data-pane]').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('d-none'));
     btn.classList.add('active');
     document.getElementById(pane).classList.remove('d-none');
@@ -61,7 +61,11 @@ function activatePane(pane, opts) {
     if (!opts.restoring) window.scrollTo(0, 0);
 }
 
-document.querySelectorAll('#mainTabs .nav-link').forEach(btn => {
+// [data-pane], not .nav-link: the bar also carries the Gameweek briefings and
+// Players A–Z links, which are separate documents rather than panes of this
+// one. Without the attribute filter they'd be intercepted here, have their
+// navigation prevented, and silently open the My Team tab instead.
+document.querySelectorAll('#mainTabs [data-pane]').forEach(btn => {
     btn.addEventListener('click', e => {
         // The tabs are anchors so crawlers can follow them and so middle-click
         // still opens a new tab - but a plain left-click should switch panes
@@ -301,9 +305,17 @@ function showResetBtn() { document.getElementById('resetBtn').classList.remove('
 const changeIdBtn = document.getElementById('changeId');
 function showChangeId(on) { changeIdBtn.classList.toggle('d-none', !on); }
 
+// The server-rendered explainer above the ID form. It exists so this pane is
+// readable to someone (or something) with no FPL ID, which before was every
+// crawler and every first-time visitor - so it belongs with the prompt, and
+// goes away with it once a real squad is on screen.
+const toolIntro = document.getElementById('toolIntro');
+function showToolIntro(on) { if (toolIntro) toolIntro.classList.toggle('d-none', !on); }
+
 function showPrompt() {
     idPrompt.classList.remove('d-none');
     teamContent.classList.add('d-none');
+    showToolIntro(true);
     showChangeId(false);
 }
 
@@ -313,6 +325,7 @@ idSave.addEventListener('click', () => {
     idError.textContent = '';
     localStorage.setItem(FPL_ID_KEY, val);
     idPrompt.classList.add('d-none');
+    showToolIntro(false);
     savedDraft = null;      // different manager, different saved team
     selectedEvent = null;
     loadTeam();
@@ -448,11 +461,13 @@ function renderTeam(view) {
 function renderStatChips(gw) {
     const el = document.getElementById('statChips');
     const h = teamView.header || {};
+    const rating = ratingChip(teamRating(workingSquad));
     if (teamView.built && gw) {
         el.innerHTML = chip('Squad value', '\u00a3' + h.value + 'm')
                      + bankChip(gw.bank)
                      + freeTransfersChip(gw)
-                     + chip('Predicted', gw.predicted_points, true);
+                     + chip('Predicted', gw.predicted_points, true)
+                     + rating;
         return;
     }
     if (!gw) {
@@ -467,6 +482,7 @@ function renderStatChips(gw) {
         + chip('Predicted', gw.predicted_points ?? '\u2013', true)
         + bankChip(gw.bank)
         + freeTransfersChip(gw)
+        + rating
         + chip('Transfers', (gw.transfers_made ?? 0) + tc)
         + chip('Chips left*', (gw.chips_available || []).join(', ') || 'none')
         + (gw.active_chip ? chip('Active chip', gw.active_chip) : '');
@@ -501,6 +517,26 @@ function bankChip(bank) {
 }
 function chip(label, value, accent) {
     return `<div class="stat-chip${accent ? ' accent' : ''}"><span class="stat-label">${label}</span><span class="stat-value">${value}</span></div>`;
+}
+// A squad's rating out of 100: the mean of its starting XI's ratings. Same
+// rule as squad_optimiser.team_rating() on the server, which is where the
+// reasoning for "starters only" is written down.
+//
+// Computed here rather than read from /api/team because My Team is editable:
+// optimise the lineup or preview a transfer and the eleven changes, so a
+// figure fixed at load would be describing a squad that's no longer on screen.
+// The AI squads aren't editable and use the server's number.
+function teamRating(squad) {
+    const starters = (squad || []).filter(p => p.starting);
+    if (starters.length !== 11) return null;
+    const ratings = starters.map(p => p.rating).filter(r => r != null);
+    if (ratings.length !== 11) return null;
+    return Math.round(ratings.reduce((a, b) => a + b, 0) / 11);
+}
+// The chip itself, or nothing at all when there's no honest number to show -
+// a part-built squad, or a stored gameweek the server declined to rate.
+function ratingChip(rating) {
+    return rating == null ? '' : chip('Team rating', rating + '/100');
 }
 
 // ---- Pitch ----
@@ -1527,6 +1563,16 @@ function setupPriceRange(which, onChange) {
 function createPlayerSearch(cfg) {
     const c = cfg.container;
     const pfx = cfg.sliderPrefix || 'ps';
+    // Anything already in the list came from the server (see
+    // partials/ssr_players.html). Overwriting the container is the first thing
+    // this function does, so without capturing them here the server-rendered
+    // rows would be destroyed on the very first frame - a crawler would still
+    // read them, but a person with a slow connection would watch a full table
+    // of ratings vanish and be replaced by an empty box until /api/all_players
+    // came back. Held instead, and shown until there is real data to replace
+    // them with.
+    const seededList = c.querySelector('.ps-list');
+    const seededRows = seededList ? seededList.innerHTML : '';
     c.innerHTML = `
         <div class="ps-controls">
             <div class="search-clear-wrap ps-search">
@@ -1555,6 +1601,10 @@ function createPlayerSearch(cfg) {
     const teamEl = c.querySelector('.ps-team');
     const listEl = c.querySelector('.ps-list');
     const recEl = c.querySelector('.ps-rec');
+    // Put the server's rows straight back into the rebuilt shell, so the table
+    // is populated in the same frame the controls appear rather than blinking
+    // empty until the pool arrives.
+    if (seededRows) listEl.innerHTML = seededRows;
     const state = { sortKey: 'rating', sortDir: 'desc', teamsFilled: false };
 
     const COLS = [
@@ -1611,6 +1661,10 @@ function createPlayerSearch(cfg) {
         return `<thead><tr>${ths}</tr></thead>`;
     }
     function render() {
+        // No pool yet. Leave the server-rendered rows where they are rather
+        // than replacing them with "No players match." - which would be a
+        // false statement about an empty pool, not an empty result.
+        if (!pool().length && seededRows) { listEl.innerHTML = seededRows; return; }
         ensureTeams();
         const transfer = cfg.isTransferMode();
         const [lo, hi] = bounds();
@@ -2090,6 +2144,37 @@ function aiPlayerCard(p, onBench, gameweek) {
 
 function renderAiPitch(squad, gameweek) { renderAiPitchInto('aiPitch', 'aiBench', squad, gameweek); }
 
+// A full-size pitch of blank cards, drawn before either AI endpoint has
+// answered so the block occupies its final height from the very first frame.
+//
+// It uses emptySquad() - the same fifteen placeholders the My Team tab builds a
+// squad from - and the same card renderer as the real thing, which is the point:
+// a skeleton hand-built from divs would drift out of step with the real card the
+// first time one gained a row, and a skeleton that is the wrong height is worse
+// than none at all. The placeholders keep their 'a' status so the availability
+// band renders and the cards stand exactly as tall as they will with real
+// players in them; .ai-skeleton in the stylesheet is what blanks the text.
+function renderAiSkeletons() {
+    // A non-breaking space rather than emptySquad()'s empty name. An element
+    // with no text has no line box, so the name pill collapses from ~18px to
+    // its padding - and across four pitch rows plus the bench that was 186px
+    // of the block missing, which is a shift of exactly the kind this is meant
+    // to prevent. The character is invisible; the height it holds is the point.
+    // Written as an escape, not typed: a plain space would be collapsed away
+    // by HTML and the pill would silently go back to 2px, and the two look
+    // identical in the source.
+    const squad = emptySquad().map(p => ({ ...p, web_name: ' ' }));
+    renderAiPitchInto('mgrPitch', 'mgrBench', squad, null);
+    renderAiPitchInto('aiPitch', 'aiBench', squad, null);
+}
+
+// Data has arrived: stop blanking the text. Idempotent, so every load path can
+// call it without checking.
+function clearAiSkeleton(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('ai-skeleton');
+}
+
 // Shared by the Best XI and AI Manager tabs - same card, same layout.
 function renderAiPitchInto(pitchId, benchId, squad, gameweek) {
     const starters = squad.filter(p => p.starting);
@@ -2132,6 +2217,7 @@ function renderAiChips(d) {
           chip('Squad cost', d.squad_cost != null ? '£' + d.squad_cost.toFixed(1) + 'm' : '–')
         + chip('Unspent', spare != null ? '£' + spare.toFixed(1) + 'm' : '–')
         + chip('Predicted', d.predicted_points != null ? d.predicted_points.toFixed(1) : '–', true)
+        + ratingChip(d.team_rating)
         + (d.actual_points != null ? chip('Actual', d.actual_points) : '');
 }
 
@@ -2159,6 +2245,7 @@ function loadAi(gw) {
             aiGw = d.gameweek;
             updateAiNav();
             content.classList.remove('d-none');
+            clearAiSkeleton('aiContent');
             renderAiChips(d);
             renderAiPitch(d.squad, d.gameweek);
             renderAiSquadTable(d.squad);
@@ -2310,12 +2397,14 @@ function loadMgr(gw) {
             }
             mgrGw = d.gameweek; updateMgrNav();
             content.classList.remove('d-none');
+            clearAiSkeleton('mgrContent');
             const value = d.squad_cost != null ? d.squad_cost : d.value;
             document.getElementById('mgrChips').innerHTML =
                   chip('Total points', d.total_points != null ? d.total_points : '–')
                 + chip('Squad value', value != null ? '£' + value.toFixed(1) + 'm' : '–')
                 + chip('Bank', d.bank != null ? '£' + d.bank.toFixed(1) + 'm' : '–')
                 + chip('Predicted', d.predicted_points != null ? d.predicted_points.toFixed(1) : '–', true)
+                + ratingChip(d.team_rating)
                 + (d.points != null ? chip('Actual', d.points) : '')
                 + (d.hits ? chip('Hits', '−' + d.hits) : '');
             renderAiPitchInto('mgrPitch', 'mgrBench', d.squad || [], d.gameweek);
@@ -2371,8 +2460,16 @@ function ensureMgr() {
 // deadline — see detect_mode() — so there's no toggle to render here.)
 
 // ---- Initial load ----
+// First, and synchronously. app.js is a blocking script at the end of <body>,
+// so anything done here happens before the browser's first paint - which is the
+// whole point of the AI skeletons: they have to be in the layout in the frame
+// the reader first sees, not one network round trip later.
+renderAiSkeletons();
 restoreView();
-if (getSavedId()) loadTeam(); else showPrompt();
+// Hidden here rather than inside loadTeam()'s callback: that lands a network
+// round trip later, by which point the browser has painted the explainer and
+// removing it is a visible jump.
+if (getSavedId()) { showToolIntro(false); loadTeam(); } else showPrompt();
 ensurePlayers().then(() => playersTabSearch.refresh());
 loadRotation();
 loadNews();

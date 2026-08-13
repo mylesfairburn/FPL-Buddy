@@ -1,4 +1,6 @@
 import os
+import re
+from datetime import datetime, timedelta, timezone
 
 import joblib
 import matplotlib.pyplot as plt
@@ -143,6 +145,206 @@ def attach_per_gameweek_points(position_dfs, model_bundles, form_features,
             })
 
         df['next_gameweeks'] = df['code'].map(lambda c: by_code.get(c, [])[:n_gameweeks])
+        updated[position] = df
+
+    return updated
+
+
+# ---------------------------------------------------------------------------
+#  Availability
+# ---------------------------------------------------------------------------
+# The model predicts what a player would score if he plays. It has no idea
+# whether he is fit, because fitness isn't one of its features - so a player
+# ruled out with a torn hamstring still came out of it with a full projection,
+# and that projection was then printed on the players table, his own page, the
+# My Team pitch and the gameweek briefing. It is the most obviously wrong number
+# the site can show: everybody reading it already knows he isn't playing.
+#
+# So availability is applied as a post-process here rather than taught to the
+# model. One pass, at the one point every consumer reads from, which is why it
+# lives in get_rated_position_dfs() alongside the per-gameweek attach.
+
+# FPL publishes availability as a status letter plus an optional percentage:
+#   'a' available, 'd' doubtful, 'i' injured, 's' suspended, 'u' unavailable
+# ('u' never reaches here - run_pipeline() drops those rows outright.) Only a
+# stated 0% is treated as "cannot play". A 75% player is left completely alone:
+# he might play, and the squad optimiser already scales his points by that
+# probability, so zeroing him here would be double-counting the same risk.
+BLOCKED_STATUS = {"i", "s", "u"}
+
+# "Ankle injury - Expected back 23 Aug" / "Suspended until 29 Aug". FPL omits
+# the year, hence _return_year below. The month is matched on its first three
+# letters, which is the form FPL uses in every one of these strings.
+_RETURN_RE = re.compile(
+    r"(?:expected\s+back|suspended\s+until|out\s+until)\s+"
+    r"(\d{1,2})\s+([a-z]{3})[a-z]*\.?\s*(\d{4})?",
+    re.IGNORECASE)
+
+_MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun",
+     "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
+
+
+def _parse_stamp(value):
+    """FPL's ISO timestamps ('2026-08-08T19:00:05.613036Z') as aware UTC."""
+    if not value or value != value:      # None or NaN
+        return None
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_return_date(news, news_added=None, now=None):
+    """The date a flagged player is expected back, from FPL's `news` string.
+
+    Returns an aware UTC datetime at midnight, or None when the string carries
+    no date - which is the common case, since "Unknown return date" is what FPL
+    writes whenever a club hasn't given one.
+
+    The year is the interesting part: FPL never states it, so "Expected back
+    10 Jan" posted in December means NEXT January. It's resolved against the
+    timestamp on the news item rather than against today, because that is the
+    date the club was talking about - reading it against today would flip the
+    answer by a year every time the calendar crossed a new year while the item
+    stood."""
+    if not news or news != news:
+        return None
+    m = _RETURN_RE.search(str(news))
+    if not m:
+        return None
+    day, month_word, year = m.group(1), m.group(2).lower(), m.group(3)
+    month = _MONTHS.get(month_word)
+    if month is None:
+        return None
+
+    if year:
+        try:
+            return datetime(int(year), month, int(day), tzinfo=timezone.utc)
+        except ValueError:
+            return None
+
+    # No year given: take the one that puts the date at or after the news item.
+    # A day of slack absorbs items posted the same morning as the return.
+    anchor = _parse_stamp(news_added) or now or datetime.now(timezone.utc)
+    for candidate in (anchor.year, anchor.year + 1):
+        try:
+            when = datetime(candidate, month, int(day), tzinfo=timezone.utc)
+        except ValueError:
+            return None                    # 31 Feb and friends
+        if when >= anchor - timedelta(days=1):
+            return when
+    return None
+
+
+def fixture_kickoffs(fixtures_df):
+    """{(team_id, event): earliest kickoff} for every unplayed fixture.
+
+    Earliest rather than only, because a double gameweek gives a club two
+    fixtures in one event and the first is the one that decides whether a
+    player was still injured when the gameweek came around."""
+    kickoffs = {}
+    if fixtures_df is None or fixtures_df.empty:
+        return kickoffs
+    for _, row in fixtures_df.iterrows():
+        event = row.get("event")
+        when = _parse_stamp(row.get("kickoff_time"))
+        if when is None or event is None or event != event:
+            continue
+        for side in ("team_h", "team_a"):
+            team = row.get(side)
+            if team is None or team != team:
+                continue
+            key = (int(team), int(event))
+            if key not in kickoffs or when < kickoffs[key]:
+                kickoffs[key] = when
+    return kickoffs
+
+
+def _blocking_chance(row):
+    """True when FPL is saying this player cannot play the next round.
+
+    A stated 0% is the signal. Status 'i'/'s'/'u' with no percentage at all
+    counts too - that's FPL saying "out" without attaching a number, which is
+    the same fact stated less precisely. Everything else, including every
+    partial percentage, is left alone."""
+    chance = row.get("chance_of_playing_next_round")
+    if chance is not None and chance == chance:      # not None, not NaN
+        try:
+            return float(chance) <= 0
+        except (TypeError, ValueError):
+            return False
+    return str(row.get("status") or "a").lower() in BLOCKED_STATUS
+
+
+def zero_unavailable_points(position_dfs, fixtures_df, now=None):
+    """Rewrite the projections of players who cannot play to zero.
+
+    Three cases, and the middle one is the point of the whole function:
+
+      * A 0% player whose news names a return date keeps his projection for
+        every gameweek kicking off on or after it. A hamstring that costs three
+        weeks should not blank out October.
+      * A 0% player with no date loses the next gameweek only. Guessing further
+        than FPL is willing to would be inventing a recovery timeline.
+      * Anyone else - including every partial percentage - is untouched.
+
+    Nothing here is sticky. The nightly pipeline re-reads `news` on every run,
+    so a player's projections come back on their own the moment his return date
+    passes or his flag is lifted; there is no state to reset and no job to
+    remember to run."""
+    now = now or datetime.now(timezone.utc)
+    kickoffs = fixture_kickoffs(fixtures_df)
+    updated = {}
+
+    for position, df in position_dfs.items():
+        df = df.copy()
+        if df.empty:
+            updated[position] = df
+            continue
+
+        new_gameweeks, new_points = [], []
+        for _, row in df.iterrows():
+            gws = row.get("next_gameweeks")
+            gws = list(gws) if isinstance(gws, list) else []
+            predicted = row.get("predicted_points")
+
+            if not _blocking_chance(row):
+                new_gameweeks.append(gws)
+                new_points.append(predicted)
+                continue
+
+            back = parse_return_date(row.get("news"), row.get("news_added"), now=now)
+            team = row.get("team")
+            team = int(team) if team is not None and team == team else None
+
+            out = []
+            for i, gw in enumerate(gws):
+                if back is None:
+                    # No published return date: only the round FPL is actually
+                    # talking about, which is the next one.
+                    blocked = i == 0
+                else:
+                    kick = kickoffs.get((team, gw.get("event")))
+                    # An unknown kickoff can't be compared, so it isn't
+                    # zeroed - saying nothing beats saying something wrong.
+                    blocked = kick is not None and kick < back
+                out.append({**gw, "points": 0.0} if blocked else gw)
+
+            # predicted_points is the single blended figure the tables sort and
+            # display, and it describes the round being picked for. It follows
+            # the first gameweek's verdict; with no fixture list to go on, it
+            # follows the flag itself.
+            if out:
+                blocked_now = out[0].get("points") == 0.0
+            else:
+                blocked_now = back is None or back > now
+            new_gameweeks.append(out)
+            new_points.append(0.0 if blocked_now else predicted)
+
+        df["next_gameweeks"] = pd.Series(new_gameweeks, index=df.index, dtype=object)
+        if "predicted_points" in df.columns:
+            df["predicted_points"] = new_points
         updated[position] = df
 
     return updated
@@ -347,6 +549,11 @@ def get_rated_position_dfs(position_dfs, mode='preseason', n_gameweeks=8):
         rated, model_bundles, form_features, per_gw_features,
         team_id_to_short=team_id_to_short, n_gameweeks=n_gameweeks,
     )
+
+    # Last, and deliberately so: the model knows nothing about fitness, so a
+    # player who is out still has a full projection until this pass zeroes it.
+    # Every consumer of the rated pool reads it after this point.
+    rated = zero_unavailable_points(rated, fixtures_df)
 
     return rated
 

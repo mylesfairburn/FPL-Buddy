@@ -31,8 +31,14 @@
     <div class="gw-masthead-rule">
         <span class="gw-edition">Gameweek {{ report.gameweek }}</span>
         {% if report.season %}<span class="gw-season">{{ report.season }}</span>{% endif %}
-        <span class="gw-status {{ 'is-final' if frozen else 'is-live' }}">
-            {{ "Final edition" if frozen else "Updated nightly" }}
+        {# Three states, not two. `frozen` is authoritative - a frozen edition
+           cannot be re-saved, so its stored `stage` is whatever it held at the
+           moment it froze and is not to be trusted here. Only when it isn't
+           frozen does the stage distinguish an edition still being rebuilt from
+           one published a day out and worth reading now. #}
+        {% set is_preview = not frozen and report.stage == 'preview' %}
+        <span class="gw-status {{ 'is-final' if frozen else ('is-preview' if is_preview else 'is-live') }}">
+            {{ "Final edition" if frozen else ("Preview edition" if is_preview else "Updated nightly") }}
         </span>
     </div>
     <h1 class="gw-title">The Gameweek {{ report.gameweek }} Briefing</h1>
@@ -42,6 +48,15 @@
             Frozen at the Gameweek {{ report.gameweek }} deadline. Nothing on this page
             has changed since, and nothing will &mdash; it is what the model said
             <em>before</em> the games were played.
+        {% elif is_preview %}
+            {# Someone arriving from a post made the day before needs to know two
+               things: that this is worth acting on now, and that it can still
+               move if a manager says something at a Friday press conference. #}
+            Published ahead of the
+            {% if report.deadline_label %}<strong>{{ report.deadline_label }}</strong>{% else %}Gameweek {{ report.gameweek }}{% endif %}
+            deadline. Everything here reflects today's prices, form and team news;
+            it can still change if late news lands, and freezes for good shortly
+            before the deadline.
         {% else %}
             Rebuilt every night on the latest prices, form and team news. This edition
             is frozen at the deadline and becomes a permanent record.

@@ -18,4 +18,23 @@
                 href="{{ t.path }}" data-pane="{{ t.pane }}" data-title="{{ t.title }}"
                 data-h1="{{ t.h1 }}">{{ t.label }}</a></li>
 {% endfor %}
+{# The reading pages, in the same bar but not of it. They're <li>s inside the
+   same <ul> rather than a separate row so the tab bar's underline still runs
+   the full width and the two sets sit on one baseline.
+
+   `content-link-first` carries margin-left:auto, which is what pushes them to
+   the far right - and only when there are tool tabs to push away from, since
+   the prose pages include this partial with no `tabs` at all and these should
+   start at the left there instead of floating on an empty bar.
+
+   These are ordinary links with no data-pane: app.js only intercepts clicks on
+   tabs that name a pane, so these navigate normally, as they must - they are
+   real pages, not panes of this one. #}
+{% for c in content_links %}
+            <li class="nav-item content-link{{ ' content-link-first' if loop.first and tabs }}">
+                <a class="nav-link{{ ' active' if c.active }}" href="{{ c.path }}"
+                   {% if c.active %}aria-current="page"{% endif %}
+                   aria-label="{{ c.label }}"><span class="cl-full">{{ c.label }}</span><span
+                   class="cl-short">{{ c.short }}</span></a></li>
+{% endfor %}
         </ul>

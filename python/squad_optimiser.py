@@ -122,6 +122,35 @@ def eligible_pool(players, gameweek, include_unavailable=False):
     return pool
 
 
+def team_rating(squad):
+    """A squad's rating out of 100: the mean of its starting XI's ratings.
+
+    Starters only, and deliberately. A player's `rating` is his percentile
+    within his own position, so averaging all fifteen would drag every team
+    towards the middle through the two cheap bench fillers nobody intends to
+    play - and it would rate a £100m squad and a £83m squad about the same,
+    because the difference between them is mostly in the eleven. Comparing
+    elevens is the comparison a manager is actually making.
+
+    Returns None rather than a number for a partial squad, since an average
+    over seven players isn't the same measurement and shouldn't be printed as
+    though it were.
+
+    Note this reads `rating` from the pool the squad was built from, so it is
+    always a statement about the players as rated TODAY. Callers holding a
+    stored squad from an earlier gameweek should not present it as that
+    gameweek's rating - see ai_team.get_snapshot.
+    """
+    starters = [p for p in squad or [] if p.get("starting")]
+    if len(starters) != XI_SIZE:
+        return None
+    ratings = [float(p["rating"]) for p in starters
+               if p.get("rating") is not None and p.get("rating") == p.get("rating")]
+    if len(ratings) != XI_SIZE:
+        return None
+    return round(sum(ratings) / len(ratings))
+
+
 def _formation(starters):
     counts = {pos: sum(1 for p in starters if p["pos"] == pos) for pos in SQUAD_QUOTA}
     return f"{counts['DEF']}-{counts['MID']}-{counts['FWD']}"
@@ -290,6 +319,7 @@ def optimise_squad(players, gameweek, budget=DEFAULT_BUDGET,
             "team_code": p.get("team_code"),
             "team_name": p.get("team_name"),
             "cost": round(float(p["cost"]), 1),
+            "rating": p.get("rating"),
             "predicted": round(pts[i], 2),                     # risk-adjusted
             "raw_predicted": round(float(p["_raw_predicted"]), 2),
             "availability": round(float(p["_availability"]), 2),
@@ -315,6 +345,7 @@ def optimise_squad(players, gameweek, budget=DEFAULT_BUDGET,
         "formation": _formation([pool[i] for i in starters]),
         "budget": round(float(budget), 1),
         "squad_cost": round(sum(cost[i] for i in chosen), 1),
+        "team_rating": team_rating(squad),
         "predicted_points": round(starter_pts, 2),
         "bench_predicted": round(sum(pts[i] for i in bench), 2),
         "pool_size": len(pool),

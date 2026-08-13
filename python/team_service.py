@@ -19,6 +19,7 @@ import requests
 
 import seasons
 from fetch_data import get_bootstrap_data
+from squad_optimiser import SELECTABLE_STATUS, team_rating
 
 BASE = "https://fantasy.premierleague.com/api"
 
@@ -218,6 +219,14 @@ def _transfer_recs(squad, index, bank, free_transfers, max_recs=3):
     owned = {p["id"] for p in squad}
     by_pos = {}
     for p in index.values():
+        # Candidates are ranked on `rating`, which is a percentile of the
+        # model's output and knows nothing about fitness - so without this
+        # check the panel would cheerfully tell you to buy a player who is out
+        # injured, and rank him highly for it. Doubtful players stay in: a
+        # 75%-fit premium can still be the right move, and that's a judgement
+        # for the reader. Same letters the optimiser treats as selectable.
+        if str(p.get("status") or "a").lower() not in SELECTABLE_STATUS:
+            continue
         by_pos.setdefault(p["pos"], []).append(p)
     for pos in by_pos:
         by_pos[pos].sort(key=lambda p: -p["rating"])
@@ -496,6 +505,12 @@ def get_team_view(team_id, event, position_dfs):
             "active_chip": picks_data.get("active_chip"),
             "chips_used": chips_used,
             "chips_available": chips_available,
+            # Mean rating of the eleven that start. Only stated for the round
+            # being picked and the one in play: ratings are rebuilt nightly, so
+            # scoring someone's GW3 side with today's numbers would rate a team
+            # on information nobody had when it was picked.
+            "team_rating": (team_rating(squad)
+                            if current_event is None or event >= current_event else None),
         },
         "squad": squad,
         "recommended": recommended,

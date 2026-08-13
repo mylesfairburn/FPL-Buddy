@@ -9,6 +9,11 @@
 {% include 'partials/navbar.html' %}
 
     <div class="container mb-5">
+{# No tool tabs on a prose page - `tabs` is undefined here, so the partial
+   renders the two reading links only, left-aligned. It's the same markup and
+   the same list as the tool pages, so the two can't drift apart. #}
+{% include 'partials/tabs.html' %}
+
         <article class="content-page">
 {% block content %}{% endblock %}
         </article>

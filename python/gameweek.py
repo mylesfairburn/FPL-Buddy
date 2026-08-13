@@ -142,6 +142,44 @@ def imminent_deadlines(events=None, now=None, window_minutes=COMMIT_WINDOW_MINUT
     return out
 
 
+# When the briefing becomes postable, roughly a day out.
+#
+# The final edition already freezes 100 minutes before a deadline, which is the
+# right moment for a version that will never change - but it is the wrong moment
+# to be posting a link. Most managers make their transfers the day before, and a
+# post an hour before kickoff reaches the people who had already decided.
+#
+# So there are two moments, not one. This is the earlier: a full rebuild on the
+# freshest data, marked as safe to post, while there is still a day for someone
+# to act on it.
+#
+# The window is four hours wide against an hourly poll, so a run always lands
+# inside it even if the box misses one. Everything downstream is idempotent -
+# the stage only ever moves forward - so landing in it twice is harmless.
+PREVIEW_WINDOW_HOURS = (22, 26)
+
+
+def preview_due(events=None, now=None, window_hours=PREVIEW_WINDOW_HOURS):
+    """Gameweeks whose deadline is about a day away.
+
+    Returns (gameweek, deadline_iso, hours_left) oldest first. Same shape as
+    imminent_deadlines() above, and read the same way - the two are the two
+    stages of publishing one edition."""
+    events = events if events is not None else get_events()
+    now = now or datetime.now(timezone.utc)
+    earliest = now + timedelta(hours=window_hours[0])
+    latest = now + timedelta(hours=window_hours[1])
+    out = []
+    for e in sorted(events, key=lambda x: x.get("id") or 0):
+        gw, dl = e.get("id"), parse_deadline(e.get("deadline_time"))
+        if gw is None or dl is None:
+            continue
+        if earliest <= dl <= latest:
+            out.append((gw, e.get("deadline_time"),
+                        round((dl - now).total_seconds() / 3600, 1)))
+    return out
+
+
 def gameweek_is_finished(gameweek, events=None):
     """True once FPL has both finished the round and confirmed its stats
     (`data_checked`). Bonus points aren't final until data_checked flips, so

@@ -1,0 +1,49 @@
+{# The player ratings table, server-rendered.
+
+   Rendered INTO #playersTabSearch - the same element createPlayerSearch() fills
+   - rather than beside it. That is what makes this an upgrade rather than a
+   duplicate: there is one table on the page, and a browser replaces its rows
+   with the sortable, filterable version a moment later. A second copy hidden
+   behind <noscript> would be two documents to keep in step and, to a search
+   engine, a page that shows readers something other than what it shows
+   crawlers.
+
+   The empty .ps-controls stands in for the search and filter row the script
+   builds. It carries no controls because none of them would work without
+   JavaScript, but it holds the 46px that row occupies, so the swap doesn't
+   move the table.
+
+   .ps-list keeps its own 70vh cap and scrolls, exactly as it will afterwards.
+#}
+<div class="ps-controls ssr-controls" aria-hidden="true"></div>
+<div class="ps-list">
+    <table class="table table-sm ps-table mb-0">
+        <thead><tr>
+            <th>Player</th><th>Pos</th><th>Team</th>
+            <th>Form</th><th>Rtg</th><th>£m</th><th>Next 3</th>
+        </tr></thead>
+        <tbody>
+{% for p in ssr.players %}
+            <tr>
+                {# Linked to the player's own page. These are several hundred
+                   internal links to fully server-rendered documents, which is
+                   the part of this table that compounds - without them a
+                   crawler reads the names and has nowhere to go. #}
+                <td class="ps-name">{% if p.path %}<a href="{{ p.path }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}</td>
+                <td>{{ p.pos }}</td>
+                <td>{{ p.team_name }}</td>
+                <td>{{ p.form }}</td>
+                <td><span class="rating-badge">{{ p.rating }}</span></td>
+                <td>{{ p.cost }}</td>
+                {# Comma-separated, not just spaced. The margin between these
+                   spans is invisible to anything reading the text rather than
+                   the layout, and "HUL (A) 5.2IPS (H) 5.4" is what a language
+                   model would otherwise quote. #}
+                <td class="ssr-fixtures">
+{% for f in p.fixtures %}<span class="ssr-fix" title="GW{{ f.event }}">{{ f.label }} {{ f.points }}{{ ", " if not loop.last }}</span>{% endfor %}
+                </td>
+            </tr>
+{% endfor %}
+        </tbody>
+    </table>
+</div>

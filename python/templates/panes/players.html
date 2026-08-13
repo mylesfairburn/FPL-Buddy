@@ -4,7 +4,10 @@
                 <li class="nav-item"><button class="nav-link active" data-view="all">All players</button></li>
                 <li class="nav-item"><button class="nav-link" data-view="underperforming">Underperforming</button></li>
             </ul>
-            <div id="playersTabSearch"></div>
+            {# Not empty any more. The ratings table is rendered here on the
+               server and replaced in place by the interactive one once app.js
+               has the pool - see partials/ssr_players.html. #}
+            <div id="playersTabSearch">{% if ssr and ssr.players %}{% include 'partials/ssr_players.html' %}{% endif %}</div>
             <div id="underperformingView" class="d-none">
                 <p class="text-muted small mb-2">Uses underlying stats to identify underperforming player, goals below xG for
                     attackers, goals conceded above xGC for keepers/defenders.</p>

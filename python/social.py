@@ -48,12 +48,27 @@ def _truncate(text, limit):
     return text[:limit - 1].rsplit(" ", 1)[0] + "…"
 
 
-def draft_x(report):
+def _deadline_line(report, stage):
+    """"Deadline: Sat 22 Aug, 11:00 UK", on the preview drafts only.
+
+    It is the reason the preview exists. A post a day out is competing with
+    everything else in a timeline, and "you have until Saturday morning" is what
+    makes someone open it now rather than scroll past. On the final drafts it
+    would be stating the obvious - by then the deadline is an hour away and
+    anyone reading is already in the app."""
+    label = report.get("deadline_label")
+    return f"⏳ Deadline: {label}" if stage == "preview" and label else ""
+
+
+def draft_x(report, stage="draft"):
     """Short, one link, no hashtag spam. Two or three tags is what actually
     circulates in FPL; a wall of them reads as automated because it is."""
     gw = report["gameweek"]
     url = f"{_site_url()}/gameweek/{gw}"
     lines = [f"⚽ FPL Gameweek {gw} briefing"]
+    deadline = _deadline_line(report, stage)
+    if deadline:
+        lines.append(deadline)
 
     if report.get("in_form"):
         names = ", ".join(p["name"] for p in report["in_form"][:3])
@@ -70,7 +85,7 @@ def draft_x(report):
     return f"{_truncate(body, X_LIMIT)}\n\n{url}\n\n#FPL #FantasyPL"
 
 
-def draft_reddit(report):
+def draft_reddit(report, stage="draft"):
     """Markdown, and written to stand on its own.
 
     The rule that gets link posts removed is that they send people away without
@@ -80,6 +95,9 @@ def draft_reddit(report):
     gw = report["gameweek"]
     url = f"{_site_url()}/gameweek/{gw}"
     out = [f"**Gameweek {gw}: form, differentials and fixture swings**", ""]
+    deadline = _deadline_line(report, stage)
+    if deadline:
+        out += [f"Deadline **{report['deadline_label']}**.", ""]
 
     if report.get("in_form"):
         out.append("**In form**")
@@ -118,12 +136,15 @@ def draft_reddit(report):
     return "\n".join(out)
 
 
-def draft_discord(report):
+def draft_discord(report, stage="draft"):
     """Between the two: short enough to read in a channel, no link-post rules
     to satisfy, and Discord renders the same Markdown."""
     gw = report["gameweek"]
     url = f"{_site_url()}/gameweek/{gw}"
     out = [f"**⚽ FPL Gameweek {gw} briefing**", ""]
+    deadline = _deadline_line(report, stage)
+    if deadline:
+        out += [deadline, ""]
     if report.get("in_form"):
         out.append("**📈 In form:** " + ", ".join(
             f"{p['name']} ({p['headline']})" for p in report["in_form"]))
@@ -140,43 +161,87 @@ def draft_discord(report):
     return "\n".join(out)
 
 
-def write_drafts(report, frozen=False):
+# The three points in an edition's life at which drafts get written, and what
+# the header should tell you about posting them.
+#
+# The middle one is the one worth having. A briefing that is only postable once
+# it's frozen is postable roughly an hour before kickoff, by which time the
+# people it's for have already made their transfers - the day before a deadline
+# is when they're deciding. So the edition is declared postable a day out, on a
+# full rebuild against the freshest data, and then again as a final version
+# after the last team news lands.
+#
+# The stage only ever moves forward: draft -> preview -> final. That matters
+# because the nightly rebuild keeps running right up to the deadline, and
+# without it Saturday's 03:15 run would quietly demote Friday's preview back to
+# "don't post this yet" after you'd already posted it.
+STAGES = ("draft", "preview", "final")
+
+_STAGE_STATUS = {
+    "draft": ("DRAFT — this edition is still being rebuilt nightly and will "
+              "change before the deadline. Wait for the preview version, which "
+              "lands about a day out."),
+    "preview": ("PREVIEW — safe to post now. The deadline is about a day away, "
+                "which is when most managers are actually making their "
+                "transfers. The page can still pick up late team news, and a "
+                "FINAL version of these drafts is written an hour or two before "
+                "the deadline if you'd rather post once."),
+    "final": ("FINAL — the edition is frozen on the last team news before the "
+              "deadline and will not change again. Safe to post."),
+}
+
+
+def stage_of(report):
+    """An edition's stage, defaulting to draft for anything written before this
+    existed."""
+    stage = (report or {}).get("stage")
+    return stage if stage in STAGES else "draft"
+
+
+def advance_stage(current, target):
+    """The later of two stages. The one rule the pipeline needs: a rebuild can
+    promote an edition but never demote one."""
+    current = current if current in STAGES else "draft"
+    target = target if target in STAGES else "draft"
+    return current if STAGES.index(current) >= STAGES.index(target) else target
+
+
+def write_drafts(report, stage="draft"):
     """One file per gameweek, holding all three drafts.
 
     Rewritten on every nightly rebuild, because a draft describing yesterday's
-    version of the page is worse than no draft. The header states whether the
-    edition is final, since posting a link to a page that will change before
-    the deadline is the one genuine mistake available here."""
+    version of the page is worse than no draft. The header states which stage
+    the edition has reached, since posting a link to a page that will change
+    out from under it is the one genuine mistake available here."""
     gw = report["gameweek"]
-    status = ("FINAL — the deadline has passed and this page will not change. "
-              "Safe to post." if frozen else
-              "DRAFT — this edition is still being rebuilt nightly and will "
-              "change before the deadline. Wait for the frozen version before "
-              "posting, unless you're posting deliberately early.")
+    stage = stage if stage in STAGES else "draft"
+    status = _STAGE_STATUS[stage]
+    deadline = report.get("deadline_label") or ""
 
     body = f"""FPL Buddy — Gameweek {gw} social drafts
 {'=' * 46}
 
 STATUS: {status}
+{f'DEADLINE: {deadline}' if deadline else ''}
 
 Edit anything that reads badly before posting. These are generated from
 thresholds, so they are accurate but not always well-phrased.
 
 {'-' * 46}
-X / TWITTER  ({len(draft_x(report))} chars, limit 280)
+X / TWITTER  ({len(draft_x(report, stage))} chars, limit 280)
 {'-' * 46}
-{draft_x(report)}
+{draft_x(report, stage)}
 
 {'-' * 46}
 REDDIT  (r/FantasyPL — check the rules first; self-promo needs to be
          useful on its own, which is why the numbers are in the post)
 {'-' * 46}
-{draft_reddit(report)}
+{draft_reddit(report, stage)}
 
 {'-' * 46}
 DISCORD  (paste into any FPL server you're actually a member of)
 {'-' * 46}
-{draft_discord(report)}
+{draft_discord(report, stage)}
 """
 
     path = os.path.join(social_dir(), f"gw{gw:02d}.txt")

@@ -112,6 +112,73 @@ def gsc_token():
     return creds.token
 
 
+def gsc_sites(token):
+    """Every property this service account can actually see.
+
+    The diagnostic for a 403. Search Console returns the same "User does not
+    have sufficient permission for site X" whether the service account was
+    never added to the property OR the property string is wrong - a URL-prefix
+    property is "https://example.com/" while a domain property is
+    "sc-domain:example.com", and neither error mentions the other exists.
+
+    This asks the opposite question: not "may I read this site" but "what sites
+    are there". An empty list means the account is authorised nowhere, so the
+    fix is in Search Console's Users and permissions. A non-empty list whose
+    entries don't match GSC_PROPERTY means the account is fine and the string
+    is wrong - and prints the exact value to use."""
+    r = requests.get(f"{GSC_API}/sites",
+                     headers={"Authorization": f"Bearer {token}"},
+                     timeout=TIMEOUT)
+    r.raise_for_status()
+    return r.json().get("siteEntry", [])
+
+
+def diagnose_gsc():
+    """Print why Search Console is refusing, and what to do about it."""
+    if not GSC_KEY:
+        log("GSC_KEY is not set.")
+        return 1
+    if not os.path.isfile(GSC_KEY):
+        log(f"GSC_KEY points at {GSC_KEY}, which does not exist.")
+        return 1
+
+    with open(GSC_KEY, encoding="utf-8") as fh:
+        email = json.load(fh).get("client_email", "(no client_email in the file)")
+    log(f"Service account: {email}")
+    log(f"Looking for property: {GSC_PROPERTY}")
+
+    try:
+        sites = gsc_sites(gsc_token())
+    except requests.RequestException as exc:
+        log(f"Could not list sites: {_http_detail(exc)}")
+        return 1
+
+    if not sites:
+        log("")
+        log("This service account can see NO properties at all.")
+        log("Fix: Search Console -> Settings -> Users and permissions ->")
+        log(f"     Add user -> {email} -> permission Full.")
+        return 1
+
+    log("")
+    log("Properties this account CAN see:")
+    for s in sites:
+        marker = "  <- matches GSC_PROPERTY" if s.get("siteUrl") == GSC_PROPERTY else ""
+        log(f"  {s.get('permissionLevel','?'):<22} {s.get('siteUrl')}{marker}")
+
+    if not any(s.get("siteUrl") == GSC_PROPERTY for s in sites):
+        log("")
+        log(f"None of these is {GSC_PROPERTY}.")
+        log("Fix: set GSC_PROPERTY in .env to one of the values above,")
+        log("     copied exactly - the trailing slash is part of it.")
+        return 1
+
+    log("")
+    log("Property matches and is readable. If queries still 403, the")
+    log("permission level above is too low - it needs Full or Owner.")
+    return 0
+
+
 def gsc_query(token, dimensions, start, end, row_limit=GSC_ROW_LIMIT):
     """One searchAnalytics query. `dimensions` is e.g. ["query"] or
     ["query", "page"]."""
@@ -324,7 +391,12 @@ def main(argv=None):
                         help="fetch and print, write nothing")
     parser.add_argument("--only", choices=("gsc", "bing", "psi"),
                         help="fetch a single source")
+    parser.add_argument("--diagnose", action="store_true",
+                        help="explain a Search Console 403 and exit")
     args = parser.parse_args(argv)
+
+    if args.diagnose:
+        return diagnose_gsc()
 
     if not (GSC_KEY or BING_KEY or PSI_KEY):
         log("No credentials set (GSC_KEY, BINGWEBMASTER_KEY, PSI_KEY) - "

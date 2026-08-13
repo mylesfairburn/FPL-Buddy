@@ -6,6 +6,12 @@
 #   gameweek-report : 03:15, after the refresh, before IndexNow reads the sitemap
 #   indexnow        : 03:30, after the refresh has rewritten the player pages
 #
+# There is no separate job for publishing the postable gameweek briefing. It
+# rides on deadline-watch, because the moment it has to hit - about a day before
+# an irregular deadline - is the same kind of moment the watcher already exists
+# to catch, and a second cron line would be a second thing to keep in step with
+# a schedule neither of them controls.
+#
 # CHECK THE CONTAINER NAME FIRST. `docker exec` against a name that doesn't
 # exist fails silently from cron - the job simply never runs, and the only
 # symptom is that processed_deadline and ai_team_snapshot stay empty forever,
@@ -49,6 +55,11 @@ CRON_TZ=Europe/London
 
 # Hourly, at 5 past - a few minutes clear of the top of the hour so it isn't
 # competing with every other cron on the box.
+#
+# Three phases per run: publish the postable gameweek briefing ~24h out, commit
+# and freeze the AI squads ~100 min out, capture real managers' teams just after
+# the deadline. All three windows are wider than this interval, so a single
+# missed run costs nothing.
 5 * * * * root docker exec fpl-buddy python jobs.py deadline-watch >> /var/log/fpl-buddy-watch.log 2>&1
 
 # Daily heavy refresh + backfill of actual scores onto frozen snapshots.

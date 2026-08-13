@@ -9,6 +9,9 @@ Two jobs rather than one, because they answer to different clocks:
   times and days (midweek rounds, 11:00 Saturday starts, blank/double weeks),
   so there's no daily slot that reliably lands just after one. Hourly polling of
   `deadline_time` catches them all, and the work is cheap enough to do 24x/day.
+  It carries three phases now, all keyed off the same poll: publish the postable
+  briefing about a day out, commit and freeze just before the deadline, capture
+  real teams just after.
 
   daily-refresh is the heavy pipeline run, and wants to be LATE rather than
   timely: a Monday night game can finish ~22:00 and FPL's bonus-point
@@ -191,11 +194,15 @@ def pre_deadline_commit(events, budget=DEFAULT_BUDGET):
 
 
 def deadline_watch(budget=DEFAULT_BUDGET, force_gameweek=None):
-    """Hourly. Two phases:
+    """Hourly. Three phases:
 
-      1. Just BEFORE a deadline - commit the AI squads, as late as the poll
-         interval allows, so they reflect the latest injury news.
-      2. Just AFTER one - capture real managers' picks, replace their drafts
+      1. About a DAY before a deadline - rebuild the gameweek briefing and mark
+         it postable. This is when managers are actually making transfers, so
+         it's when a link to the page is worth posting.
+      2. Just BEFORE a deadline - commit the AI squads, as late as the poll
+         interval allows, so they reflect the latest injury news, and freeze the
+         briefing on the same information.
+      3. Just AFTER one - capture real managers' picks, replace their drafts
          with the official team, and backfill anything the pre-commit missed
          (e.g. the box was down when the window passed).
     """
@@ -204,6 +211,15 @@ def deadline_watch(budget=DEFAULT_BUDGET, force_gameweek=None):
     if not events:
         log("No events from the FPL API (offline?) - nothing to do.")
         return 1
+
+    # First, because it's the phase with the most slack: a preview that runs a
+    # few minutes late is still a day early, whereas the commit window below is
+    # 100 minutes wide and shouldn't be queued behind a full report rebuild.
+    # Never fatal - a failed preview must not cost the deadline handling.
+    try:
+        preview_gameweek_report(events)
+    except Exception as e:
+        log(f"preview edition FAILED: {e}")
 
     pool = pre_deadline_commit(events, budget=budget)
 
@@ -286,7 +302,8 @@ def _page_index(position_dfs):
     return player_pages.attach_team_names(pages, names, shorts)
 
 
-def build_gameweek_report(force_gameweek=None, position_dfs=None, events=None):
+def build_gameweek_report(force_gameweek=None, position_dfs=None, events=None,
+                          stage=None):
     """Regenerate the current gameweek's edition of /gameweek/<n>.
 
     Nightly. Rewrites in place until the deadline, at which point the edition
@@ -295,7 +312,13 @@ def build_gameweek_report(force_gameweek=None, position_dfs=None, events=None):
 
     Which gameweek: the NEXT one, not the current one. The page is read by
     people deciding transfers before a deadline, so its subject is the round
-    being picked, not the round being played."""
+    being picked, not the round being played.
+
+    `stage` promotes the edition - "preview" when the deadline is about a day
+    out, which is what makes the drafts postable. It only ever moves forward:
+    the nightly rebuild passes None and inherits whatever stage the edition had
+    reached, because otherwise Saturday's 03:15 run would demote Friday's
+    preview back to "don't post this yet" hours after you'd posted it."""
     db.init_db()
     events = events if events is not None else gw_clock.get_events()
 
@@ -337,6 +360,12 @@ def build_gameweek_report(force_gameweek=None, position_dfs=None, events=None):
         pages, gw, rotation_df=rotation_df, deadline=deadline,
         season_label=seasons.current_season())
 
+    # Carry the stage forward from whatever is already stored, then apply any
+    # promotion this run is asking for. Never backwards - see the docstring.
+    report["stage"] = social.advance_stage(
+        social.stage_of(existing["payload"] if existing else None),
+        stage or "draft")
+
     written = db.save_gw_report(gw, report, deadline_time=deadline)
     if not written:
         log(f"GW{gw}: edition became frozen mid-run - not written.")
@@ -345,19 +374,45 @@ def build_gameweek_report(force_gameweek=None, position_dfs=None, events=None):
     counts = (f"form={len(report['in_form'])} diff={len(report['differentials'])} "
               f"attack={len(report['attack_runs'])} defence={len(report['defence_runs'])} "
               f"news={len(report['news'])}")
-    log(f"GW{gw}: edition rebuilt ({counts})")
+    log(f"GW{gw}: edition rebuilt at stage '{report['stage']}' ({counts})")
 
     # Drafts are rewritten on every rebuild so the text always matches the page
-    # as it currently stands. They're only worth posting once the edition is
-    # frozen, which is what the header inside the file says.
+    # as it currently stands. Whether they're worth posting yet is what the
+    # stage in the header tells you.
     try:
-        path = social.write_drafts(report, frozen=False)
-        log(f"  social drafts -> {path}")
+        path = social.write_drafts(report, stage=report["stage"])
+        log(f"  social drafts ({report['stage']}) -> {path}")
     except Exception as e:
         log(f"  social drafts FAILED (edition is still published): {e}")
 
     ping_refresh()
     return 0
+
+
+def preview_gameweek_report(events, position_dfs=None):
+    """Publish the postable preview, about a day before each deadline.
+
+    This is the earlier of the edition's two postable moments. The final
+    version freezes 100 minutes out, which is the right time for a page that
+    will never change again and the wrong time to be posting a link: by then
+    the people it's for have made their transfers. The day before is when they
+    are deciding, so the edition is rebuilt on the freshest data and marked
+    safe to post while there is still time to act on it.
+
+    Idempotent. The stage only moves forward, so a second run inside the window
+    rebuilds the page and rewrites the same drafts rather than undoing
+    anything."""
+    due = gw_clock.preview_due(events)
+    if not due:
+        return 0
+    for gw, _deadline, hours_left in due:
+        log(f"GW{gw}: deadline in {hours_left}h - publishing the postable preview")
+        try:
+            build_gameweek_report(force_gameweek=gw, position_dfs=position_dfs,
+                                  events=events, stage="preview")
+        except Exception as e:
+            log(f"GW{gw}: preview edition FAILED: {e}")
+    return len(due)
 
 
 def freeze_gameweek_report(gameweek):
@@ -367,8 +422,12 @@ def freeze_gameweek_report(gameweek):
         log(f"GW{gameweek}: edition frozen - it is now a permanent archive page.")
         rec = db.get_gw_report(gameweek)
         if rec:
+            # The stored payload is left saying "preview" - a frozen edition
+            # can't be re-saved, which is the whole point of freezing it. The
+            # page reads `frozen` first and only falls back to `stage`, so
+            # there's nothing to keep in sync; only the drafts need telling.
             try:
-                path = social.write_drafts(rec["payload"], frozen=True)
+                path = social.write_drafts(rec["payload"], stage="final")
                 log(f"  social drafts ready to post -> {path}")
             except Exception as e:
                 log(f"  social drafts FAILED: {e}")
@@ -437,6 +496,11 @@ def main(argv=None):
                             help="nightly: rebuild the current /gameweek page")
     report.add_argument("--gameweek", type=int, default=None,
                         help="force a specific gameweek (testing / manual catch-up)")
+    report.add_argument("--stage", choices=("preview", "final"), default=None,
+                        help="promote the edition. Normally done automatically - "
+                             "'preview' about a day before the deadline, 'final' "
+                             "when the hourly watcher freezes it - so this is for "
+                             "publishing a postable version by hand.")
 
     args = parser.parse_args(argv)
     try:
@@ -451,7 +515,18 @@ def main(argv=None):
             log(f"Initialised {db.init_db()}")
             return 0
         if args.command == "gameweek-report":
-            return build_gameweek_report(force_gameweek=args.gameweek)
+            # "final" by hand means freeze it: the stage and the frozen flag are
+            # the same statement, and setting one without the other would give a
+            # page that says it will never change and a job that keeps
+            # rewriting it.
+            if args.stage == "final":
+                rc = build_gameweek_report(force_gameweek=args.gameweek)
+                gw = args.gameweek or gw_clock.next_gameweek()
+                if gw is not None:
+                    freeze_gameweek_report(gw)
+                return rc
+            return build_gameweek_report(force_gameweek=args.gameweek,
+                                         stage=args.stage)
     except Exception:
         traceback.print_exc()
         return 1
