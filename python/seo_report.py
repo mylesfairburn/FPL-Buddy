@@ -47,7 +47,11 @@ SITE_URL = os.environ.get("FPL_SITE_URL", "https://fpl.mfhost.co.uk").rstrip("/"
 # is the different-looking "sc-domain:mfhost.co.uk". Wrong either way, the API
 # returns 403 rather than "no such property", which reads like a permissions
 # problem and sends you looking in the wrong place.
-GSC_PROPERTY = os.environ.get("GSC_PROPERTY", SITE_URL + "/")
+# `or` rather than a get() default: docker-compose sets a variable it names to
+# an empty string when .env doesn't define it, and an empty string is present as
+# far as os.environ.get is concerned - so the default would never apply and the
+# property would be "". Falling back on falsiness covers both spellings of unset.
+GSC_PROPERTY = os.environ.get("GSC_PROPERTY", "").strip() or SITE_URL + "/"
 
 GSC_KEY = os.environ.get("GSC_KEY", "").strip()
 BING_KEY = os.environ.get("BINGWEBMASTER_KEY", "").strip()

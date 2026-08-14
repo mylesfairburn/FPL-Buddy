@@ -130,6 +130,23 @@ TABS = [
 ]
 TAB_PANES = {t["path"]: t["pane"] for t in TABS}
 
+
+def tab_links():
+    """The tab bar, with each tab's title and <h1> alongside its label.
+
+    app.js reads `title` and `h1` so a tab switch can rewrite document.title and
+    the heading without a page load - otherwise the browser tab, and anything
+    bookmarked from it, keeps the name of whichever page you happened to arrive
+    on. They're carried on the prose pages too, where nothing reads them, so
+    there is one shape of tab rather than two.
+
+    Rendered on every page except the home page. The four tools are what the
+    site is for, and a reader who has finished the FAQ or a player's page
+    shouldn't have to go back through the logo to reach one - previously these
+    pages offered the two reading links and nothing else."""
+    return [dict(t, title=PAGES[t["path"]]["title"], h1=PAGES[t["path"]]["h1"])
+            for t in TABS]
+
 # The two pages that are reading rather than tools. Both were reachable only
 # from the footer, which is the one place on a page a reader never looks and a
 # crawler weights least - and they are the site's only accumulating content
@@ -178,7 +195,7 @@ PAGES = {
         "changefreq": "daily",
     },
     "/ai-teams": {
-        "title": "AI Fantasy Premier League teams — AI Manager and best XV",
+        "title": "AI Fantasy Premier League teams — AI Manager and best XI",
         "h1": "AI Fantasy Premier League teams",
         "description": ("Two AI-picked FPL squads: a manager bot that plays every gameweek "
                         "with real transfers and chips, and the highest-scoring XV for the "
@@ -301,8 +318,20 @@ FAQ_ITEMS = [
               "\"how many will he get\"."),
     },
     {
-        "q": "What is the difference between AI Best XV and AI Manager?",
-        "a": ("AI Best XV is rebuilt from scratch every gameweek with no memory: the "
+        "q": "My team rating went up but I scored fewer points. Why?",
+        "a": ("Because the rating isn't a points forecast. A player's rating out of 100 "
+              "is his projected points ranked against the other players in his "
+              "position, so the best goalkeeper and the best forward both read 100 "
+              "while being worth very different scores. Your team rating averages that "
+              "across the starting eleven, which measures squad quality and has no "
+              "points meaning. It also describes the players as rated today rather than "
+              "for one gameweek, and it ignores your captain. The predicted points "
+              "figure next to it is the number that answers \"how many this week\". "
+              "<a href=\"/about\">More on the about page</a>."),
+    },
+    {
+        "q": "What is the difference between AI Best XI and AI Manager?",
+        "a": ("AI Best XI is rebuilt from scratch every gameweek with no memory: the "
               "highest-scoring legal £100m squad for the week ahead, spending almost "
               "nothing on the bench because it has no transfers to plan for. AI Manager "
               "plays the actual game — one squad across the season, a bank balance, free "
@@ -313,7 +342,7 @@ FAQ_ITEMS = [
         "q": "Why do the two AI squads disagree?",
         "a": ("Because they are answering different questions. Buying the best captain "
               "for one Saturday and selling him a fortnight later costs a hit and a free "
-              "transfer, which Best XV never pays and AI Manager always does. When they "
+              "transfer, which Best XI never pays and AI Manager always does. When they "
               "agree on a player, that is a stronger signal than either on its own."),
     },
     {
@@ -357,11 +386,69 @@ FAQ_ITEMS = [
 
 app = FastAPI()
 
+
+class HeadAsGet:
+    """Answer HEAD wherever GET is answered.
+
+    Starlette adds HEAD to any route that declares GET. FastAPI's `@app.get`
+    does not, so every page here - the tabs, the several hundred player pages,
+    robots.txt, sitemap.xml - answered GET and returned 405 to HEAD. That is
+    wrong on its own terms: HTTP defines HEAD as GET without the body, and a
+    resource that exists is not entitled to refuse it.
+
+    It also matters for crawling. Bingbot uses HEAD to decide whether a URL is
+    worth fetching and whether it has changed since last time, and a 405 is not
+    a "nothing changed" answer - it is the origin saying the method isn't
+    allowed, on every URL on the site at once.
+
+    Done as one ASGI middleware rather than by adding methods=["GET", "HEAD"] to
+    thirty-odd decorators: the player pages are generated from a routing table,
+    so a per-route change is both more edits and easier to forget on the next
+    route added.
+
+    RFC 9110 requires the headers to be the ones GET would have sent, so they go
+    through untouched - Content-Length included. Only the body is dropped. That
+    does mean the response is built in full and thrown away, which is the price
+    of not maintaining a second code path that could disagree with the first;
+    HEAD is a rounding error in traffic.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or scope.get("method") != "HEAD":
+            return await self.app(scope, receive, send)
+
+        body_sent = False
+
+        async def send_headers_only(message):
+            nonlocal body_sent
+            if message["type"] == "http.response.body":
+                # A streamed response sends several body messages. Exactly one
+                # empty terminal message goes out for all of them: sending
+                # another after more_body=False is a protocol violation, and
+                # some servers close the connection on it.
+                if body_sent:
+                    return
+                body_sent = True
+                message = {"type": "http.response.body", "body": b"",
+                           "more_body": False}
+            await send(message)
+
+        await self.app({**scope, "method": "GET"}, receive, send_headers_only)
+
+
 # app.js is ~107 KB and style.css another ~60 KB uncompressed, and the JSON from
 # /api/all_players is larger than both. Gzip takes roughly 70-80% off all three.
 # minimum_size skips the small responses, where the compression work and the
 # lost chance of a byte-range request cost more than the saved bytes.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+# Outermost, so the method is already GET by the time anything else - routing,
+# the security headers, gzip - looks at the request. Added last because Starlette
+# applies middleware in reverse order of registration.
+app.add_middleware(HeadAsGet)
 
 
 @app.middleware("http")
@@ -537,11 +624,11 @@ def _player_pool():
 # re-deriving an answer that only changes when the underlying ratings do. These
 # hold the live preview for the upcoming gameweek; load_data() clears them, so
 # a refresh (or the nightly job) is what invalidates, not a timer.
-_preview_cache = {"best_xv": {}, "manager": {}}
+_preview_cache = {"best_xi": {}, "manager": {}}
 
 
 def clear_preview_cache():
-    _preview_cache["best_xv"].clear()
+    _preview_cache["best_xi"].clear()
     _preview_cache["manager"].clear()
     _player_pages["index"] = None
     _seo_tables["data"] = None
@@ -581,8 +668,8 @@ _seo_tables = {"data": None}
 # The empty shape, so a template can always ask for a key. Falling back to this
 # rather than to None means a build failure costs the tables and nothing else -
 # the pages still render, exactly as they did before any of this existed.
-_EMPTY_SEO_TABLES = {"players": [], "rotation": None, "best_xv": None,
-                     "best_xv_history": [], "manager_history": []}
+_EMPTY_SEO_TABLES = {"players": [], "rotation": None, "best_xi": None,
+                     "best_xi_history": [], "manager_history": []}
 
 
 def seo_tables():
@@ -601,12 +688,12 @@ def seo_tables():
         except Exception as e:
             print(f"couldn't build the server-rendered player table: {e}")
 
-        best_xv = None
+        best_xi = None
         try:
             target = gw_clock.next_gameweek()
             if target is not None and players:
                 stored = ai_team.get_snapshot(target, players)
-                best_xv = stored or cached_best_xv(target)
+                best_xi = stored or cached_best_xi(target)
         except Exception as e:
             print(f"couldn't build the server-rendered AI squad: {e}")
 
@@ -620,19 +707,19 @@ def seo_tables():
         _seo_tables["data"] = seo_tables_builder.build(
             players=players,
             rotation_df=state["rotation_df"],
-            best_xv=best_xv,
+            best_xi=best_xi,
             snapshots=_safe(ai_team.list_snapshots, "Best XI track record"),
             mgr_history=_safe(ai_manager.history, "AI Manager track record"),
         )
     return _seo_tables["data"] or _EMPTY_SEO_TABLES
 
 
-def cached_best_xv(gameweek, budget=DEFAULT_BUDGET):
+def cached_best_xi(gameweek, budget=DEFAULT_BUDGET):
     key = (gameweek, budget)
-    if key not in _preview_cache["best_xv"]:
-        _preview_cache["best_xv"][key] = ai_team.build_best_xv(
+    if key not in _preview_cache["best_xi"]:
+        _preview_cache["best_xi"][key] = ai_team.build_best_xi(
             _player_pool(), gameweek, budget=budget)
-    return _preview_cache["best_xv"][key]
+    return _preview_cache["best_xi"][key]
 
 
 def cached_manager_preview(gameweek):
@@ -689,6 +776,16 @@ def page_context(request, path, meta=None, **extra):
         # "which page is this" - reading it back off request.url.path would be a
         # second source that can disagree (trailing slashes, redirects).
         "content_links": [dict(c, active=c["path"] == path) for c in CONTENT_LINKS],
+        # The tool tabs, on every page but the home one. Home is the first-visit
+        # page and its whole job is to introduce the four tools in prose; a tab
+        # bar above that would be the same four links twice, and the tabs are
+        # also what a returning visitor is redirected past. An empty list is
+        # falsy, so the partial renders exactly what it did before there.
+        #
+        # No tab is marked active on a prose page: `initial_pane` is undefined
+        # there, and none of the panes is open. tab_response overrides this with
+        # its own list - `**extra` lands last in this dict.
+        "tabs": [] if path == "/" else tab_links(),
         "today": datetime.now(timezone.utc).strftime("%-d %B %Y")
                  if os.name != "nt" else datetime.now(timezone.utc).strftime("%d %B %Y").lstrip("0"),
         # Club colours for the server-rendered pages. A callable rather than a
@@ -731,23 +828,19 @@ def index(request: Request):
 def tab_response(request, path):
     """Render the app shell with the tab for `path` already open.
 
-    `tabs` carries each tab's title and heading as well as its label, so app.js
-    can set document.title and the <h1> when you switch tabs without a page
-    load - otherwise the browser tab, and anything bookmarked from it, keeps the
-    name of whichever page you happened to arrive on, and the heading describes
-    a pane that is no longer on screen.
+    The bar itself is the same `tab_links()` every other page gets; the only
+    thing this adds is `initial_pane`, which is what marks one of them active
+    and tells app.js which pane to open before first paint.
 
     All four panes are in the DOM on all four URLs, so the <h1> is rendered once
     here from the routing table rather than once per pane. Four <h1>s - three of
     them hidden - is what a crawler would otherwise be handed."""
-    tabs = [dict(t, title=PAGES[t["path"]]["title"], h1=PAGES[t["path"]]["h1"])
-            for t in TABS]
     # The tables, server-rendered. All four panes are in the DOM on all four
     # URLs, so this goes out with every one of them rather than only with the
     # tab it belongs to - which is also what a crawler needs, since it has no
     # way to click through to a pane it can't see.
     return html_response("index.html", request, path, mode=state["mode"],
-                         initial_pane=TAB_PANES[path], tabs=tabs,
+                         initial_pane=TAB_PANES[path],
                          page_h1=PAGES[path]["h1"], ssr=seo_tables())
 
 
@@ -1097,7 +1190,7 @@ def llms_txt():
         "  points for the next eight gameweeks, price, form, ownership, and the\n"
         "  players whose returns are behind their underlying numbers.\n"
         f"- [AI teams]({SITE_URL}/ai-teams): two squads picked by integer linear\n"
-        "  programming. AI Best XV is the highest-scoring legal squad for the\n"
+        "  programming. AI Best XI is the highest-scoring legal squad for the\n"
         "  coming gameweek, rebuilt weekly. AI Manager keeps one squad across the\n"
         "  season with a real bank balance, free transfers, hits and chips.\n"
         f"- [Fixture rotator]({SITE_URL}/fixture-rotator): pairs of clubs whose\n"
@@ -1418,7 +1511,7 @@ def ai_manager_gameweek(gameweek: int = None):
     if target is None:
         return {"available": False, "detail": "No gameweek found."}
     pool = _player_pool()
-    # Same reasoning as the Best-XV endpoint: the upcoming gameweek's plan is
+    # Same reasoning as the Best XI endpoint: the upcoming gameweek's plan is
     # simulated from the in-memory pool, so a database fault shouldn't blank
     # the tab. Record the fault and carry on.
     stored, db_error = None, None
@@ -1455,11 +1548,11 @@ def ai_manager_history():
 
 
 # =========================================================================
-#  AI Best-XV
+#  AI Best XI
 # =========================================================================
 
-@app.get("/api/ai/best_xv")
-def ai_best_xv(gameweek: int = None, budget: float = DEFAULT_BUDGET):
+@app.get("/api/ai/best_xi")
+def ai_best_xi(gameweek: int = None, budget: float = DEFAULT_BUDGET):
     """The AI's optimum squad for a gameweek.
 
     Prefers the FROZEN snapshot taken at that gameweek's deadline. Falls back to
@@ -1493,7 +1586,7 @@ def ai_best_xv(gameweek: int = None, budget: float = DEFAULT_BUDGET):
     if not pool:
         return {"available": False, "detail": "Ratings not loaded yet."}
     try:
-        result = cached_best_xv(target, budget)
+        result = cached_best_xi(target, budget)
     except OptimisationError as e:
         return {"available": False, "gameweek": target, "detail": str(e)}
     # Live preview: deliberately not persisted. The deadline watcher owns
@@ -1502,9 +1595,19 @@ def ai_best_xv(gameweek: int = None, budget: float = DEFAULT_BUDGET):
             "db_error": db_error, **result}
 
 
+# The squad was called Best XV until it was renamed, and this path went out with
+# every page for a season. Kept as an alias rather than a redirect: it is read by
+# fetch() from our own script, and a 301 costs that caller a second round trip
+# for no benefit. Nothing here re-implements the endpoint - it calls the same
+# function - so the two cannot answer differently.
+@app.get("/api/ai/best_xv", include_in_schema=False)
+def ai_best_xv_alias(gameweek: int = None, budget: float = DEFAULT_BUDGET):
+    return ai_best_xi(gameweek=gameweek, budget=budget)
+
+
 @app.get("/api/ai/history")
 def ai_history():
-    """Predicted vs actual for every frozen AI Best-XV snapshot."""
+    """Predicted vs actual for every frozen AI Best XI snapshot."""
     try:
         return {"available": True, "snapshots": ai_team.list_snapshots()}
     except Exception as e:

@@ -1,7 +1,7 @@
 {# Rows only - this is included directly inside <tbody id="aiSquadBody">, which
    renderAiSquadTable() later overwrites. Same columns and the same .ai-benched
    class the script uses, so the table doesn't change shape on the swap. #}
-{% for p in ssr.best_xv.rows %}
+{% for p in ssr.best_xi.rows %}
 <tr class="{{ '' if p.starting else 'ai-benched' }}">
     <td class="ps-name"><span>{{ p.name }}</span>{% if p.armband %} <span class="ai-arm{{ ' vice' if p.armband == 'V' }}">{{ p.armband }}</span>{% endif %}</td>
     <td>{{ p.pos }}</td>

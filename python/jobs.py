@@ -140,12 +140,12 @@ def commit_ai_teams(gameweek, budget=DEFAULT_BUDGET, pool=None, late=False):
     if not already_xv:
         try:
             r = ai_team.generate_and_store(pool, gameweek, budget=budget)
-            log(f"  AI Best-XV: {r['formation']}, £{r['squad_cost']}m, "
+            log(f"  AI Best XI: {r['formation']}, £{r['squad_cost']}m, "
                 f"{r['predicted_points']} predicted pts")
-            detail.append(f"best_xv={r['predicted_points']}")
+            detail.append(f"best_xi={r['predicted_points']}")
         except OptimisationError as e:
-            log(f"  AI Best-XV FAILED: {e}")
-            detail.append(f"best_xv_failed={e}")
+            log(f"  AI Best XI FAILED: {e}")
+            detail.append(f"best_xi_failed={e}")
 
     if not already_mgr:
         try:
@@ -465,7 +465,7 @@ def daily_refresh(skip_stats=False):
             continue
         res = ai_team.backfill_actuals(gw, events)
         if res.get("updated"):
-            log(f"GW{gw}: AI Best-XV scored {res['actual_points']} "
+            log(f"GW{gw}: AI Best XI scored {res['actual_points']} "
                 f"(predicted {res['predicted_points']})")
             m = manager_history.backfill_manager_actuals(gw, events)
             log(f"GW{gw}: backfilled {m['updated']} manager picks")

@@ -48,11 +48,26 @@ def _get(url):
 
 
 def _num(v):
-    """Parse a possibly-string numeric field (e.g. FPL 'form') to float or None."""
+    """Parse a possibly-string numeric field (e.g. FPL 'form') to float or None.
+
+    NaN counts as missing and comes back as None. A missing value arrives as
+    NaN far more often than as None here - it is what pandas puts in an empty
+    cell, and FPL leaves whole columns empty for most of the pool - and NaN is
+    the worse of the two to hand back, because it survives every check a caller
+    writes for an absent value. `x is not None` passes, `if x` passes, and every
+    comparison against a threshold quietly returns False, so the value doesn't
+    read as missing anywhere: it reads as a number that fails every test.
+
+    That is not hypothetical. `chance_of_playing_next_round` is null for every
+    fit player (498 of 581 rows), and returning NaN for it made
+    gw_report._is_available() answer "not available" for the entire pool - the
+    briefing's three recommendation sections were drawn from the dozen players
+    FPL had explicitly stamped 100%."""
     try:
-        return float(v)
+        f = float(v)
     except (TypeError, ValueError):
         return None
+    return None if f != f else f
 
 
 # detect_mode() lives in gameweek.py now - it's part of the season clock, which
@@ -124,6 +139,11 @@ def _build_element_index(position_dfs):
                 "team": int(row["team"]) if row.get("team") == row.get("team") else None,
                 "team_name": short.get(int(row["team"])) if row.get("team") == row.get("team") else None,
                 "form": _num(row.get("form")),
+                # Percentage of FPL managers who own him. FPL publishes it as a
+                # string ("26.8"), hence _num. Displayed on the Players tab, and
+                # the one number on that table the model has no part in - it is
+                # what everyone else has done, not what anyone should do.
+                "owned": _num(row.get("selected_by_percent")),
                 "cost": round(float(row["now_cost"]) / 10, 1) if row.get("now_cost") is not None else None,
                 "rating": round(float(row["rating"]), 1) if row.get("rating") == row.get("rating") else 0.0,
                 "predicted": round(float(predicted), 1),
@@ -293,6 +313,7 @@ def get_all_players(position_dfs):
                 "web_name": p["web_name"], "pos": p["pos"],
                 "team_code": p["team_code"], "team": p.get("team"),
                 "team_name": p.get("team_name"), "form": p.get("form"),
+                "owned": p.get("owned"),
                 "cost": p["cost"], "rating": p["rating"], "predicted": p["predicted"],
                 "status": p.get("status", "a"), "news": p.get("news", ""),
                 "chance_of_playing_next_round": p.get("chance_of_playing_next_round"),

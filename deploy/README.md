@@ -297,7 +297,7 @@ own with `jobs.py refresh-stats`, or skip it in the daily run with
 | Table | Holds |
 |---|---|
 | `manager_team` / `manager_team_picks` | One header + 15 picks per (manager, gameweek). `fpl_id 0` is reserved for the AI Manager bot. |
-| `ai_team_snapshot` / `ai_team_snapshot_picks` | The AI Best-XV optimum frozen at each deadline. |
+| `ai_team_snapshot` / `ai_team_snapshot_picks` | The AI Best XI optimum frozen at each deadline. |
 | `ai_transfer_log` | Created for the AI Manager; nothing writes to it yet. |
 | `processed_deadline` | Idempotency ledger for the hourly watcher. |
 | `known_manager` | FPL ids someone has actually looked up — the snapshot job walks this, not all ~11M entries. |

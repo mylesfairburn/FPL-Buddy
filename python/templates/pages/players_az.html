@@ -13,20 +13,133 @@
                 <a href="/players">player ratings table</a> does that.
             </p>
 
+            {# The filter box is inserted here by the script at the foot of this
+               page, not rendered in the HTML. Filtering all 570 names is
+               something only a browser can do, and a search box that silently
+               does nothing is worse than no search box - the same rule the
+               server-rendered ratings table follows with .ssr-controls. #}
+            <div id="azSearchSlot"></div>
+
             <nav class="az-jump" aria-label="Jump to letter">
-                {% for group in groups %}<a href="#letter-{{ group.letter }}">{{ group.letter }}</a>{% endfor %}
+                {% for group in groups %}<a href="#letter-{{ group.letter }}" data-letter="{{ group.letter }}">{{ group.letter }}</a>{% endfor %}
             </nav>
 
+            {# Each letter is wrapped so the filter can hide a heading and its
+               list together. Two siblings would mean walking the DOM to pair
+               them up, and getting that wrong leaves an "M" over an empty gap.
+               The wrapper is styling-neutral: .az-list is still the direct
+               parent of the items and keeps its columns. #}
             {% for group in groups %}
-            <h2 id="letter-{{ group.letter }}">{{ group.letter }}</h2>
-            <ul class="az-list">
-                {% for p in group.players %}
-                {# Listed under the name FPL displays, which is the one a reader
-                   is scanning for; the full name follows where it differs, so
-                   the page still matches a search for it. #}
-                <li><a href="{{ p.path }}">{{ p.web_name }}</a>
-                    <span class="az-meta">{{ p.team_short or p.team_name }} &middot; {{ p.pos }}{% if p.cost %} &middot; &pound;{{ p.cost }}m{% endif %}{% if p.full_name != p.web_name %} &middot; {{ p.full_name }}{% endif %}</span></li>
-                {% endfor %}
-            </ul>
+            <section class="az-group" data-letter="{{ group.letter }}">
+                <h2 id="letter-{{ group.letter }}">{{ group.letter }}</h2>
+                <ul class="az-list">
+                    {% for p in group.players %}
+                    {# Listed under the name FPL displays, which is the one a reader
+                       is scanning for; the full name follows where it differs, so
+                       the page still matches a search for it. #}
+                    <li><a href="{{ p.path }}">{{ p.web_name }}</a>
+                        <span class="az-meta">{{ p.team_short or p.team_name }} &middot; {{ p.pos }}{% if p.cost %} &middot; &pound;{{ p.cost }}m{% endif %}{% if p.full_name != p.web_name %} &middot; {{ p.full_name }}{% endif %}</span></li>
+                    {% endfor %}
+                </ul>
+            </section>
             {% endfor %}
+
+            {# The examples are what each row actually prints - the club appears
+               here in full ("Man City"), so suggesting a three-letter code
+               would send people looking for something that isn't on the page. #}
+            <p id="azNoMatch" class="az-nomatch d-none">No player matches that. Try a
+                surname, a club (<code>Arsenal</code>) or a position
+                (<code>MID</code>).</p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+    var slot = document.getElementById('azSearchSlot');
+    var groups = Array.prototype.slice.call(document.querySelectorAll('.az-group'));
+    var jump = document.querySelector('.az-jump');
+    var noMatch = document.getElementById('azNoMatch');
+    if (!slot || !groups.length) return;
+
+    // Accent-folded, lowercased. Matching raw text means "guehi" finds nothing
+    // and "Guéhi" only works if you can type it - which is the whole
+    // reason slugify() folds accents on the server too.
+    function fold(s) {
+        return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    }
+
+    // Every row's searchable text, folded once at load rather than on each
+    // keystroke: 570 normalize() calls per character typed is the difference
+    // between instant and laggy on a phone. textContent covers the display
+    // name, the club, the position, the price and the full name, so a search
+    // for "arsenal" or "MID" or a player's real surname all land.
+    var rows = [];
+    groups.forEach(function (g) {
+        var items = Array.prototype.slice.call(g.querySelectorAll('li'));
+        items.forEach(function (li) { rows.push({ el: li, q: fold(li.textContent), group: g }); });
+        g._items = items;
+    });
+    var total = rows.length;
+
+    slot.innerHTML =
+        '<div class="az-search">'
+        + '<div class="search-clear-wrap az-search-field">'
+        // Plain text, not type="search": WebKit draws its own clear button
+        // on a search input, and the site already has one that matches the
+        // ratings table's.
+        + '<input type="text" id="azQ" class="form-control form-control-sm"'
+        + ' placeholder="Search by name, club or position…" autocomplete="off"'
+        + ' aria-label="Search every player">'
+        + '<button class="search-clear" type="button" aria-label="Clear search">&times;</button>'
+        + '</div>'
+        + '<span class="az-count" id="azCount" role="status" aria-live="polite"></span>'
+        + '</div>';
+
+    var input = document.getElementById('azQ');
+    var clear = slot.querySelector('.search-clear');
+    var count = document.getElementById('azCount');
+    var links = {};
+    if (jump) {
+        Array.prototype.forEach.call(jump.querySelectorAll('a[data-letter]'), function (a) {
+            links[a.dataset.letter] = a;
+        });
+    }
+
+    function apply() {
+        var q = fold(input.value.trim());
+        clear.style.display = q ? 'block' : 'none';
+
+        var shown = 0;
+        var perGroup = {};
+        rows.forEach(function (r) {
+            var hit = !q || r.q.indexOf(q) !== -1;
+            r.el.hidden = !hit;
+            if (hit) {
+                shown++;
+                perGroup[r.group.dataset.letter] = true;
+            }
+        });
+
+        groups.forEach(function (g) {
+            var has = !!perGroup[g.dataset.letter];
+            g.hidden = !has;
+            var a = links[g.dataset.letter];
+            // Dimmed rather than hidden: the jump row is the page's landmark,
+            // and letters vanishing and reappearing under the cursor as you
+            // type moves the thing you were about to click.
+            if (a) {
+                a.classList.toggle('az-jump-empty', !has);
+                a.setAttribute('aria-disabled', has ? 'false' : 'true');
+            }
+        });
+
+        noMatch.classList.toggle('d-none', shown !== 0);
+        count.textContent = q ? shown + ' of ' + total : '';
+    }
+
+    input.addEventListener('input', apply);
+    clear.addEventListener('click', function () { input.value = ''; apply(); input.focus(); });
+    apply();
+}());
+</script>
 {% endblock %}

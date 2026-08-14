@@ -65,7 +65,7 @@ CREATE TABLE IF NOT EXISTS manager_team_picks (
 );
 CREATE INDEX IF NOT EXISTS idx_picks_team ON manager_team_picks (manager_team_id);
 
--- AI Best-XV: a fresh budget-constrained optimum per gameweek. No bank, no
+-- AI Best XI: a fresh budget-constrained optimum per gameweek. No bank, no
 -- transfers, no carry-over - which is exactly why it doesn't live in
 -- manager_team alongside things that do.
 CREATE TABLE IF NOT EXISTS ai_team_snapshot (

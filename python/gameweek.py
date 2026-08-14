@@ -22,7 +22,7 @@ BASE = "https://fantasy.premierleague.com/api"
 
 # Deadlines older than this that we've never processed are recorded as skipped
 # rather than acted on: the model's `next_gameweeks` predictions roll forward
-# once fixtures finish, so a Best-XV "for" a long-past gameweek would actually
+# once fixtures finish, so a Best XI "for" a long-past gameweek would actually
 # be built from some later gameweek's numbers. Better to have a visible gap.
 MAX_BACKFILL_HOURS = 24
 

@@ -677,6 +677,19 @@ table th { color: var(--accent-dark); }
 .ps-row:hover { background: #effafa; cursor: pointer; }
 .ps-rec-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--accent-dark); font-weight: 700; margin: 2px 0 4px; }
 .ps-rec .ps-table { border: 1px solid #d9f3f3; border-radius: 8px; }
+/* The recommended-transfers block reuses .ps-list for its markup, and inherits
+   a scroll pane sized for the full ratings table: a 260px floor, a 70vh cap and
+   its own border. It is three rows. That left an eighth of the screen of empty
+   bordered box sitting above the real table, inside a second border, every time
+   a player was marked out.
+   Sized to its contents instead. Nothing here needs the CLS reservation the
+   other blocks carry (see the note further down): this one is built and
+   destroyed by a click rather than arriving with a fetch, so there is no first
+   paint for it to shift. Selector is deliberately two classes deep - it has to
+   out-specify the later .ps-list rules rather than merely follow them. */
+.ps-rec .ps-list {
+    min-height: 0; max-height: none; overflow-y: visible; border: 0;
+}
 .ps-act { white-space: nowrap; padding: 2px 8px; font-size: 0.72rem; }
 
 /* --- Card polish: fixtures under the name --- */
@@ -697,13 +710,9 @@ table th { color: var(--accent-dark); }
 .ps-table th, .ps-table td {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
 }
-.ps-table th:nth-child(2), .ps-table td:nth-child(2) { width: 34px; }   /* Pos */
-.ps-table th:nth-child(3), .ps-table td:nth-child(3) { width: 46px; }   /* Team */
-.ps-table th:nth-child(4), .ps-table td:nth-child(4) { width: 42px; }   /* Form */
-.ps-table th:nth-child(5), .ps-table td:nth-child(5) { width: 52px; }   /* Rating */
-.ps-table th:nth-child(6), .ps-table td:nth-child(6) { width: 40px; }   /* £m */
-.ps-table th:nth-child(7), .ps-table td:nth-child(7) { width: 96px; }   /* Next 3 */
-.ps-table th:nth-child(8), .ps-table td:nth-child(8) { width: 86px; }   /* action */
+/* Column widths are further down, in the v9 block, and are set by column class
+   rather than by position - the Players tab carries an ownership column that My
+   Team doesn't, so "the sixth cell" is not the same column on the two tables. */
 .ps-table img.shirt-sm { height: 16px; width: 16px; object-fit: contain; vertical-align: middle; flex: 0 0 auto; }
 .ps-table .player-gws { flex-wrap: nowrap; margin-top: 0; }
 .ps-table .mini-gw { min-width: 27px; }
@@ -793,16 +802,42 @@ table th { color: var(--accent-dark); }
    ============================================================ */
 
 /* Percentage widths → columns line up across header, body and the
-   recommended table; Player column trimmed to free room for the rest. */
+   recommended table; Player column trimmed to free room for the rest.
+   Sums to 100 in each set.
+
+   Keyed on a class per column, not on nth-child. The Players tab shows an
+   ownership column and My Team doesn't, so the two tables no longer have the
+   same column in the same place - and both are rendered twice over, once by
+   seo_tables.py on the server and again by createPlayerSearch() when the pool
+   lands. Position-based widths mean four places to keep in step and a silent
+   failure (every column off by one) when they drift. The class is written by
+   both renderers from the same column key. */
 .ps-table { table-layout: fixed; }
-.ps-table th:nth-child(1), .ps-table td:nth-child(1) { width: 25%; }   /* Player */
-.ps-table th:nth-child(2), .ps-table td:nth-child(2) { width: 9%;  }   /* Pos */
-.ps-table th:nth-child(3), .ps-table td:nth-child(3) { width: 13%; }   /* Team */
-.ps-table th:nth-child(4), .ps-table td:nth-child(4) { width: 11%; }   /* Form */
-.ps-table th:nth-child(5), .ps-table td:nth-child(5) { width: 13%; }   /* Rating */
-.ps-table th:nth-child(6), .ps-table td:nth-child(6) { width: 9%;  }   /* £m */
-.ps-table th:nth-child(7), .ps-table td:nth-child(7) { width: 20%; }   /* Next 3 */
-.ps-table th:nth-child(8), .ps-table td:nth-child(8) { width: 0; }     /* (no action col) */
+
+/* Without ownership - My Team's copy of the widget. Sums to 100. */
+.ps-table .col-web_name  { width: 28%; }
+.ps-table .col-pos       { width: 8%;  }
+.ps-table .col-team_name { width: 12%; }
+.ps-table .col-form      { width: 12%; }
+.ps-table .col-rating    { width: 13%; }
+.ps-table .col-cost      { width: 9%;  }
+.ps-table .col-fixtures  { width: 18%; }
+
+/* With it - the Players tab. Every other column gives up a little rather than
+   the new one coming out of the fixtures, which are the column that clips. */
+.ps-table-own .col-web_name  { width: 24%; }
+.ps-table-own .col-pos       { width: 7%;  }
+.ps-table-own .col-team_name { width: 11%; }
+.ps-table-own .col-form      { width: 10%; }
+.ps-table-own .col-rating    { width: 11%; }
+.ps-table-own .col-cost      { width: 8%;  }
+.ps-table-own .col-owned     { width: 11%; }
+.ps-table-own .col-fixtures  { width: 18%; }
+
+/* Fit all three fixture tiles inside the Next-3 column. */
+.ps-table td.col-fixtures { overflow: visible; }
+.ps-table td.col-fixtures .player-gws { display: flex; flex-wrap: nowrap; gap: 1px; justify-content: flex-start; }
+.ps-table td.col-fixtures .mini-gw { flex: 1 1 0; min-width: 0; }
 .ps-row { cursor: pointer; }
 .ps-name { gap: 4px; }
 .ps-name span { min-width: 0; }
@@ -823,14 +858,10 @@ table th { color: var(--accent-dark); }
 .ps-name img.shirt-sm { display: inline; vertical-align: middle; margin-right: 4px; }
 .ps-name span { display: inline; }
 
-/* Rebalanced column widths (Player gets more; data cols fit their icons) */
-.ps-table th:nth-child(1), .ps-table td:nth-child(1) { width: 30%; }
-.ps-table th:nth-child(2), .ps-table td:nth-child(2) { width: 8%;  }
-.ps-table th:nth-child(3), .ps-table td:nth-child(3) { width: 12%; }
-.ps-table th:nth-child(4), .ps-table td:nth-child(4) { width: 12%; }
-.ps-table th:nth-child(5), .ps-table td:nth-child(5) { width: 13%; }
-.ps-table th:nth-child(6), .ps-table td:nth-child(6) { width: 9%;  }
-.ps-table th:nth-child(7), .ps-table td:nth-child(7) { width: 16%; }
+/* Column widths live in the v9 block above, keyed on .col-* rather than on
+   position - there were four overlapping sets of nth-child widths here, each
+   silently overriding the last, and none of them could survive a table with a
+   different number of columns. */
 .ps-table thead th { padding: 6px 4px; font-size: 0.66rem; }
 .ps-table td { padding: 5px 4px; }
 .ps-arrow { font-size: 0.85em; }
@@ -893,7 +924,6 @@ table th { color: var(--accent-dark); }
 /* Search table: let it scroll sideways so fixtures are never cut off */
 .ps-list { overflow: auto; }
 .ps-table { min-width: 470px; }
-.ps-table td:nth-child(7) { overflow: visible; }
 .ps-table .player-gws { flex-wrap: nowrap; }
 
 /* Player pop-up buttons: smaller, wrap neatly */
@@ -924,12 +954,6 @@ table th { color: var(--accent-dark); }
 /* Greyed, unclickable rows (e.g. 3-from-a-club already selected) */
 .ps-disabled { opacity: 0.4; cursor: not-allowed; }
 .ps-disabled:hover { background: transparent; }
-
-/* Fit all three fixtures inside the table's Next-3 column */
-.ps-table th:nth-child(1), .ps-table td:nth-child(1) { width: 28%; }
-.ps-table th:nth-child(7), .ps-table td:nth-child(7) { width: 18%; overflow: visible; }
-.ps-table td:nth-child(7) .player-gws { display: flex; flex-wrap: nowrap; gap: 1px; justify-content: flex-start; }
-.ps-table td:nth-child(7) .mini-gw { flex: 1 1 0; min-width: 0; }
 
 @media (max-width: 575.98px) {
     /* Force the info tooltip to screen-centre, overriding earlier bottom rule */
@@ -1115,13 +1139,23 @@ body {
     .ps-list { overflow-x: hidden; touch-action: pan-y; }
     .ps-table, .underperf-table { min-width: 0; width: 100%; }
 
-    .ps-table th:nth-child(3), .ps-table td:nth-child(3) { display: none; }   /* Team */
-    .ps-table th:nth-child(1), .ps-table td:nth-child(1) { width: 33%; }      /* Player */
-    .ps-table th:nth-child(2), .ps-table td:nth-child(2) { width: 10%; }      /* Pos */
-    .ps-table th:nth-child(4), .ps-table td:nth-child(4) { width: 13%; }      /* Form */
-    .ps-table th:nth-child(5), .ps-table td:nth-child(5) { width: 15%; }      /* Rtg */
-    .ps-table th:nth-child(6), .ps-table td:nth-child(6) { width: 12%; }      /* £m */
-    .ps-table th:nth-child(7), .ps-table td:nth-child(7) { width: 17%; }      /* Next 3 */
+    .ps-table .col-team_name { display: none; }               /* Team */
+    .ps-table .col-web_name  { width: 33%; }
+    .ps-table .col-pos       { width: 10%; }
+    .ps-table .col-form      { width: 13%; }
+    .ps-table .col-rating    { width: 15%; }
+    .ps-table .col-cost      { width: 12%; }
+    .ps-table .col-fixtures  { width: 17%; }
+
+    /* Ownership stays on the phone - it is the reason to be on that table -
+       so the rest give up a few points each to fit it. */
+    .ps-table-own .col-web_name { width: 28%; }
+    .ps-table-own .col-pos      { width: 9%;  }
+    .ps-table-own .col-form     { width: 11%; }
+    .ps-table-own .col-rating   { width: 13%; }
+    .ps-table-own .col-cost     { width: 10%; }
+    .ps-table-own .col-owned    { width: 12%; }
+    .ps-table-own .col-fixtures { width: 17%; }
 
     /* Same treatment for the underperforming table. Metric goes too: the
        Attackers/Defenders pill above it already says which metric it is. */
@@ -1153,7 +1187,7 @@ body {
 }
 
 /* ============================================================
-   AI BEST XV
+   AI BEST XI
    ============================================================ */
 .ai-head {
     display: flex; align-items: flex-start; justify-content: space-between;
@@ -1657,6 +1691,19 @@ body.modal-open { overflow: hidden; }
     text-decoration: none;
 }
 .az-jump a:hover { background: var(--accent); color: #fff; }
+/* A letter with nothing left in it under the current filter. Dimmed and
+   unclickable rather than removed - see the note in players_az.html on why the
+   jump row has to keep its shape while you type. */
+.az-jump a.az-jump-empty {
+    opacity: 0.3; pointer-events: none; background: #f6f6f6; color: #aaa;
+}
+
+/* The filter box, inserted by the script at the foot of players_az.html. */
+.az-search { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; }
+.az-search-field { flex: 1 1 260px; max-width: 340px; }
+.az-count { font-size: 0.8rem; color: #888; }
+.az-nomatch { margin-top: 14px; color: #666; font-size: 0.9rem; }
+.az-nomatch code { background: #f1f7f7; padding: 1px 5px; border-radius: 4px; color: var(--accent-dark); }
 
 .az-list {
     list-style: none; padding: 0; margin: 6px 0 0;
@@ -1729,7 +1776,11 @@ a.navbar-brand.brand:focus-visible {
 /* Tables whose <thead> is server-rendered but whose <tbody> starts empty: the
    underperforming list, the AI squad and both AI history tables. These collapse
    to the header row until data arrives rather than to nothing, so they need
-   less than the full pane height. */
+   less than the full pane height.
+
+   Exempt: the .ps-list inside .ps-rec, overridden up beside the other .ps-rec
+   rules. That one holds three recommendations, appears on a click rather than
+   on a fetch, and so has nothing to reserve against. */
 .ps-list { min-height: 260px; }
 
 /* Rotation pairs are cards, not a table, and the row of them is about this

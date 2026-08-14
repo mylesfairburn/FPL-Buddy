@@ -9,9 +9,14 @@
 {% include 'partials/navbar.html' %}
 
     <div class="container mb-5">
-{# No tool tabs on a prose page - `tabs` is undefined here, so the partial
+{# The same tab bar the tool pages get: `tabs` comes from page_context, so the
+   four tools are one click away from a player page or the FAQ as well. None of
+   them renders active here, because none of the panes is open - `initial_pane`
+   is undefined on these pages and Jinja compares it unequal to everything.
+
+   The home page is the exception and gets an empty `tabs`, so there the partial
    renders the two reading links only, left-aligned. It's the same markup and
-   the same list as the tool pages, so the two can't drift apart. #}
+   the same list either way, so the two can't drift apart. #}
 {% include 'partials/tabs.html' %}
 
         <article class="content-page">

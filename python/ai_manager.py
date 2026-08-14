@@ -1,6 +1,6 @@
 """The AI Manager: a persistent bot that plays the real game, week to week.
 
-Where AI Best-XV re-picks from scratch every gameweek with no consequences,
+Where AI Best XI re-picks from scratch every gameweek with no consequences,
 this one carries a squad forward and lives with its decisions - it has a bank,
 a free-transfer count, point hits, and one set of chips for the season. It's
 stored as a manager with the reserved sentinel `fpl_id 0`, reusing
@@ -22,7 +22,7 @@ is permanent while a fixture is not:
 
 Nothing here writes to the real FPL game - there's no authenticated API. It's a
 simulation whose picks are recorded so its record can be compared against the
-Best-XV and against real managers.
+Best XI and against real managers.
 """
 
 from db import AI_MANAGER_FPL_ID, connect, utcnow
@@ -39,8 +39,8 @@ HORIZON_DECAY = 0.75
 
 # Buying a player is a season-long commitment, so the SQUAD is chosen over a
 # longer view than a transfer is judged on, with a slower decay. This is what
-# separates the AI Manager from Best-XV: pick the same 15 on next-gameweek
-# points and you get Best-XV's team, which is the right answer only if you
+# separates the AI Manager from Best XI: pick the same 15 on next-gameweek
+# points and you get Best XI's team, which is the right answer only if you
 # intend to rebuild from scratch every week.
 SQUAD_HORIZON = 8
 SQUAD_DECAY = 0.9
@@ -100,7 +100,7 @@ def coverage_requirement(gameweek, horizon=SQUAD_HORIZON, minimum=MIN_COVERAGE):
 def build_squad(pool, gameweek, budget):
     """Draft a squad to KEEP - long-horizon value, fixture coverage enforced.
 
-    Same solver as Best-XV, different objective. Best-XV asks "who scores most
+    Same solver as Best XI, different objective. Best XI asks "who scores most
     this Saturday"; this asks "who is worth owning for the next couple of
     months", which is the question a manager with two transfers a week actually
     faces."""
@@ -427,7 +427,7 @@ def run_gameweek(pool, gameweek, budget=DEFAULT_BUDGET, persist=True):
     """The bot's weekly decision: transfers, lineup, captain, chip.
 
     First run of a season has no squad to carry forward, so it drafts one with
-    the same optimiser the Best-XV uses - which is why that had to exist first.
+    the same optimiser the Best XI uses - which is why that had to exist first.
     """
     state = load_state(pool)
     gameweeks = sorted({e.get("event") for p in pool

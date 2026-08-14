@@ -72,3 +72,13 @@ services:
       # is fine as an environment value.
       GSC_KEY: ${GSC_KEY:-}
       BINGWEBMASTER_KEY: ${BINGWEBMASTER_KEY:-}
+      # GSC_PROPERTY has to be listed here as well as set in .env. A variable
+      # this block doesn't name never reaches the container, no matter what the
+      # .env says - and the default it falls back to inside the container is a
+      # URL-prefix property this site doesn't have, so Search Console 403s and
+      # the nightly report is written with only its Bing half filled in. There
+      # is no error anywhere: the job exits 0 by design on a partial source
+      # failure. See the note in env.example for the property strings.
+      GSC_PROPERTY: ${GSC_PROPERTY:-}
+      # Optional. Unset, the report skips Core Web Vitals and says so.
+      PSI_KEY: ${PSI_KEY:-}

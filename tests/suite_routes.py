@@ -80,6 +80,77 @@ def test_tab_panes():
               note="the gameweek archive and the A-Z index need a link from "
                    "every page or they rank on footer links alone")
 
+    # The four tools are what the site is for, and they used to be reachable
+    # from a prose page only via the logo. Every page carries the bar now.
+    for path in ["/about", "/faq", "/privacy", "/contact", "/players/a-z", "/gameweek"]:
+        body = c.get(path).text
+        check(f"{path} carries the four tool tabs", f"GET {path}",
+              "an <a href> for each of the four tabs", body,
+              lambda b: all(
+                  re.search(r'<a class="nav-link[^"]*"[^>]*href="%s"' % re.escape(t["path"]), b)
+                  for t in main.TABS),
+              note="a reader who has finished a player page or the FAQ should "
+                   "not have to go back through the logo to reach a tool")
+        check(f"{path} marks no tab active", f"GET {path}",
+              "no .active tool tab", body,
+              lambda b: not any(
+                  re.search(r'class="nav-link active"[^>]*href="%s"' % re.escape(t["path"]), b)
+                  for t in main.TABS),
+              note="none of the panes is open on a prose page, so highlighting "
+                   "one would be pointing at something that isn't there")
+
+    # The exception. Home is the first-visit page and introduces the same four
+    # tools in prose immediately below; a tab bar there is the same four links
+    # twice, and anyone with an ID saved is redirected off it anyway.
+    home = c.get("/").text
+    check("the home page has no tool tabs", "GET /",
+          "the reading links only", home,
+          lambda b: not any(f'data-pane="{t["pane"]}"' in b for t in main.TABS)
+                    and all(f'href="{c_["path"]}"' in b for c_ in main.CONTENT_LINKS))
+
+
+def test_head_requests():
+    """HEAD has to work everywhere GET does.
+
+    FastAPI's @app.get does not add HEAD the way Starlette's own Route does, so
+    without the HeadAsGet middleware every URL on the site returns 405 to it -
+    including robots.txt and sitemap.xml. Bingbot uses HEAD to decide whether a
+    URL is worth fetching, and a 405 is not a "nothing changed" answer.
+
+    Checked per route type rather than on one path: the failure this guards
+    against is a whole class of URL, and a single sample would pass while the
+    player pages - which are most of the site - were still refusing.
+    """
+    group("HEAD requests", "high")
+    c = _client()
+
+    index = main.player_page_index()
+    a_player = next(iter(index.values()))["path"] if index else "/players/a-z"
+
+    paths = ([t["path"] for t in main.TABS]
+             + ["/", "/about", "/faq", "/privacy", "/contact", "/players/a-z",
+                "/gameweek", a_player, "/robots.txt", "/sitemap.xml",
+                "/api/all_players"])
+    for path in paths:
+        head, get = c.head(path), c.get(path)
+        expect(f"HEAD {path} matches GET's status", f"HEAD {path}",
+               get.status_code, head.status_code, severity="high",
+               note="a 405 here tells a crawler the method is refused on every "
+                    "URL of this kind")
+        # RFC 9110: the headers must be the ones GET would have sent, and the
+        # body must be empty. Content-Length in particular is what a crawler
+        # compares against last time to decide whether to re-fetch, so it has
+        # to describe the real body rather than the zero bytes sent.
+        check(f"HEAD {path} sends GET's headers and no body", f"HEAD {path}",
+              "empty body, same content-type and content-length", len(head.content),
+              lambda n, h=head, g=get: n == 0
+                    and h.headers.get("content-type") == g.headers.get("content-type")
+                    and h.headers.get("content-length") == g.headers.get("content-length"))
+
+    missing = c.head("/player/does-not-exist-0")
+    expect("HEAD on a missing page 404s, not 405", "HEAD /player/does-not-exist-0",
+           404, missing.status_code)
+
 
 def test_seo_tags():
     group("SEO metadata", "high")
@@ -420,6 +491,25 @@ def test_az_index():
           lambda _: set(links) <= {r["path"] for r in index.values()},
           severity="high")
 
+    # The filter needs each letter's heading and list wrapped together so it can
+    # hide both, and it needs the jump links tagged with their letter. Neither
+    # is visible on the page, so nothing else would notice them going missing -
+    # the search would just start leaving "M" standing over an empty gap.
+    letters = set(re.findall(r'<section class="az-group" data-letter="([^"]+)"', r.text))
+    check("every letter is a wrapped group", "GET /players/a-z",
+          "one .az-group per jump link", sorted(letters),
+          lambda ls: set(ls) == set(re.findall(r'<a href="#letter-[^"]*" data-letter="([^"]+)"', r.text))
+                     and len(ls) > 1)
+
+    # The box itself is injected by the page's own script, so the served HTML
+    # holds an empty slot and nothing else. A rendered <input> here would be a
+    # control that does nothing for a reader without JavaScript.
+    check("the search box is an empty slot in the HTML", "GET /players/a-z",
+          'an empty #azSearchSlot, no <input>', "checked",
+          lambda _: '<div id="azSearchSlot"></div>' in r.text
+                    and "<input" not in r.text.split('id="azSearchSlot"')[0].split("<article")[-1],
+          note="a search box that silently does nothing is worse than none")
+
 
 def test_compression():
     group("compression", "medium")
@@ -543,10 +633,23 @@ def test_server_rendered_tables():
     c = _client()
     body = c.get("/players").text
 
+    # `ps-name` is followed by the column-width class, so this matches the start
+    # of the class list rather than the whole attribute - see the .col-* note in
+    # style.css for why those exist.
     check("the players table has rows in the raw HTML", "GET /players",
           "at least 50 <tr> inside #playersTabSearch", body,
-          lambda b: len(re.findall(r'<tr>\s*<td class="ps-name"', b)) >= 50,
+          lambda b: len(re.findall(r'<tr>\s*<td class="ps-name[ "]', b)) >= 50,
           note="without these a crawler sees an empty table where the ratings are")
+
+    # Ownership is server-rendered too, not drawn in by the script. It is the
+    # column the FAQ tells people to sort by when hunting differentials, and it
+    # is the one number on that table a language model can't derive from the
+    # others.
+    check("the players table carries ownership", "GET /players",
+          "an Own % header and a value per row", body,
+          lambda b: 'class="col-owned">Own %' in b
+                    and len(re.findall(r'<td class="col-owned">', b)) >= 50,
+          note="the interactive table shows it, so the crawled one has to as well")
 
     # A named player, not just a row count: rows of dashes would pass a count.
     top = main.seo_tables()["players"]
@@ -573,7 +676,7 @@ def test_server_rendered_tables():
     # Out of season - or with the FPL API unreachable, which is how this suite
     # usually runs - there is legitimately no squad, and a test that failed for
     # that reason would be noise rather than signal.
-    squad = main.seo_tables().get("best_xv")
+    squad = main.seo_tables().get("best_xi")
     if squad and squad.get("rows"):
         ai = c.get("/ai-teams").text
         first = squad["rows"][0]["name"]
@@ -590,7 +693,7 @@ def test_server_rendered_tables():
                "is the only thing a crawler can read on it")
 
 
-SUITES = [test_page_routes, test_tab_panes, test_seo_tags,
+SUITES = [test_page_routes, test_tab_panes, test_head_requests, test_seo_tags,
           test_robots_and_security_txt, test_faq, test_gameweek_pages,
           test_sitemap, test_player_pages, test_az_index, test_compression,
           test_static_assets, test_site_name_signals,

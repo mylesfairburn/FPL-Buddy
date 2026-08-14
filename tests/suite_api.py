@@ -278,7 +278,7 @@ def test_draft_roundtrip():
 def test_ai_endpoints():
     group("AI endpoints", "medium")
     c = _client()
-    for path in ["/api/ai/best_xv", "/api/ai/manager"]:
+    for path in ["/api/ai/best_xi", "/api/ai/manager"]:
         r = c.get(path)
         expect(f"GET {path} status", f"GET {path}", 200, r.status_code,
                severity="high")
@@ -292,16 +292,27 @@ def test_ai_endpoints():
             check(f"{path} squad is a sane size", f"GET {path}",
                   "11-15 players", len(squad), lambda v: 0 < v <= 15)
 
-    r = c.get("/api/ai/best_xv?gameweek=1")
-    check("best_xv accepts a gameweek", "GET /api/ai/best_xv?gameweek=1",
+    r = c.get("/api/ai/best_xi?gameweek=1")
+    check("best_xi accepts a gameweek", "GET /api/ai/best_xi?gameweek=1",
           "200", r.status_code, lambda v: v == 200)
-    r = c.get("/api/ai/best_xv?gameweek=-1")
-    check("negative gameweek does not 500", "GET /api/ai/best_xv?gameweek=-1",
+    r = c.get("/api/ai/best_xi?gameweek=-1")
+    check("negative gameweek does not 500", "GET /api/ai/best_xi?gameweek=-1",
           "status < 500", r.status_code, lambda v: v < 500, severity="high")
-    r = c.get("/api/ai/best_xv?budget=0")
-    check("zero budget does not 500", "GET /api/ai/best_xv?budget=0",
+    r = c.get("/api/ai/best_xi?budget=0")
+    check("zero budget does not 500", "GET /api/ai/best_xi?budget=0",
           "status < 500, unavailable is fine", r.status_code,
           lambda v: v < 500, severity="high")
+
+    # The pre-rename path. It went out with every page for a season, so it has
+    # to keep answering - and answering the same thing, since it is the same
+    # function behind it and not a second copy that can drift.
+    old = c.get("/api/ai/best_xv")
+    expect("the old best_xv path still answers", "GET /api/ai/best_xv",
+           200, old.status_code, severity="high")
+    check("best_xv is an alias, not a second implementation",
+          "GET /api/ai/best_xv vs /api/ai/best_xi",
+          "identical availability", (_json(old) or {}).get("available"),
+          lambda v: v == (_json(c.get("/api/ai/best_xi")) or {}).get("available"))
 
 
 def test_live_and_proxy_endpoints():

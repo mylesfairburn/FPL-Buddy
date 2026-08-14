@@ -125,8 +125,22 @@ def eligible_pool(players, gameweek, include_unavailable=False):
 def team_rating(squad):
     """A squad's rating out of 100: the mean of its starting XI's ratings.
 
-    Starters only, and deliberately. A player's `rating` is his percentile
-    within his own position, so averaging all fifteen would drag every team
+    **This is not a points projection, and a higher one does not mean a higher
+    score.** A player's `rating` is his percentile among the players in his own
+    position (rating_model.predict_ratings: predicted points, ranked within
+    position, scaled to 100). Top of your position is 100 whichever position
+    that is, so an elite goalkeeper and an elite forward both read 100 and are
+    worth very different numbers of points. Averaging eleven of those measures
+    how good the eleven are relative to their peers - a squad-quality figure -
+    and says nothing about the total they will return on Saturday. The
+    Predicted chip beside it is the number that answers that.
+
+    Two further reasons the two can move apart: this reads `rating` from the
+    pool as it stands today, not as it stood for any particular gameweek, and
+    it takes no account of captaincy, of that week's fixtures, or of a starter
+    who is a doubt to play at all.
+
+    Starters only, and deliberately. Averaging all fifteen would drag every team
     towards the middle through the two cheap bench fillers nobody intends to
     play - and it would rate a £100m squad and a £83m squad about the same,
     because the difference between them is mostly in the eleven. Comparing
@@ -176,7 +190,7 @@ def optimise_squad(players, gameweek, budget=DEFAULT_BUDGET,
     the lineup and captaincy still go on this gameweek's points. Without it the
     best 15 for one gameweek is also the best 15 to own, which is only true if
     you never keep a player past Saturday. The AI Manager passes multi-gameweek
-    values here; Best-XV leaves it None and is unaffected.
+    values here; Best XI leaves it None and is unaffected.
 
     `coverage` - {gameweek: minimum owned players with a fixture}. Blank
     gameweeks are where a squad picked purely on points falls over: it can be
@@ -210,7 +224,7 @@ def optimise_squad(players, gameweek, budget=DEFAULT_BUDGET,
     cost = [float(p["cost"]) for p in pool]
     pts = [float(p["_predicted"]) for p in pool]
 
-    prob = pulp.LpProblem("fpl_best_xv", pulp.LpMaximize)
+    prob = pulp.LpProblem("fpl_best_xi", pulp.LpMaximize)
     pick = pulp.LpVariable.dicts("pick", idx, cat="Binary")    # in the 15
     start = pulp.LpVariable.dicts("start", idx, cat="Binary")  # in the XI
     capt = pulp.LpVariable.dicts("capt", idx, cat="Binary")    # wears the armband

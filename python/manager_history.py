@@ -89,7 +89,7 @@ def get_manager_gameweek(fpl_id, gameweek, pool=None):
 
 
 def manager_history(fpl_id):
-    """Every captured gameweek for one manager, with the AI Best-XV's numbers
+    """Every captured gameweek for one manager, with the AI Best XI's numbers
     for the same gameweek alongside - which is the comparison the whole
     snapshot exercise exists to support."""
     with connect() as conn:

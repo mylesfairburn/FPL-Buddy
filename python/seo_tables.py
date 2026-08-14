@@ -117,6 +117,7 @@ def player_rows(players, top_n=TOP_PLAYERS):
             "form": _fmt(p.get("form")),
             "rating": _int(p.get("rating")),
             "cost": _fmt(p.get("cost")),
+            "owned": _fmt(p.get("owned")),
             "predicted": _fmt(p.get("predicted")),
             "status": (p.get("status") or "a").lower(),
             "fixtures": _fixtures(p),
@@ -147,7 +148,7 @@ def squad_rows(squad):
     return rows
 
 
-def best_xv_block(result):
+def best_xi_block(result):
     """The AI Best XI section: the squad plus the numbers above it."""
     if not result or not result.get("squad"):
         return None
@@ -161,7 +162,7 @@ def best_xv_block(result):
     }
 
 
-def best_xv_history(snapshots, limit=TRACK_RECORD_ROWS):
+def best_xi_history(snapshots, limit=TRACK_RECORD_ROWS):
     """Predicted vs actual for the frozen Best XI snapshots.
 
     This is the part of the site with something to say that nowhere else has:
@@ -269,7 +270,7 @@ def rotation_block(rotation_df, difficulty_col="defensive_difficulty",
     return {"gameweeks": gameweeks, "teams": teams, "pairs": pairs}
 
 
-def build(players=None, rotation_df=None, best_xv=None, snapshots=None,
+def build(players=None, rotation_df=None, best_xi=None, snapshots=None,
           mgr_history=None):
     """Everything the templates need, in one dict.
 
@@ -281,7 +282,7 @@ def build(players=None, rotation_df=None, best_xv=None, snapshots=None,
     return {
         "players": player_rows(players) if players else [],
         "rotation": rotation_block(rotation_df) if rotation_df is not None else None,
-        "best_xv": best_xv_block(best_xv) if best_xv else None,
-        "best_xv_history": best_xv_history(snapshots),
+        "best_xi": best_xi_block(best_xi) if best_xi else None,
+        "best_xi_history": best_xi_history(snapshots),
         "manager_history": manager_history(mgr_history),
     }

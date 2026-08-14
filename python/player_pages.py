@@ -320,6 +320,12 @@ def availability_sentence(rec):
     publishes none, the status letter is all that's actually known."""
     status = (rec.get("status") or "a").lower()
     chance = rec.get("chance_of_playing_next_round")
+    # NaN is FPL publishing nothing, same as None - see team_service._num. Left
+    # as NaN it fails the `is None` test below and then survives the clamp,
+    # because min(100, nan) returns 100: every fit player's page would state a
+    # 100% chance FPL never actually published.
+    if chance is not None and chance != chance:
+        chance = None
     name = _short(rec)
     news = rec.get("news")
 

@@ -94,11 +94,21 @@ def _is_available(rec):
     A flagged player is excluded from the three "buy him" sections outright
     rather than discounted: this page is read by people deciding transfers, and
     a recommendation carrying an asterisk is worse than no recommendation. The
-    injury section is where flagged players belong."""
+    injury section is where flagged players belong.
+
+    No published chance means fit, not doubtful. FPL only fills that field in
+    when it has something to say, so it is null for the great majority of the
+    pool - and NaN rather than None whenever the record came through pandas.
+    Both have to read as "nothing known", because the alternative is what this
+    function did until it was fixed: reject every unflagged player in the game
+    and leave the sections to be filled by the handful FPL happens to have
+    stamped 100%."""
     if (rec.get("status") or "a").lower() != "a":
         return False
     chance = rec.get("chance_of_playing_next_round")
-    return chance is None or chance >= 100
+    if chance is None or chance != chance:
+        return True
+    return chance >= 100
 
 
 def _base_card(rec, gameweek):

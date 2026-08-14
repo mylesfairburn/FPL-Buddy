@@ -515,8 +515,14 @@ function bankChip(bank) {
     const style = neg ? ' style="color:#e03131"' : '';
     return `<div class="stat-chip${neg ? ' stat-neg' : ''}"><span class="stat-label">In the bank</span><span class="stat-value"${style}>${val}</span></div>`;
 }
-function chip(label, value, accent) {
-    return `<div class="stat-chip${accent ? ' accent' : ''}"><span class="stat-label">${label}</span><span class="stat-value">${value}</span></div>`;
+// `tip` becomes a title attribute rather than one of the .info-icon tooltips.
+// Those are wired once at load by a querySelectorAll over the document, and
+// attachTip() appends a div to document.body per call - chips are re-rendered
+// on every lineup change, so they'd either never be wired or leak a tip div per
+// render. A title needs neither.
+function chip(label, value, accent, tip) {
+    const t = tip ? ` title="${tip}"` : '';
+    return `<div class="stat-chip${accent ? ' accent' : ''}"${t}><span class="stat-label">${label}</span><span class="stat-value">${value}</span></div>`;
 }
 // A squad's rating out of 100: the mean of its starting XI's ratings. Same
 // rule as squad_optimiser.team_rating() on the server, which is where the
@@ -535,8 +541,18 @@ function teamRating(squad) {
 }
 // The chip itself, or nothing at all when there's no honest number to show -
 // a part-built squad, or a stored gameweek the server declined to rate.
+//
+// The tooltip is the short version of what /about and the FAQ say at length: a
+// rating is a percentile within a position, so averaging eleven of them is a
+// squad-quality figure and not a points forecast. It sits on the chip because
+// that is where the misreading happens - a number out of 100 next to a
+// predicted-points number invites being read as the better of the two.
+const RATING_TIP = 'Squad quality, not a points forecast. Each rating is a '
+    + "player's projected points ranked within his own position, so the best "
+    + 'keeper and the best forward both read 100. Predicted points is the '
+    + 'figure for this gameweek.';
 function ratingChip(rating) {
-    return rating == null ? '' : chip('Team rating', rating + '/100');
+    return rating == null ? '' : chip('Team rating', rating + '/100', false, RATING_TIP);
 }
 
 // ---- Pitch ----
@@ -1607,6 +1623,14 @@ function createPlayerSearch(cfg) {
     if (seededRows) listEl.innerHTML = seededRows;
     const state = { sortKey: 'rating', sortDir: 'desc', teamsFilled: false };
 
+    // Ownership is on the Players tab and deliberately not on My Team. Browsing
+    // the whole game, "who else owns him" is half the decision - it is what
+    // separates a template pick from a differential, and the FAQ has been
+    // telling people to look for low ownership on a table that didn't show it.
+    // On My Team the same widget is a transfer picker in a narrow column beside
+    // the pitch, where an eighth column costs width the fixtures need and
+    // answers a question you have already asked by the time you are picking a
+    // replacement.
     const COLS = [
         { key: 'web_name', label: 'Player', noSort: true },
         { key: 'pos', label: 'Pos', noSort: true },
@@ -1614,8 +1638,14 @@ function createPlayerSearch(cfg) {
         { key: 'form', label: 'Form', num: true },
         { key: 'rating', label: 'Rtg', num: true },
         { key: 'cost', label: '\u00a3m', num: true },
+        ...(cfg.showOwnership ? [{ key: 'owned', label: 'Own %', num: true }] : []),
         { key: 'fixtures', label: 'Next 3', noSort: true }
     ];
+    // Widths come from these classes rather than from column position, because
+    // the two instances no longer have the same columns - and because the
+    // server renders this same table too (partials/ssr_players.html), from the
+    // same keys.
+    const tableClass = 'table table-sm ps-table mb-0' + (cfg.showOwnership ? ' ps-table-own' : '');
 
     function pool() { return cfg.pool() || []; }
     function ensureTeams() {
@@ -1645,19 +1675,25 @@ function createPlayerSearch(cfg) {
         const dattr = disabled
             ? ' style="opacity:0.4;cursor:not-allowed" title="Max 3 players from one club"'
             : '';
+        // FPL leaves ownership out for a player it has no figure for, so this
+        // is an en dash rather than "0.0%" - which would read as "nobody owns
+        // him", a different and much more interesting claim.
+        const owned = p.owned != null ? p.owned.toFixed(1) : '\u2013';
+        const ownedCell = cfg.showOwnership ? `<td class="col-owned">${owned}</td>` : '';
         return `<tr class="ps-row${disabled ? ' ps-disabled' : ''}"${dattr} data-id="${p.id}">
-            <td class="ps-name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${p.web_name}</span></td>
-            <td>${p.pos}</td>
-            <td>${p.team_name || ''}</td>
-            <td>${form}</td>
-            <td><span class="rating-badge">${Math.round(p.rating)}</span></td>
-            <td>${p.cost.toFixed(1)}</td>
-            <td><div class="player-gws">${miniFixtures(p)}</div></td>
+            <td class="ps-name col-web_name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${p.web_name}</span></td>
+            <td class="col-pos">${p.pos}</td>
+            <td class="col-team_name">${p.team_name || ''}</td>
+            <td class="col-form">${form}</td>
+            <td class="col-rating"><span class="rating-badge">${Math.round(p.rating)}</span></td>
+            <td class="col-cost">${p.cost.toFixed(1)}</td>
+            ${ownedCell}
+            <td class="col-fixtures"><div class="player-gws">${miniFixtures(p)}</div></td>
         </tr>`;
     }
     function headHtml() {
         const arrow = c => c.noSort ? '' : (state.sortKey === c.key ? (state.sortDir === 'asc' ? ' \u25B2' : ' \u25BC') : ' <span class="ps-arrow">\u21C5</span>');
-        const ths = COLS.map(col => `<th class="${col.noSort ? '' : 'ps-sortable'}" data-key="${col.key}">${col.label}${arrow(col)}</th>`).join('');
+        const ths = COLS.map(col => `<th class="col-${col.key}${col.noSort ? '' : ' ps-sortable'}" data-key="${col.key}">${col.label}${arrow(col)}</th>`).join('');
         return `<thead><tr>${ths}</tr></thead>`;
     }
     function render() {
@@ -1681,12 +1717,12 @@ function createPlayerSearch(cfg) {
             const rec = pool().filter(cfg.transferCandidate).sort((a, b) => b.rating - a.rating).slice(0, 3);
             recEl.innerHTML = rec.length
                 ? `<div class="ps-rec-label">Recommended \u2014 tap to transfer in</div>
-                   <div class="ps-list"><table class="table table-sm ps-table mb-0">${headHtml()}<tbody>${rec.map(rowHtml).join('')}</tbody></table></div>`
+                   <div class="ps-list"><table class="${tableClass}">${headHtml()}<tbody>${rec.map(rowHtml).join('')}</tbody></table></div>`
                 : '';
         } else { recEl.innerHTML = ''; }
 
         listEl.innerHTML = rows.length
-            ? `<table class="table table-sm ps-table mb-0 ${transfer ? 'ps-transfer' : ''}">${headHtml()}<tbody>${rows.map(rowHtml).join('')}</tbody></table>`
+            ? `<table class="${tableClass}${transfer ? ' ps-transfer' : ''}">${headHtml()}<tbody>${rows.map(rowHtml).join('')}</tbody></table>`
             : '<p class="text-muted small p-2">No players match.</p>';
         listEl.scrollTop = 0; listEl.scrollLeft = 0;
 
@@ -1752,11 +1788,15 @@ const playerSearch = createPlayerSearch({
     }
 });
 
-// Same search table powers the Players tab (browse only).
+// Same search table powers the Players tab (browse only), with the ownership
+// column on - see the note beside COLS. The server-rendered copy this replaces
+// (partials/ssr_players.html) carries the same column, so the swap doesn't
+// change the table's shape under the reader.
 const playersTabSearch = createPlayerSearch({
     container: document.getElementById('playersTabSearch'),
     sliderPrefix: 'pt',
     pool: () => allPlayers || [],
+    showOwnership: true,
     isTransferMode: () => false,
     transferCandidate: () => true,
     onTransfer: () => {},
@@ -2091,7 +2131,7 @@ document.querySelectorAll('#rotationTabs .nav-link').forEach(btn => {
 });
 
 // =====================================================================
-//  AI BEST XV
+//  AI BEST XI
 // =====================================================================
 // Stateless per gameweek: the server solves a fresh budget-constrained
 // optimum and freezes it at the deadline. A stored snapshot is the
@@ -2231,7 +2271,7 @@ function loadAi(gw) {
     // for the same one twice.
     const seq = ++aiReqSeq;
     if (gw) { aiGw = gw; updateAiNav(); }
-    fetch(`/api/ai/best_xv${q}`)
+    fetch(`/api/ai/best_xi${q}`)
         .then(r => r.json())
         .then(d => {
             if (seq !== aiReqSeq) return;   // superseded by a newer request

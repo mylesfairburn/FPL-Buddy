@@ -1,4 +1,4 @@
-"""AI Best-XV: generate, freeze and read back the per-gameweek optimum squad.
+"""AI Best XI: generate, freeze and read back the per-gameweek optimum squad.
 
 The tab is stateless by design - each gameweek gets a fresh optimum with no
 carry-over, no bank and no transfers. That's what separates it from the AI
@@ -16,7 +16,7 @@ from squad_optimiser import (DEFAULT_BUDGET, OptimisationError, optimise_squad,
                              verify)
 
 
-def build_best_xv(players, gameweek, budget=DEFAULT_BUDGET):
+def build_best_xi(players, gameweek, budget=DEFAULT_BUDGET):
     """Solve for the gameweek's optimum squad and sanity-check it.
 
     The independent verify() pass is deliberate: a mis-stated constraint would
@@ -168,6 +168,6 @@ def backfill_actuals(gameweek, events=None):
 
 def generate_and_store(players, gameweek, budget=DEFAULT_BUDGET):
     """Build + persist in one step - what the deadline watcher calls."""
-    result = build_best_xv(players, gameweek, budget=budget)
+    result = build_best_xi(players, gameweek, budget=budget)
     save_snapshot(result)
     return result
