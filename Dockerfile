@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 # Headless matplotlib — it's in your requirements, and this avoids a
 # GUI-backend crash if anything imports it inside the container.
