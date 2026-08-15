@@ -32,8 +32,12 @@ jobs:
           python-version: "3.13"
           cache: pip
 
+      # Both files. tests/requirements.txt carries what the suite needs and the
+      # app does not - httpx, which fastapi.testclient is built on and which
+      # plain `fastapi` does not install. Missing it is an import-time crash
+      # before a single test runs, which is how this job first went red.
       - name: Install dependencies
-        run: pip install -r python/requirements.txt
+        run: pip install -r python/requirements.txt -r tests/requirements.txt
 
       # data/models/*.pkl is gitignored - the bundles live on the deployment's
       # volume, not in the repo - so a fresh checkout has no models and the app

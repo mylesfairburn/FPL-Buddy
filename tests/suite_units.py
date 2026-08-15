@@ -7,6 +7,7 @@ reader sees, so they're worth pinning down precisely.
 
 import json
 import math
+import re
 from datetime import date
 
 import drafts
@@ -1660,6 +1661,82 @@ def test_kofi_route_absent_when_unconfigured():
            note="unset means absent, not present-and-refusing")
 
 
+def test_declared_dependencies():
+    group("dependencies", "high")
+
+    import ast
+    import pathlib
+    import sys
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+
+    def declared(path):
+        names = set()
+        try:
+            text = (root / path).read_text(encoding="utf-8")
+        except OSError:
+            return names
+        for line in text.splitlines():
+            line = line.split("#")[0].strip()
+            if not line:
+                continue
+            # "uvicorn[standard]", "starlette<1.0.0", "pandas==3.0.0"
+            name = re.split(r"[\[<>=!;]", line)[0].strip().lower()
+            if name:
+                names.add(name)
+        return names
+
+    app_reqs = declared("python/requirements.txt")
+    test_reqs = declared("tests/requirements.txt")
+
+    # Where the import name and the distribution name differ.
+    alias = {"sklearn": "scikit-learn", "yaml": "pyyaml", "PIL": "pillow",
+             "google": "google-auth", "dateutil": "python-dateutil",
+             "dotenv": "python-dotenv"}
+
+    stdlib = set(sys.stdlib_module_names)
+    local = {p.stem for p in (root / "python").glob("*.py")} | \
+            {p.stem for p in (root / "tests").glob("*.py")}
+
+    def third_party_imports(folder):
+        found = set()
+        for path in (root / folder).glob("*.py"):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Import):
+                    for a in node.names:
+                        found.add(a.name.split(".")[0])
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    found.add(node.module.split(".")[0])
+        return {m for m in found
+                if m not in stdlib and m not in local and not m.startswith("_")}
+
+    # Every module the application imports directly must be declared directly.
+    # markupsafe was imported by main.py and declared by nobody - it happened to
+    # be installed as a dependency of jinja2, which is one dependency
+    # resolution away from an import-time crash on a fresh install.
+    undeclared_app = sorted(m for m in third_party_imports("python")
+                            if alias.get(m, m).lower() not in app_reqs)
+    expect("every module python/ imports is in python/requirements.txt",
+           "ast scan of python/*.py", [], undeclared_app, severity="high",
+           note="a direct import satisfied by somebody else's dependency is a "
+                "missing module waiting to happen")
+
+    undeclared_tests = sorted(
+        m for m in third_party_imports("tests")
+        if alias.get(m, m).lower() not in app_reqs | test_reqs)
+    expect("every module tests/ imports is declared too",
+           "ast scan of tests/*.py", [], undeclared_tests, severity="high")
+
+    # The one that actually broke CI is invisible to the scan above, because
+    # nothing imports it by name: fastapi.testclient is built on httpx, and
+    # plain fastapi does not install it - only its "standard" extra does. So it
+    # is pinned by name here rather than inferred.
+    check("httpx is declared for the test client",
+          "tests/requirements.txt", "httpx present", test_reqs,
+          lambda r: "httpx" in r, severity="critical",
+          note="without it the suite dies at import before a single test runs")
+
+
 def test_kit_colours():
     group("club colours", "medium")
 
@@ -1699,4 +1776,5 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_retention, test_ops_heartbeat, test_ops_backups,
           test_notification_channels, test_channel_messages,
           test_kofi_message, test_kofi_route_absent_when_unconfigured,
+          test_declared_dependencies,
           test_kit_colours]

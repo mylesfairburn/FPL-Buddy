@@ -1,0 +1,16 @@
+# What the test suite needs on top of python/requirements.txt.
+#
+# Kept separate rather than folded into the application's requirements,
+# because the Dockerfile installs that file into the production image and a
+# test-only library has no business shipping to the server.
+#
+# Install both to run the suite:
+#   pip install -r python/requirements.txt -r tests/requirements.txt
+
+# fastapi.testclient is a re-export of starlette.testclient, which is built on
+# httpx and raises at import time without it. httpx is NOT a dependency of
+# plain `fastapi` or `starlette` - it only arrives with their "standard" and
+# "full" extras, neither of which this project installs. It was present on the
+# development machine by coincidence and absent on a clean CI runner, which is
+# precisely the failure mode a requirements file exists to prevent.
+httpx

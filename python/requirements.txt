@@ -2,6 +2,12 @@ fastapi
 uvicorn[standard]
 jinja2
 starlette<1.0.0
+# Imported directly by main.py (Markup, escape) and NOT only through Jinja.
+# It has always been installed here as a dependency of jinja2, which is why
+# nothing has broken - but a direct import satisfied by somebody else's
+# dependency is one `pip` resolution away from a missing module, and the
+# failure lands at import time on a fresh install.
+markupsafe
 pandas==3.0.0
 numpy==2.4.1
 scikit-learn==1.8.0
