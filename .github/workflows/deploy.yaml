@@ -112,15 +112,20 @@ jobs:
   # than assumed.
   #
   # Set DISCORD_DEPLOY_WEBHOOK in Settings -> Secrets and variables -> Actions.
-  # Unset, the step is skipped and nothing fails - the same opt-in rule the
+  # Unset, the step exits early and nothing fails - the same opt-in rule the
   # app's own webhooks follow.
+  #
+  # The "is it configured" check is in the SHELL, not in an `if:`. The `secrets`
+  # context is not available to any `if:` expression - job or step level - and
+  # using it there is not a silent no-op, it is a hard "Unrecognized named-value:
+  # 'secrets'" that rejects the whole workflow file and blocks the push. It is
+  # only readable from `env:`, `with:` and `run:`.
   notify:
     runs-on: ubuntu-latest
     needs: [test, build]
     if: always()
     steps:
       - name: Post the result to Discord
-        if: ${{ secrets.DISCORD_DEPLOY_WEBHOOK != '' }}
         env:
           WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
           TESTS: ${{ needs.test.result }}
@@ -131,6 +136,10 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           MESSAGE: ${{ github.event.head_commit.message }}
         run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "DISCORD_DEPLOY_WEBHOOK is not set - skipping the notification."
+            exit 0
+          fi
           if [ "$TESTS" = "success" ] && [ "$BUILD" = "success" ]; then
             ICON="✅"
             HEADLINE="Deployed"
@@ -150,5 +159,10 @@ jobs:
           SUBJECT=$(printf '%s' "$MESSAGE" | head -1)
           BODY=$(printf '%s **%s**\n`%s` by %s — %s\n%s\n%s' \
             "$ICON" "$HEADLINE" "${SHA:0:7}" "$ACTOR" "$SUBJECT" "$FOOTER" "$RUN_URL")
-          jq -n --arg c "$BODY" '{content: $c}' \
-            | curl -sS -X POST -H "Content-Type: application/json" -d @- "$WEBHOOK"
+          # `|| echo` so a Discord outage cannot turn a successful deploy red.
+          # The notifier failing is not the deploy failing, and a run marked
+          # failed for a reason that isn't the code is how a red X stops
+          # meaning anything. Same rule the app's own webhooks follow.
+          jq -n --arg c "$BODY" '{content: $c, allowed_mentions: {parse: []}}' \
+            | curl -sS -X POST -H "Content-Type: application/json" -d @- "$WEBHOOK" \
+            || echo "Could not reach Discord - the deploy itself was unaffected."
