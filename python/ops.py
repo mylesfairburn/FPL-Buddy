@@ -312,13 +312,25 @@ def _payload_for(url, message):
     someone to set a second environment variable describing the first one is
     how a setting ends up wrong.
 
-    FPL_ALERT_FORMAT overrides the detection for anything unusual.
+    Detection wins over the override, and that ordering is the whole point.
+    It used to be the other way round - FPL_ALERT_FORMAT first, detection as
+    the fallback - which meant one stray value in .env silently made every
+    channel POST a plain body to Discord, and Discord answered every one of
+    them with:
+
+        400 {"_misc": ["Expected \"Content-Type\" header to be one of ..."]}
+
+    A Discord webhook URL can only ever want Discord's JSON, so letting a
+    setting overrule that was offering a way to be wrong for no benefit. The
+    override now applies only where detection has nothing to go on - an ntfy
+    topic, a self-hosted receiver, anything not recognisably Discord or Slack.
     """
-    override = os.environ.get("FPL_ALERT_FORMAT", "").strip().lower()
-    kind = override or (
-        "discord" if ("discord.com" in url or "discordapp.com" in url)
-        else "slack" if "hooks.slack.com" in url
-        else "text")
+    if "discord.com" in url or "discordapp.com" in url:
+        kind = "discord"
+    elif "hooks.slack.com" in url:
+        kind = "slack"
+    else:
+        kind = os.environ.get("FPL_ALERT_FORMAT", "").strip().lower() or "text"
 
     if kind == "discord":
         # `allowed_mentions: {"parse": []}` disables every ping this message
@@ -349,22 +361,60 @@ def notify(channel, message, prefix=None):
     is identifiable at a glance; the drafts channel does not, because those
     messages are drafts meant to be read as written and a prefix is one more
     thing to delete before posting.
+
+    Cannot raise. This runs in the failure path of a cron job, and a
+    notification call that threw would turn "one job failed" into "the job that
+    reports failures also failed", losing the original error.
+    """
+    try:
+        ok, _detail = send(channel, message, prefix=prefix)
+        return ok
+    except Exception:
+        return False
+
+
+def send(channel, message, prefix=None):
+    """Push a message and say what happened: (ok, detail).
+
+    The reporting half of `notify`. Split out because the two callers want
+    opposite things: a cron job wants a boolean and no possibility of an
+    exception, while `jobs.py status --test-alert` exists solely to explain a
+    failure and was inheriting that silence - a bare "FAILED" sends you looking
+    at your network when Discord has plainly said 401.
+
+    `detail` is always a short human-readable string. For an HTTP error it
+    carries the status and the start of the response body, which is where
+    Discord puts the actual reason.
     """
     url = webhook_url(channel)
     if not url:
-        return False
+        return False, "no webhook configured for this channel"
+
+    # A URL that still has the quotes it was written with in .env, or that
+    # picked up a stray character, fails in a way that reads as a network
+    # problem. Naming it costs one check and saves an hour.
+    if not url.startswith(("http://", "https://")):
+        return False, (f"the URL does not begin with http:// or https:// "
+                       f"(it starts {url[:12]!r}) - check for quotes around "
+                       f"the value in .env")
+
     body = f"{prefix}: {message}" if prefix else message
     try:
         import requests
         kwargs = _payload_for(url, body)
         response = requests.post(url, timeout=10, **kwargs)
-        return response.status_code < 300
-    except Exception:
-        # Deliberately bare, and it must stay that way. This runs in the
-        # failure path of a cron job, and a notification call that raises would
-        # turn "one job failed" into "the job that reports failures also
-        # failed", losing the original error.
-        return False
+        if response.status_code < 300:
+            return True, f"HTTP {response.status_code}"
+        text = (response.text or "").strip().replace("\n", " ")[:200]
+        hint = {
+            401: " - the webhook was deleted, or the URL is wrong",
+            403: " - Discord refused it; check the webhook still has access to that channel",
+            404: " - no such webhook; it was deleted, or the URL is truncated",
+            429: " - rate limited, try again in a moment",
+        }.get(response.status_code, "")
+        return False, f"HTTP {response.status_code}{hint} :: {text}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
 
 
 def notify_once(channel, kind, ref, message, prefix=None):

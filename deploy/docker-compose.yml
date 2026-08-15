@@ -1,128 +1,154 @@
+# The live stack, as it actually runs on the host.
+#
+# This file used to be a reference copy that had DRIFTED from the server: a
+# different service name, no `networks`, a published port the real one doesn't
+# have, and neither support container. That is not a cosmetic problem. Adding a
+# variable here and assuming it reached production is exactly how five Discord
+# webhooks ended up set in .env, named in a file nobody was using, and empty
+# inside the container - with no error anywhere.
+#
+# So: keep this file identical to /root/apps/docker-compose.yml. If you change
+# one, change the other in the same sitting.
+#
+#   scp deploy/docker-compose.yml root@web-host:/root/apps/docker-compose.yml
+#   ssh root@web-host 'cd /root/apps && docker compose up -d'
+#
+# Secrets live in /root/apps/.env, never here. See env.example.
+
 services:
+  # The service KEY and the CONTAINER name are both `fpl-buddy`. Keep them that
+  # way, and read the next paragraph before changing either.
+  #
+  # This key used to be `fpl-companion`, and renaming it took the site down for
+  # an hour. The reason is not visible from here: Compose registers the SERVICE
+  # name as a DNS alias on the `web` network, and the Cloudflare tunnel forwards
+  # to that name. The tunnel's config lives in the Zero Trust dashboard - not in
+  # this repo, not in .env, not in any file on the host - so nothing could be
+  # grepped for it and nothing warned. The container stayed up and healthy
+  # throughout; cloudflared simply had nowhere to send traffic, which surfaces
+  # as a Cloudflare 502 and looks like the app has crashed.
+  #
+  # The name is therefore load-bearing in a place you cannot search:
+  #
+  #   dashboard -> Tunnels -> Configure -> Public Hostname -> Service:
+  #       http://fpl-buddy:8000
+  #
+  # If it ever changes again, change the dashboard FIRST. A tunnel pointing at a
+  # name that does not resolve yet just retries and reconnects on its own; a
+  # container carrying a name the tunnel has never heard of is a hard 502.
+  #
+  # The host paths further down stay /srv/fpl-companion regardless - they hold
+  # the live database and have nothing to do with either name.
   fpl-buddy:
     image: ghcr.io/mylesfairburn/fpl-buddy:latest
     # Pinned explicitly, which is worth one line. Without it Compose names the
     # container <project>-<service>-<n>, where <project> is the DIRECTORY the
-    # stack happens to live in - so the same file produced `apps-fpl-buddy-1`
-    # in /root/apps and would produce something else if the directory were ever
-    # renamed. Every cron job addresses this container by name, and the failure
-    # mode when that name drifts is silent: `docker exec` against a container
-    # that doesn't exist fails into a log nobody reads, and the only symptom is
-    # that the nightly jobs quietly stop happening.
+    # stack lives in. Every cron job addresses this container by name, and the
+    # failure mode when that name drifts is silent: `docker exec` against a
+    # container that doesn't exist fails into a log nobody reads, and the only
+    # symptom is that the nightly jobs quietly stop happening.
     container_name: fpl-buddy
     restart: unless-stopped
-    # Bound to localhost: the reverse proxy terminates TLS and is the only
-    # thing that should be able to reach /api/refresh from outside.
-    ports:
-      - "127.0.0.1:8000:8000"
+    networks: [web]
+    # Watchtower runs with --label-enable, so ONLY containers carrying this
+    # label are auto-updated. Without it this container is never upgraded and
+    # a green build sits in ghcr.io forever.
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    # No `ports:`. Nothing needs to reach this from the host - cloudflared
+    # connects over the `web` network below - and not publishing a port means
+    # there is no listener on the host to reach at all.
     volumes:
       # The host paths stay /srv/fpl-companion after the rename to FPL Buddy,
       # deliberately. They hold the live database and every file the nightly
       # job has written; renaming them means stopping the container, moving
       # data, and editing this file, with a real chance of the app coming back
-      # up pointing at an empty directory and looking like it works. A
-      # directory name that reads slightly stale is a much smaller problem than
-      # that, and it can be done later on its own - see deploy/README.md.
+      # up pointing at an empty directory and looking like it works.
       #
       # SQLite must outlive the image. NOT /app/data - that would shadow the
       # CSVs baked into the image.
       - /srv/fpl-companion/state:/app/state
       # The data root has to outlive the image too. The nightly job writes
       # gameweek_stats.csv, the bootstrap cache and the per-player summaries
-      # into it, and without this they were being written into the image layer
-      # and destroyed on every deploy - which silently dropped the app back to
+      # into it, and without this they were written into the image layer and
+      # destroyed on every deploy - which silently dropped the app back to
       # preseason ratings until the next 03:00 run rebuilt them.
       #
       # Mounted at a NEW path, not over /app/data: that directory holds the
       # CSVs baked into the image, and mounting over it would hide them.
-      # ensure_seeded() copies /app/data into here on first boot, per-file and
-      # missing-only, so a nightly-updated file is never reverted to the
-      # image's stale copy.
       - /srv/fpl-companion/data:/app/data-live
       # Read-only, and holding one file: the Google service-account JSON whose
       # path GSC_KEY points at. A file rather than an env var because that JSON
       # contains an RSA private key, and `docker inspect` prints environment
-      # values in full to anyone who can talk to the Docker socket. Read-only
-      # because the app only ever reads it, so nothing that compromises the app
-      # process can rewrite the credential.
+      # values in full to anyone who can talk to the Docker socket.
       - /srv/fpl-companion/secrets:/app/secrets:ro
+    # EVERY variable the app reads has to be named here. One that .env sets and
+    # this block omits never reaches the container, however carefully it is
+    # written, and nothing reports it. That is not hypothetical - it has now
+    # happened twice, to GSC_PROPERTY and to all five webhooks.
     environment:
       FPL_DB_PATH: /app/state/fpl_companion.db
       FPL_DATA_ROOT: /app/data-live
-      # openssl rand -hex 32 > /srv/fpl-companion/refresh_token
-      FPL_REFRESH_TOKEN: ${FPL_REFRESH_TOKEN:?set this, or /api/refresh stays open}
-      FPL_APP_URL: http://127.0.0.1:8000
-      # Serves /<key>.txt so IndexNow can verify ownership. Optional: unset,
-      # the route doesn't exist and nothing else changes. Not a secret - the
-      # whole point is that it's publicly readable - but it lives in .env with
-      # the others so the compose file stays the same everywhere.
+      FPL_REFRESH_TOKEN: ${FPL_REFRESH_TOKEN:?set this in /root/apps/.env}
       FPL_INDEXNOW_KEY: ${FPL_INDEXNOW_KEY:-}
-      # Lets the weekly social drafts be read from a phone, where a browser
-      # can't send the X-Refresh-Token header the other route needs. The secret
-      # IS the URL - see the note on FPL_SOCIAL_KEY in main.py for what that
-      # trade costs. Unset, the route doesn't exist.
-      #   openssl rand -hex 32
+      # 127.0.0.1 is correct despite there being no published port: the jobs run
+      # INSIDE this container via `docker exec`, so loopback is the app itself.
+      FPL_APP_URL: http://127.0.0.1:8000
       FPL_SOCIAL_KEY: ${FPL_SOCIAL_KEY:-}
-      # --- Alerting ----------------------------------------------------------
-      # Where a failed or overdue scheduled job pushes a message. Optional:
-      # unset, nothing is ever sent and nothing complains about it.
-      #
-      # This reaches the cron jobs as well as the web app - `docker exec`
-      # inherits the container's environment, which is why no secret is passed
-      # in /etc/cron.d/fpl-buddy.
-      #
-      # Named here for the same reason GSC_PROPERTY had to be: a variable this
-      # block doesn't list never reaches the container however carefully it is
-      # set in .env, and the failure is silent - alerting would simply never
-      # fire, which is indistinguishable from nothing ever going wrong.
+      # --- Discord channels --------------------------------------------------
+      # Each falls back to FPL_ALERT_WEBHOOK when blank, so one variable puts
+      # everything in one channel and they can be split out one at a time.
       FPL_ALERT_WEBHOOK: ${FPL_ALERT_WEBHOOK:-}
-      # Three more channels, each falling back to FPL_ALERT_WEBHOOK when unset -
-      # so one variable gets you everything in one channel, and splitting them
-      # out later is one variable at a time.
-      #
-      #   drafts    post drafts as they become postable (the nightly player
-      #             write-up, the briefing a day out, the roundup)
-      #   gameweek  deadline reminders, and what the AI Manager did
-      #   seo       the weekly Search Console digest
-      #
-      # Worth splitting: these want different notification settings. `alerts`
-      # should buzz at 3am, `drafts` should be waiting in the morning, `seo` is
-      # a weekly read. One channel carrying all four ends up muted.
       FPL_DRAFTS_WEBHOOK: ${FPL_DRAFTS_WEBHOOK:-}
       FPL_GAMEWEEK_WEBHOOK: ${FPL_GAMEWEEK_WEBHOOK:-}
       FPL_SEO_WEBHOOK: ${FPL_SEO_WEBHOOK:-}
-      # Ko-fi donations, relayed into Discord by POST /api/kofi.
-      #
-      # Two variables doing two different jobs, and a third already above:
-      #   FPL_KOFI_WEBHOOK  the DISCORD webhook this posts into
-      #   FPL_KOFI_TOKEN    the secret Ko-fi sends, proving a delivery is real
-      #   FPL_KOFI_HANDLE   the public name behind the site's donate button
-      #
-      # The route does not exist unless FPL_KOFI_TOKEN is set. That endpoint has
-      # to be reachable by Ko-fi's servers, which cannot authenticate, so the
-      # token in the payload is the only thing standing between it and anyone
-      # who finds the URL.
+      # Leave BLANK for Discord and Slack - their URLs are detected, and this
+      # setting is ignored for them. It applies only to a receiver that is
+      # neither (ntfy, a self-hosted endpoint), where "text" posts a plain body.
+      FPL_ALERT_FORMAT: ${FPL_ALERT_FORMAT:-}
+      # --- Ko-fi -------------------------------------------------------------
+      # TOKEN is the secret Ko-fi sends to prove a delivery is really from them;
+      # WEBHOOK is the Discord channel it gets relayed into. POST /api/kofi does
+      # not exist at all unless the token is set.
       FPL_KOFI_WEBHOOK: ${FPL_KOFI_WEBHOOK:-}
       FPL_KOFI_TOKEN: ${FPL_KOFI_TOKEN:-}
-      # Only needed if a URL isn't a Discord or Slack webhook and the
-      # auto-detection guesses wrong: discord | slack | text
-      FPL_ALERT_FORMAT: ${FPL_ALERT_FORMAT:-}
-      # --- Search Console / Bing reporting -----------------------------------
-      # Both optional: unset, the reporting job skips that source and says so
-      # rather than failing.
-      #
-      # GSC_KEY is a PATH, not the key itself - it points into the read-only
-      # secrets mount above. BINGWEBMASTER_KEY is a short opaque string, so it
-      # is fine as an environment value.
+      # --- Search Console / Bing reporting ------------------------------------
       GSC_KEY: ${GSC_KEY:-}
       BINGWEBMASTER_KEY: ${BINGWEBMASTER_KEY:-}
-      # GSC_PROPERTY has to be listed here as well as set in .env. A variable
-      # this block doesn't name never reaches the container, no matter what the
-      # .env says - and the default it falls back to inside the container is a
-      # URL-prefix property this site doesn't have, so Search Console 403s and
-      # the nightly report is written with only its Bing half filled in. There
-      # is no error anywhere: the job exits 0 by design on a partial source
-      # failure. See the note in env.example for the property strings.
-      GSC_PROPERTY: ${GSC_PROPERTY:-}
-      # Optional. Unset, the report skips Core Web Vitals and says so.
       PSI_KEY: ${PSI_KEY:-}
+      # Has to be listed here as well as set in .env. The default it falls back
+      # to inside the container is a URL-prefix property this site does not
+      # have, so Search Console 403s and the nightly report is written with only
+      # its Bing half filled in - and the job exits 0 by design on a partial
+      # source failure, so nothing looks wrong.
+      GSC_PROPERTY: ${GSC_PROPERTY:-}
+
+  # The public front door. Terminates TLS at Cloudflare and reaches the app over
+  # the `web` network, which is why the app publishes no port.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
+    networks: [web]
+
+  # Pulls a new image when one is published and restarts the container.
+  #
+  # --label-enable means it only touches containers carrying the watchtower
+  # label, so it will never restart cloudflared or itself. --interval 60 polls
+  # once a minute, so a green build reaches the site in about that long.
+  #
+  # Not on the `web` network deliberately: it talks to the Docker socket, not to
+  # the app, and there is no reason for it to be able to reach either.
+  watchtower:
+    image: nickfedor/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only, and it is the GHCR credential - watchtower cannot pull a
+      # private package without it.
+      - /root/.docker/config.json:/config.json:ro
+    command: --interval 60 --cleanup --label-enable
+
+networks:
+  web:
+    driver: bridge

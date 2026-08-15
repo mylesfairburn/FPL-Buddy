@@ -1088,14 +1088,18 @@ def send_test_alert():
         via = "own webhook" if state == "own" else "falling back to FPL_ALERT_WEBHOOK"
         url = ops.webhook_url(channel)
         # The URL is a credential - anyone holding it can post to the channel -
-        # so only enough is printed to tell two webhooks apart.
-        shown = url[:34] + "…" if len(url) > 34 else url
-        if ops.notify(channel,
-                      f"✅ **Test message — `{channel}`**\n"
-                      f"This channel will carry: {carries}."):
+        # so only the tail is printed. The tail rather than the head, because
+        # every Discord webhook begins with the same 33 characters: showing the
+        # start distinguishes nothing, which is the mistake this used to make.
+        shown = "…" + url[-12:] if len(url) > 12 else url
+        ok, detail = ops.send(channel,
+                              f"✅ **Test message — `{channel}`**\n"
+                              f"This channel will carry: {carries}.")
+        if ok:
             log(f"  {channel:<9} sent   ({via}, {shown})")
         else:
             log(f"  {channel:<9} FAILED ({via}, {shown})")
+            log(f"            {detail}")
             failures += 1
 
     log("")

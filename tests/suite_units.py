@@ -7,6 +7,7 @@ reader sees, so they're worth pinning down precisely.
 
 import json
 import math
+import os
 import re
 from datetime import date
 
@@ -1358,6 +1359,43 @@ def test_ops_heartbeat():
     plain = safe(ops._payload_for, "https://ntfy.sh/mytopic", "hi")
     check("anything else gets a plain body", "ntfy URL", "raw data", plain,
           lambda p: "data" in p and b"hi" in p["data"], severity="medium")
+
+    # Detection must BEAT FPL_ALERT_FORMAT, not defer to it.
+    #
+    # It deferred once, and the result was that a single stray value in .env
+    # made every channel POST a plain body to Discord - which answered all five
+    # with 400 "Expected Content-Type header to be one of ...". A Discord
+    # webhook URL can only ever want Discord's JSON, so there is no legitimate
+    # reason for a setting to be able to overrule that.
+    saved_format = os.environ.get("FPL_ALERT_FORMAT")
+    try:
+        for stray in ("text", "slack", "TEXT"):
+            os.environ["FPL_ALERT_FORMAT"] = stray
+            payload = safe(ops._payload_for,
+                           "https://discord.com/api/webhooks/1/abc", "hi")
+            check(f"FPL_ALERT_FORMAT={stray!r} cannot break a Discord webhook",
+                  "a discord.com URL", "still Discord JSON", payload,
+                  lambda p: "json" in p and "content" in p.get("json", {}),
+                  severity="critical")
+
+        # ...but it still applies where detection has nothing to go on.
+        os.environ["FPL_ALERT_FORMAT"] = "text"
+        check("the override still governs an unrecognised URL", "ntfy URL",
+              "raw data", safe(ops._payload_for, "https://ntfy.sh/topic", "hi"),
+              lambda p: "data" in p, severity="medium")
+    finally:
+        if saved_format is None:
+            os.environ.pop("FPL_ALERT_FORMAT", None)
+        else:
+            os.environ["FPL_ALERT_FORMAT"] = saved_format
+
+    # send() reports WHY, which notify() cannot. A quoted value in .env is the
+    # failure most likely to be mistaken for a network problem.
+    ok, detail = safe(ops.send, "alerts", "x") or (None, "")
+    check("send() explains a missing webhook rather than just failing",
+          "no webhook configured", "a reason, not a bare False", (ok, detail),
+          lambda pair: pair[0] is False and isinstance(pair[1], str)
+                       and len(pair[1]) > 10, severity="high")
 
 
 def test_ops_backups():

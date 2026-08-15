@@ -171,7 +171,7 @@ def tab_links():
 # the upcoming briefing and the last completed roundup - and a label naming one
 # of them would send anyone looking for the other past it.
 CONTENT_LINKS = [
-    {"path": "/gameweek", "label": "This gameweek", "short": "Gameweek"},
+    {"path": "/gameweek", "label": "Gameweek Tips", "short": "Gameweek"},
     {"path": "/players/a-z", "label": "Players A–Z", "short": "A–Z"},
 ]
 
