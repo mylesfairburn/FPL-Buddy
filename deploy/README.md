@@ -238,6 +238,18 @@ Monday night game can finish around 22:00 and FPL's bonus-point finalisation
 (the `data_checked` flag) often lags full time by an hour or more. A midnight
 run risks freezing provisional scores that later change.
 
+**Nightly rebuild at 03:15.** Rebuilds the current gameweek briefing and writes
+that night's in-depth player write-up, sharing one rating run between them.
+Must come before the IndexNow ping at 03:30, which reads the live sitemap.
+
+**Two things ride on `daily-refresh` rather than having cron lines of their
+own.** The gameweek roundup, because the moment it has to hit — after FPL
+confirms a round's stats — is the same condition the actual-points backfill
+already waits for. And the nightly housekeeping: the database backup, the disk
+tidy-up, and the check for jobs that have stopped running. A sixth crontab
+entry is a sixth thing that can silently not be installed, which is precisely
+the failure that check exists to catch.
+
 Install with:
 
 ```bash
@@ -246,6 +258,78 @@ chmod 644 /etc/cron.d/fpl-buddy
 ```
 
 Edit the paths and token at the top of that file first.
+
+### Log rotation
+
+The five jobs append to `/var/log/fpl-buddy-*.log` and nothing truncates them.
+`deadline-watch` alone writes 24 entries a day, forever.
+
+```bash
+cp deploy/fpl-buddy.logrotate /etc/logrotate.d/fpl-buddy
+chmod 644 /etc/logrotate.d/fpl-buddy
+logrotate -d /etc/logrotate.d/fpl-buddy
+```
+
+Run that last line. Logrotate silently skips a config file whose permissions
+are wrong, which looks exactly like it working.
+
+## 3a. Knowing whether the jobs are still running
+
+Everything above fails **silently**. The site keeps serving perfectly, just
+with older and older content — nothing 500s, and the only symptom is a briefing
+that stopped changing.
+
+Every scheduled command records that it ran and whether it succeeded:
+
+```bash
+docker exec fpl-buddy python jobs.py status
+```
+
+That prints each job's last run, its last **success** (the figure that actually
+matters — a job failing hourly has a very recent last run and has not worked
+since yesterday), what is overdue, how many backups exist, and whether alerting
+is configured. It exits non-zero when something is wrong, so it can be driven
+from another monitor without parsing the output. The same data is on
+`/api/ai/status` under `jobs`.
+
+### Discord as the hub
+
+Set `FPL_ALERT_WEBHOOK` in `.env` and everything below arrives in one channel.
+Set the other three to split it up — each falls back to the alerts webhook when
+unset, so this is one variable at a time rather than all-or-nothing.
+
+| Variable | Channel carries |
+|---|---|
+| `FPL_ALERT_WEBHOOK` | Jobs that failed or stopped running |
+| `FPL_DRAFTS_WEBHOOK` | The nightly player write-up, the briefing when it goes postable, the roundup when it lands |
+| `FPL_GAMEWEEK_WEBHOOK` | Deadline reminders (~24h and ~2h) and what the AI Manager did |
+| `FPL_SEO_WEBHOOK` | The weekly Search Console digest |
+| `FPL_KOFI_WEBHOOK` | Donations, relayed by `POST /api/kofi` (needs `FPL_KOFI_TOKEN` too) |
+
+Worth splitting: they want different notification settings on a phone. Alerts
+should buzz at 3am; content should be waiting in the morning; SEO is a weekly
+read. One channel carrying all four ends up muted.
+
+**Every variable also has to be named in `docker-compose.yml`.** One that
+`.env` sets and compose doesn't list never reaches the container, and the
+failure is silent — the same trap documented against `GSC_PROPERTY` above.
+
+Then check every channel actually lands where you think:
+
+```bash
+docker exec fpl-buddy python jobs.py status --test-alert
+```
+
+That sends one message per channel. Four messages arriving in four channels is
+the only way to catch a webhook pointing at the wrong channel, which no amount
+of re-reading the variable will show you.
+
+Deploy notifications are separate, because they come from GitHub rather than
+the server: set `DISCORD_DEPLOY_WEBHOOK` under Settings → Secrets and variables
+→ Actions.
+
+See [AUTOMATION.md](AUTOMATION.md) for the full audit of what is automated,
+what is deliberately not, and what is still missing.
 
 ## 4. First run
 

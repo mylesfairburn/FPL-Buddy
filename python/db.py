@@ -188,6 +188,102 @@ CREATE TABLE IF NOT EXISTS gw_report (
     generated_at  TEXT NOT NULL,
     frozen_at     TEXT
 );
+
+-- One roundup per gameweek: the results page at /gameweek/<n>/roundup.
+--
+-- Same JSON-payload shape as gw_report and for the same three reasons - the
+-- sections have no columns in common, nothing ever queries inside it, and the
+-- names and numbers have to be frozen INTO the row so an old page still reads
+-- as it did.
+--
+-- Deliberately a SEPARATE table rather than another column on gw_report. The
+-- two describe different moments and have opposite lifecycles: a briefing is
+-- rewritten nightly for a fortnight and then frozen, a roundup is written once
+-- and is frozen from birth. Sharing a row would mean the briefing's freeze flag
+-- governing whether the roundup can be written, which is exactly backwards -
+-- the roundup can only be written AFTER that freeze.
+--
+-- There is no `frozen` column for that reason: every row here is final. What
+-- would be a freeze flag elsewhere is `save_gw_roundup` refusing to overwrite.
+CREATE TABLE IF NOT EXISTS gw_roundup (
+    gameweek      INTEGER PRIMARY KEY,
+    payload       TEXT NOT NULL,               -- JSON: the whole roundup
+    generated_at  TEXT NOT NULL
+);
+
+-- One in-depth player write-up a night, and the ledger that stops them
+-- repeating.
+--
+-- `post_date` is the primary key rather than a surrogate id, which is what
+-- makes the nightly job idempotent for free: a second run on the same date
+-- sees the row and does nothing, and there is no way to end up with two posts
+-- for one night.
+--
+-- `code` and `angle` are columns rather than only living inside the payload
+-- precisely so they can be queried - "which players have I written about in the
+-- last fortnight" and "what was last night's angle" are the two questions the
+-- chooser asks, and both would mean decoding every payload otherwise.
+--
+-- `gameweek` is the round the post was written FOR, and is what retention
+-- deletes on: these are ephemeral by design and are removed when that
+-- gameweek's roundup is published.
+CREATE TABLE IF NOT EXISTS player_post (
+    post_date   TEXT PRIMARY KEY,              -- YYYY-MM-DD
+    gameweek    INTEGER NOT NULL,
+    code        INTEGER NOT NULL,              -- FPL's season-stable player code
+    angle       TEXT NOT NULL,
+    payload     TEXT NOT NULL,                 -- JSON: the whole write-up
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_player_post_gw ON player_post (gameweek);
+CREATE INDEX IF NOT EXISTS idx_player_post_code ON player_post (code);
+
+-- Did the scheduled jobs actually run.
+--
+-- The site depends on five cron jobs and had no record that any of them had
+-- ever executed. A job that silently stopped running looked identical to a
+-- quiet week: the briefing just stopped changing, and the first symptom was
+-- somebody noticing days later.
+--
+-- A row per attempt rather than one row per job holding the last result,
+-- because the useful question is "when did this last SUCCEED", and a job
+-- failing hourly would otherwise overwrite the answer with its most recent
+-- failure. `status` starts at 'running' and is updated on the way out, so a row
+-- still reading 'running' hours later is a job that died hard - killed, out of
+-- memory, box rebooted - which is worth being able to tell apart from a clean
+-- failure.
+--
+-- Pruned by ops.prune_job_runs: deadline-watch alone writes 24 rows a day.
+CREATE TABLE IF NOT EXISTS job_run (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    job         TEXT NOT NULL,
+    started_at  TEXT NOT NULL,
+    finished_at TEXT,
+    status      TEXT NOT NULL,                 -- 'running' | 'ok' | 'failed'
+    detail      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_job_run_job ON job_run (job, id);
+
+-- What has already been pushed to Discord.
+--
+-- Every notification this app sends is triggered by a WINDOW rather than an
+-- instant: "the deadline is about a day away" is a four-hour window checked by
+-- an hourly job, so without a ledger it fires four times. The windows are
+-- deliberately wider than the poll interval - that is what makes a single
+-- missed run harmless - so deduplication cannot come from narrowing them.
+--
+-- `ref` is text rather than an integer because the things being deduplicated
+-- are not all gameweeks: a gameweek notification refs "12", a weekly digest
+-- refs "2026-W33", and a nightly one refs a date. UNIQUE(kind, ref) is the
+-- whole mechanism - `mark_notified` returns True only for the insert that
+-- actually happened.
+CREATE TABLE IF NOT EXISTS notification (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind    TEXT NOT NULL,
+    ref     TEXT NOT NULL,
+    sent_at TEXT NOT NULL,
+    UNIQUE (kind, ref)
+);
 """
 
 
@@ -483,6 +579,210 @@ def gw_report_index():
         return [dict(r) for r in conn.execute(
             """SELECT gameweek, frozen, generated_at, frozen_at, deadline_time
                  FROM gw_report ORDER BY gameweek DESC""")]
+
+
+# ---- gameweek roundups ----------------------------------------------------
+
+def save_gw_roundup(gameweek, payload, replace=False):
+    """Write a gameweek's roundup. Refuses to overwrite an existing one.
+
+    A roundup is built from settled results, so a second run would produce the
+    same page from the same numbers - which means an overwrite is never useful
+    and is occasionally harmful. The daily job calls this on every run once a
+    round finishes, and this refusal is what makes that idempotent rather than
+    something that rewrites `generated_at` every night for the rest of the
+    season and drags the sitemap's lastmod with it.
+
+    `replace` is the deliberate escape hatch, for regenerating a roundup that
+    was built while the API was half-up. Nothing scheduled passes it.
+
+    Returns True if it wrote, False if one was already stored.
+    """
+    import json
+    with connect() as conn:
+        if not replace and conn.execute(
+                "SELECT 1 FROM gw_roundup WHERE gameweek = ?",
+                (int(gameweek),)).fetchone():
+            return False
+        conn.execute(
+            """INSERT INTO gw_roundup (gameweek, payload, generated_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(gameweek) DO UPDATE SET
+                   payload = excluded.payload,
+                   generated_at = excluded.generated_at""",
+            (int(gameweek), json.dumps(payload, separators=(",", ":")), utcnow()))
+        return True
+
+
+def get_gw_roundup(gameweek):
+    """One roundup, payload decoded. None if that round was never written up."""
+    import json
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM gw_roundup WHERE gameweek = ?",
+                           (int(gameweek),)).fetchone()
+    if not row:
+        return None
+    rec = dict(row)
+    rec["payload"] = json.loads(rec["payload"])
+    return rec
+
+
+def gw_roundup_index():
+    """Every stored roundup, newest first, without the payloads."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            """SELECT gameweek, generated_at
+                 FROM gw_roundup ORDER BY gameweek DESC""")]
+
+
+def latest_gw_roundup():
+    """The most recent roundup, payload decoded, or None.
+
+    The briefings page reads this rather than working out which gameweek most
+    recently finished: the answer is "whichever one we actually wrote up",
+    which is not always the last one to finish - a round that ended while the
+    box was down has no roundup, and the page should show the last one that
+    exists rather than a gap.
+    """
+    index = gw_roundup_index()
+    return get_gw_roundup(index[0]["gameweek"]) if index else None
+
+
+# ---- nightly player posts -------------------------------------------------
+
+def save_player_post(post_date, gameweek, code, angle, payload, replace=False):
+    """Store one night's player write-up.
+
+    Refuses to overwrite an existing date unless asked. The nightly job may run
+    twice - a manual catch-up after a failed cron, say - and the second run
+    should leave the post you have already read alone rather than swapping it
+    for a different player.
+
+    Returns True if it wrote, False if that date already had a post.
+    """
+    import json
+    with connect() as conn:
+        if not replace and conn.execute(
+                "SELECT 1 FROM player_post WHERE post_date = ?",
+                (str(post_date),)).fetchone():
+            return False
+        conn.execute(
+            """INSERT INTO player_post
+                   (post_date, gameweek, code, angle, payload, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(post_date) DO UPDATE SET
+                   gameweek = excluded.gameweek,
+                   code = excluded.code,
+                   angle = excluded.angle,
+                   payload = excluded.payload,
+                   created_at = excluded.created_at""",
+            (str(post_date), int(gameweek), int(code), str(angle),
+             json.dumps(payload, separators=(",", ":")), utcnow()))
+        return True
+
+
+def get_player_post(post_date):
+    """One night's post, payload decoded, or None."""
+    import json
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM player_post WHERE post_date = ?",
+                           (str(post_date),)).fetchone()
+    if not row:
+        return None
+    rec = dict(row)
+    rec["payload"] = json.loads(rec["payload"])
+    return rec
+
+
+def recent_player_posts(limit=30):
+    """The ledger the chooser reads: newest first, WITHOUT the payloads.
+
+    Only the date, the player and the angle, because that is all the two
+    anti-repetition rules need and decoding thirty payloads to answer "who did
+    I write about last week" would be waste that grows daily."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            """SELECT post_date, gameweek, code, angle, created_at
+                 FROM player_post ORDER BY post_date DESC LIMIT ?""",
+            (int(limit),))]
+
+
+def player_posts_for_gameweek(gameweek):
+    """Every post written for one gameweek, oldest first. What the admin view
+    lists, and what retention removes once the roundup lands."""
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            """SELECT post_date, gameweek, code, angle, created_at
+                 FROM player_post WHERE gameweek = ? ORDER BY post_date""",
+            (int(gameweek),))]
+
+
+def latest_player_post():
+    """The newest post, payload decoded, or None."""
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT post_date FROM player_post ORDER BY post_date DESC LIMIT 1"
+        ).fetchone()
+    return get_player_post(row["post_date"]) if row else None
+
+
+def delete_player_posts_for_gameweek(gameweek):
+    """Remove a gameweek's posts. Returns the dates removed, so the caller can
+    delete the matching draft files and log what went."""
+    with connect() as conn:
+        dates = [r["post_date"] for r in conn.execute(
+            "SELECT post_date FROM player_post WHERE gameweek = ?",
+            (int(gameweek),))]
+        conn.execute("DELETE FROM player_post WHERE gameweek = ?",
+                     (int(gameweek),))
+    return dates
+
+
+# ---- notification ledger --------------------------------------------------
+
+def mark_notified(kind, ref):
+    """Claim the right to send one notification. True the first time only.
+
+    Deliberately shaped as a claim rather than a question, so there is no gap
+    between checking and sending in which a second run could check too. The
+    UNIQUE constraint does the work: the INSERT either happens or it doesn't,
+    and the caller sends only if it did.
+
+    Order matters at the call site - claim first, then send. The other way
+    round, a push that succeeds followed by a failed write means the same
+    message every hour until the deadline passes. Claiming first means the
+    worst case is one missed notification, which is much the better failure.
+    """
+    with connect() as conn:
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO notification (kind, ref, sent_at)
+               VALUES (?, ?, ?)""", (str(kind), str(ref), utcnow()))
+        return cur.rowcount > 0
+
+
+def was_notified(kind, ref):
+    """Whether this notification has already gone. For tests and diagnostics -
+    production code calls mark_notified, which is atomic."""
+    with connect() as conn:
+        return conn.execute(
+            "SELECT 1 FROM notification WHERE kind = ? AND ref = ?",
+            (str(kind), str(ref))).fetchone() is not None
+
+
+def clear_notification(kind, ref):
+    """Forget that a notification was sent, so it can be sent again. For
+    resending by hand after a webhook outage."""
+    with connect() as conn:
+        return conn.execute(
+            "DELETE FROM notification WHERE kind = ? AND ref = ?",
+            (str(kind), str(ref))).rowcount > 0
+
+
+def recent_notifications(limit=40):
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(
+            """SELECT kind, ref, sent_at FROM notification
+                ORDER BY id DESC LIMIT ?""", (int(limit),))]
 
 
 # ---- retention ------------------------------------------------------------

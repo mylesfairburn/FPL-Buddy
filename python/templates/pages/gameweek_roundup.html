@@ -1,0 +1,201 @@
+{% extends 'pages/_layout.html' %}
+
+{% block head_extra %}
+    {# Same Article markup as the briefing. A roundup is written once and never
+       rewritten, so datePublished and dateModified are the same timestamp -
+       which is the honest way to tell a search engine this page is finished,
+       rather than one that looks edited every time the sitemap is regenerated.
+
+       No `author`, for the same reason as the briefing: an author has to be a
+       real identity, and inventing one for a page a cron job assembled would
+       be a claim rather than a description. #}
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "Article",
+      "headline": {{ ("Fantasy Premier League Gameweek " ~ roundup.gameweek ~ " roundup") | tojson }},
+      "description": {{ roundup.summary | tojson }},
+      "url": "{{ canonical }}",
+      "datePublished": {{ generated_at | tojson }},
+      "dateModified": {{ generated_at | tojson }},
+      "isAccessibleForFree": true,
+      "publisher": {"@type": "Organization", "name": {{ site_name | tojson }},
+                    "url": {{ (site_url ~ "/") | tojson }}}
+    }
+    </script>
+{% endblock %}
+
+{% block content %}
+{# ============================ MASTHEAD ============================ #}
+<header class="gw-masthead">
+    <div class="gw-masthead-rule">
+        <span class="gw-edition">Gameweek {{ roundup.gameweek }}</span>
+        {% if roundup.season %}<span class="gw-season">{{ roundup.season }}</span>{% endif %}
+        {# One state only. Unlike a briefing, a roundup has no draft or preview
+           life - it is written after FPL confirms the round's stats and is
+           final the moment it exists. #}
+        <span class="gw-status is-final">Final</span>
+    </div>
+    <h1 class="gw-title">The Gameweek {{ roundup.gameweek }} Roundup</h1>
+    <p class="gw-standfirst">{{ roundup.summary }}</p>
+    <p class="gw-byline">
+        Written after Gameweek {{ roundup.gameweek }} was settled &mdash; once FPL had
+        confirmed the round's stats, so the bonus points here are the final ones
+        rather than the provisional totals that move overnight. It has not changed
+        since and will not.
+    </p>
+</header>
+
+{% if not (roundup.top_scorers or roundup.underperformers or roundup.shocks or roundup.momentum) %}
+<p class="gw-empty">
+    Nothing was recorded for this round. Either it was a blank gameweek, or the
+    stats weren&rsquo;t available when this page was written.
+</p>
+{% endif %}
+
+{# ============================ THE SCORERS ============================ #}
+{% if roundup.top_scorers %}
+<section class="gw-section gw-lead">
+    <h2 class="gw-section-head"><span>The Scorers</span></h2>
+    <p class="gw-section-sub">The three highest points totals of the gameweek, and what made them up.</p>
+    <div class="gw-cards gw-cards-3">
+    {% for p in roundup.top_scorers %}
+        <article class="gw-card">
+            <div class="gw-card-top">
+                {% with code = p.team_code, label = p.team_name %}{% include 'partials/club_chip.html' %}{% endwith %}
+                <span class="gw-pos">{{ p.pos }}</span>
+            </div>
+            <h3 class="gw-card-name">
+                {% if p.path %}<a href="{{ p.path }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}
+            </h3>
+            <p class="gw-card-figure">{{ p.headline }}</p>
+            <p class="gw-card-why">{{ p.why }}</p>
+            <dl class="gw-stats">
+                {% if p.goals %}<div><dt>Goals</dt><dd>{{ p.goals|int }}</dd></div>{% endif %}
+                {% if p.assists %}<div><dt>Assists</dt><dd>{{ p.assists|int }}</dd></div>{% endif %}
+                {% if p.bonus %}<div><dt>Bonus</dt><dd>{{ p.bonus|int }}</dd></div>{% endif %}
+                {% if p.owned is not none %}<div><dt>Owned</dt><dd>{{ '%.1f'|format(p.owned) }}%</dd></div>{% endif %}
+            </dl>
+        </article>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{# ============================ THE BLANKS ============================ #}
+{% if roundup.underperformers %}
+<section class="gw-section">
+    <h2 class="gw-section-head"><span>The Blanks</span></h2>
+    <p class="gw-section-sub">
+        Players enough managers own for it to have hurt, who played an hour or more
+        and returned almost nothing. The expected-goal figure is the part that
+        matters &mdash; it separates a bad week from a bad player.
+    </p>
+    <div class="gw-cards gw-cards-3">
+    {% for p in roundup.underperformers %}
+        <article class="gw-card gw-card-blank">
+            <div class="gw-card-top">
+                {% with code = p.team_code, label = p.team_name %}{% include 'partials/club_chip.html' %}{% endwith %}
+                <span class="gw-pos">{{ p.pos }}</span>
+            </div>
+            <h3 class="gw-card-name">
+                {% if p.path %}<a href="{{ p.path }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}
+            </h3>
+            <p class="gw-card-figure">{{ p.headline }}</p>
+            <p class="gw-card-why">{{ p.why }}</p>
+            <dl class="gw-stats">
+                {% if p.owned is not none %}<div><dt>Owned</dt><dd>{{ '%.1f'|format(p.owned) }}%</dd></div>{% endif %}
+                {% if p.minutes %}<div><dt>Minutes</dt><dd>{{ p.minutes|int }}</dd></div>{% endif %}
+                {% if p.xgi is not none %}<div><dt>xGI</dt><dd>{{ '%.2f'|format(p.xgi) }}</dd></div>{% endif %}
+            </dl>
+        </article>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{# ============================ THE SHOCKS ============================ #}
+{% if roundup.shocks %}
+<section class="gw-section">
+    <h2 class="gw-section-head"><span>Against the Table</span></h2>
+    <p class="gw-section-sub">
+        Results where the league position going into the round said the other thing.
+        Positions are as they stood <em>before</em> this gameweek, since the win being
+        judged has already moved both clubs.
+    </p>
+    <ul class="gw-news-list">
+    {% for s in roundup.shocks %}
+        <li class="gw-news-item">
+            <div class="gw-news-who">
+                {% with code = s.winner_code, label = s.winner_name %}{% include 'partials/club_chip.html' %}{% endwith %}
+                <strong>{{ s.headline }}</strong>
+            </div>
+            <p class="gw-news-why">{{ s.why }}</p>
+        </li>
+    {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
+{# ============================ MOMENTUM ============================ #}
+{% if roundup.momentum %}
+<section class="gw-section">
+    <h2 class="gw-section-head"><span>On a Run</span></h2>
+    <p class="gw-section-sub">
+        Clubs whose run is live as of this gameweek &mdash; counted backwards from it,
+        so a streak that ended last week isn&rsquo;t here.
+    </p>
+    <ul class="gw-news-list">
+    {% for m in roundup.momentum %}
+        <li class="gw-news-item">
+            <div class="gw-news-who">
+                {% with code = m.team_code, label = m.team_name %}{% include 'partials/club_chip.html' %}{% endwith %}
+                <strong>{{ m.headline }}</strong>
+            </div>
+            <p class="gw-news-why">{{ m.why }}</p>
+        </li>
+    {% endfor %}
+    </ul>
+</section>
+{% endif %}
+
+{# ============================ THE SCORECARD ============================
+   The one section that costs something to publish. Everything else on this
+   page reports what happened; this reports what the site said would happen,
+   next to it. #}
+{% if roundup.scorecard %}
+<section class="gw-section gw-scorecard">
+    <h2 class="gw-section-head"><span>How the Model Did</span></h2>
+    <p class="gw-section-sub">
+        The AI Best XI&rsquo;s projection for this gameweek was frozen at the deadline
+        and never recomputed. This is it against what the squad actually scored.
+    </p>
+    <dl class="gw-stats gw-stats-wide">
+        <div><dt>Projected</dt><dd>{{ '%.1f'|format(roundup.scorecard.predicted) }}</dd></div>
+        <div><dt>Actual</dt><dd>{{ roundup.scorecard.actual }}</dd></div>
+        {% if roundup.scorecard.difference is not none %}
+        <div><dt>Difference</dt><dd>{{ '%+.1f'|format(roundup.scorecard.difference) }}</dd></div>
+        {% endif %}
+    </dl>
+    <p class="gw-card-why">
+        Every gameweek&rsquo;s record is on the
+        <a href="/ai-teams">AI teams page</a>, including the ones it got wrong.
+    </p>
+</section>
+{% endif %}
+
+{# ============================ FOOTER ============================ #}
+<footer class="gw-footer">
+    <p>
+        Points, goals and bonus come from FPL&rsquo;s own settled figures for this
+        gameweek. The league positions and runs are computed from the season&rsquo;s
+        results; the expected-goal numbers are FPL&rsquo;s. Every sentence on this page
+        restates a number printed beside it.
+    </p>
+    <p class="gw-footer-nav">
+        <a href="/gameweek/{{ roundup.gameweek }}">&larr; The Gameweek {{ roundup.gameweek }} briefing</a>
+        <a href="/gameweek">This gameweek</a>
+        <a href="/gameweek/feed.xml">RSS</a>
+    </p>
+</footer>
+{% endblock %}

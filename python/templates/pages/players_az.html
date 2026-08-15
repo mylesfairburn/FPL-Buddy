@@ -20,6 +20,10 @@
                server-rendered ratings table follows with .ssr-controls. #}
             <div id="azSearchSlot"></div>
 
+            {# This page's search is names only. Club and position are still
+               PRINTED on every row, but they are not matched against - see
+               data-name below and the note on `rows` in the script. #}
+
             <nav class="az-jump" aria-label="Jump to letter">
                 {% for group in groups %}<a href="#letter-{{ group.letter }}" data-letter="{{ group.letter }}">{{ group.letter }}</a>{% endfor %}
             </nav>
@@ -36,20 +40,29 @@
                     {% for p in group.players %}
                     {# Listed under the name FPL displays, which is the one a reader
                        is scanning for; the full name follows where it differs, so
-                       the page still matches a search for it. #}
-                    <li><a href="{{ p.path }}">{{ p.web_name }}</a>
+                       the page still matches a search for it.
+
+                       `data-name` is what the filter matches on, and it holds the
+                       two names and nothing else. Matching the row's rendered text
+                       instead - which is what this used to do - meant the club,
+                       the position and the price were all searchable by accident:
+                       "mid" returned every midfielder and "9" returned everyone
+                       priced in the nines, neither of which is a player search. #}
+                    <li data-name="{{ p.web_name }}{% if p.full_name != p.web_name %} {{ p.full_name }}{% endif %}"><a href="{{ p.path }}">{{ p.web_name }}</a>
                         <span class="az-meta">{{ p.team_short or p.team_name }} &middot; {{ p.pos }}{% if p.cost %} &middot; &pound;{{ p.cost }}m{% endif %}{% if p.full_name != p.web_name %} &middot; {{ p.full_name }}{% endif %}</span></li>
                     {% endfor %}
                 </ul>
             </section>
             {% endfor %}
 
-            {# The examples are what each row actually prints - the club appears
-               here in full ("Man City"), so suggesting a three-letter code
-               would send people looking for something that isn't on the page. #}
+            {# Names only, so the suggestion is a name. Offering a club or a
+               position here would be advertising a search this page no longer
+               does - and the ratings table linked above is where filtering by
+               either of those actually belongs. #}
             <p id="azNoMatch" class="az-nomatch d-none">No player matches that. Try a
-                surname, a club (<code>Arsenal</code>) or a position
-                (<code>MID</code>).</p>
+                surname (<code>Saka</code>) or a full name
+                (<code>Bukayo Saka</code>). To filter by club or position, use the
+                <a href="/players">player ratings table</a>.</p>
 {% endblock %}
 
 {% block scripts %}
@@ -70,13 +83,24 @@
 
     // Every row's searchable text, folded once at load rather than on each
     // keystroke: 570 normalize() calls per character typed is the difference
-    // between instant and laggy on a phone. textContent covers the display
-    // name, the club, the position, the price and the full name, so a search
-    // for "arsenal" or "MID" or a player's real surname all land.
+    // between instant and laggy on a phone.
+    //
+    // The source is `data-name`, which holds the display name and the full name
+    // and nothing else. It used to be li.textContent - the whole rendered row -
+    // which quietly made the club, the position and the price searchable too.
+    // That reads like a feature and isn't one: "mid" matched every midfielder,
+    // "for" every forward, "9" everyone priced in the nines, and a search for a
+    // player whose surname happens to be a club name returned the club instead.
+    // This page is an index of names; /players is where filtering lives.
+    //
+    // Falls back to textContent if the attribute is somehow missing, so a
+    // template change can't leave the box matching nothing at all.
     var rows = [];
     groups.forEach(function (g) {
         var items = Array.prototype.slice.call(g.querySelectorAll('li'));
-        items.forEach(function (li) { rows.push({ el: li, q: fold(li.textContent), group: g }); });
+        items.forEach(function (li) {
+            rows.push({ el: li, q: fold(li.dataset.name || li.textContent), group: g });
+        });
         g._items = items;
     });
     var total = rows.length;
@@ -88,8 +112,8 @@
         // on a search input, and the site already has one that matches the
         // ratings table's.
         + '<input type="text" id="azQ" class="form-control form-control-sm"'
-        + ' placeholder="Search by name, club or position…" autocomplete="off"'
-        + ' aria-label="Search every player">'
+        + ' placeholder="Search by player name…" autocomplete="off"'
+        + ' aria-label="Search every player by name">'
         + '<button class="search-clear" type="button" aria-label="Clear search">&times;</button>'
         + '</div>'
         + '<span class="az-count" id="azCount" role="status" aria-live="polite"></span>'

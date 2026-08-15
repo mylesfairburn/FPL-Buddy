@@ -9,8 +9,73 @@ permissions:
   packages: write
 
 jobs:
+  # The image used to publish unconditionally, which meant the ~830-case suite
+  # ran only when somebody remembered to run it by hand. A push to main went
+  # straight to ghcr.io, watchtower pulled it, and a broken route reached the
+  # live site before anyone knew there was one.
+  #
+  # A separate job rather than a step inside `build`, so the failure reads as
+  # "tests failed" in the Actions list rather than as a failed build, and so
+  # `build` can state its dependency explicitly below.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Matches the Dockerfile. The pinned pandas/numpy versions in
+          # requirements.txt need wheels for whichever version this is, so the
+          # two want to move together.
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r python/requirements.txt
+
+      # data/models/*.pkl is gitignored - the bundles live on the deployment's
+      # volume, not in the repo - so a fresh checkout has no models and the app
+      # cannot boot without them. Training reads data/seasons/2025-26/, which
+      # IS in the repo, and takes about five seconds.
+      #
+      # This is a real check as well as a fix: if a data or code change ever
+      # breaks training, it breaks here rather than the next time the models
+      # are rebuilt by hand months later.
+      - name: Train the models
+        run: |
+          mkdir -p data/models
+          cd python && python train_model.py
+
+      # The suite boots the app, which rates the full player pool. It reads
+      # data/ directly and writes SQLite to a temp path, so nothing else needs
+      # configuring. It does reach the FPL API, and every fetcher falls back to
+      # the cached CSVs in data/ when that fails - so a flaky API costs the
+      # live-fetch coverage rather than the run.
+      #
+      # run_tests.py exits non-zero if anything CRITICAL or HIGH fails, and that
+      # is the gate. Medium and below are reported in the artifact below and do
+      # not block a deploy, which is deliberate: the suite carries a handful of
+      # standing medium findings about third-party CDN assets, and a gate that
+      # is always red is a gate everyone learns to ignore.
+      - name: Run the test suite
+        run: python tests/run_tests.py
+
+      # Kept even when the tests fail - that is the run whose report you want.
+      - name: Upload the test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: tests/reports/
+          if-no-files-found: ignore
+
   build:
     runs-on: ubuntu-latest
+    # The gate. Without this the two jobs run in parallel and the image is
+    # published whatever the tests say.
+    needs: test
     steps:
       - name: Check out the code
         uses: actions/checkout@v6
@@ -37,3 +102,53 @@ jobs:
           tags: ghcr.io/mylesfairburn/fpl-buddy:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Tell Discord what happened, whichever way it went.
+  #
+  # `if: always()` with `needs: [test, build]` is what makes this report a
+  # FAILED run as well as a successful one - the default would skip this job
+  # entirely when something upstream failed, which is precisely the run you
+  # want to hear about. The job results are read from the needs context rather
+  # than assumed.
+  #
+  # Set DISCORD_DEPLOY_WEBHOOK in Settings -> Secrets and variables -> Actions.
+  # Unset, the step is skipped and nothing fails - the same opt-in rule the
+  # app's own webhooks follow.
+  notify:
+    runs-on: ubuntu-latest
+    needs: [test, build]
+    if: always()
+    steps:
+      - name: Post the result to Discord
+        if: ${{ secrets.DISCORD_DEPLOY_WEBHOOK != '' }}
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_DEPLOY_WEBHOOK }}
+          TESTS: ${{ needs.test.result }}
+          BUILD: ${{ needs.build.result }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          if [ "$TESTS" = "success" ] && [ "$BUILD" = "success" ]; then
+            ICON="✅"
+            HEADLINE="Deployed"
+            FOOTER="watchtower will pull it within its poll interval."
+          elif [ "$TESTS" != "success" ]; then
+            ICON="🔴"
+            HEADLINE="Tests failed — nothing was published"
+            FOOTER="The live site is untouched. The report is attached to the run as an artifact."
+          else
+            ICON="🟠"
+            HEADLINE="Tests passed but the image build failed"
+            FOOTER="The live site is untouched."
+          fi
+          # First line of the commit message only. A multi-line body is not
+          # what you want on a phone, and jq --arg handles the quoting so a
+          # message containing quotes or backticks can't break the JSON.
+          SUBJECT=$(printf '%s' "$MESSAGE" | head -1)
+          BODY=$(printf '%s **%s**\n`%s` by %s — %s\n%s\n%s' \
+            "$ICON" "$HEADLINE" "${SHA:0:7}" "$ACTOR" "$SUBJECT" "$FOOTER" "$RUN_URL")
+          jq -n --arg c "$BODY" '{content: $c}' \
+            | curl -sS -X POST -H "Content-Type: application/json" -d @- "$WEBHOOK"

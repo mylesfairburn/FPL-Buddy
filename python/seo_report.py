@@ -388,11 +388,94 @@ def summarise(report):
     return lines
 
 
+def digest(report):
+    """The weekly Discord message: how search is going, in a dozen lines.
+
+    A different thing from `summarise` above, which is written for a log and
+    prints whatever it has. This is written for someone reading a phone on a
+    Monday and answers one question - is this growing or not - so it leads with
+    the totals and follows with the queries worth knowing about.
+    """
+    lines = ["📈 **Weekly search digest**"]
+
+    gsc = report.get("gsc") or {}
+    rows = gsc.get("queries") if isinstance(gsc.get("queries"), list) else []
+    if rows:
+        clicks = sum(r.get("clicks") or 0 for r in rows)
+        impressions = sum(r.get("impressions") or 0 for r in rows)
+        # Weighted by impressions, not a mean of the positions: an average over
+        # 400 queries is dominated by the long tail nobody searches, and would
+        # report a healthy site as sitting on page four.
+        position = (sum((r.get("position") or 0) * (r.get("impressions") or 0)
+                        for r in rows) / impressions) if impressions else 0
+        lines += ["", f"**Google** ({gsc.get('start')} → {gsc.get('end')})",
+                  f"• {clicks:.0f} clicks from {impressions:.0f} impressions",
+                  f"• {len(rows)} queries, average position {position:.1f}"]
+
+        top = sorted(rows, key=lambda r: -(r.get("clicks") or 0))[:5]
+        if any((r.get("clicks") or 0) > 0 for r in top):
+            lines += ["", "**Bringing clicks**"]
+            for r in top:
+                if (r.get("clicks") or 0) <= 0:
+                    continue
+                lines.append(f"• {r.get('clicks'):.0f} — {r.get('query')} "
+                             f"(pos {r.get('position', 0):.1f})")
+
+        # High impressions and no clicks is the actionable case: the page ranks
+        # and the title or description isn't earning the click.
+        near = [r for r in rows
+                if (r.get("impressions") or 0) >= 50 and not (r.get("clicks") or 0)]
+        near.sort(key=lambda r: -(r.get("impressions") or 0))
+        if near:
+            lines += ["", "**Seen but not clicked** (worth a title rewrite)"]
+            for r in near[:5]:
+                lines.append(f"• {r.get('impressions'):.0f} imp, "
+                             f"pos {r.get('position', 0):.1f} — {r.get('query')}")
+    else:
+        lines += ["", "**Google:** no query data in this report."]
+
+    bing = report.get("bing") or {}
+    if isinstance(bing, dict) and bing.get("clicks") is not None:
+        lines += ["", f"**Bing:** {bing.get('clicks')} clicks, "
+                      f"{bing.get('impressions')} impressions"]
+
+    psi = report.get("psi") or {}
+    scores = [f"{path} {v['score']}" for path, v in psi.items()
+              if isinstance(v, dict) and "score" in v]
+    if scores:
+        lines += ["", "**PageSpeed:** " + " · ".join(scores)]
+
+    return "\n".join(lines)
+
+
+def send_weekly_digest(report, today=None):
+    """Push the digest once a week, on the first run of each ISO week.
+
+    Keyed on the ISO week rather than on the weekday, so a Monday where the box
+    was down doesn't skip that week - the Tuesday run sends it instead. Weekly
+    rather than daily because Search Console only updates once a day and lags
+    two to three days behind, so a daily digest would report the same numbers
+    with a different date on them.
+    """
+    import db
+    import ops
+    today = today or date.today()
+    year, week, _day = today.isocalendar()
+    ref = f"{year}-W{week:02d}"
+    if ops.notify_once("seo", "seo_digest", ref, digest(report)):
+        log(f"  weekly digest pushed ({ref})")
+        return True
+    return False
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--dry-run", action="store_true",
                         help="fetch and print, write nothing")
+    parser.add_argument("--digest", action="store_true",
+                        help="push the weekly Discord digest now, ignoring "
+                             "whether one has already gone this week")
     parser.add_argument("--only", choices=("gsc", "bing", "psi"),
                         help="fetch a single source")
     parser.add_argument("--diagnose", action="store_true",
@@ -421,10 +504,26 @@ def main(argv=None):
         json.dump(report, fh, separators=(",", ":"))
     log(f"-> {path} ({os.path.getsize(path)} bytes)")
 
+    # Once a week, on the first run of each ISO week. Rides on this job rather
+    # than having a weekly cron line of its own - the data only arrives here,
+    # and a second entry is another thing that can silently not be installed.
+    try:
+        if args.digest:
+            import ops
+            log("  --digest: pushing now")
+            ops.notify("seo", digest(report))
+        else:
+            send_weekly_digest(report)
+    except Exception as e:
+        log(f"  weekly digest FAILED: {e}")
+
     # Exit 0 even when a source failed. The report records the failure, and a
     # non-zero exit from cron on a partial success trains you to ignore it.
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # See the note in indexnow.py: this records a heartbeat so `jobs.py status`
+    # can tell "the nightly SEO pull is fine" from "it has not run since March".
+    import ops
+    sys.exit(ops.tracked("seo-report", main))

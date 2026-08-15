@@ -46,6 +46,11 @@ FIXTURE_HORIZON = 5
 
 SECTION_SIZE = 3
 
+# The captaincy shortlist is deliberately short. Captaincy is a single choice,
+# and a list of six is a way of not making it - three is enough to show the
+# model's ranking and the gap between them, which is the part that decides it.
+CAPTAIN_SHORTLIST = 3
+
 
 def _stat(rec, key, default=None):
     """A stat from the record, or `default`. Values can be missing entirely -
@@ -190,7 +195,76 @@ def _in_form_reason(rec, form):
     return line + "."
 
 
-# ---- section 2: differentials ---------------------------------------------
+# ---- section 2: the armband -----------------------------------------------
+
+def captain_picks(pages, gameweek, limit=CAPTAIN_SHORTLIST):
+    """The highest projections in the game for this gameweek.
+
+    Ranked on the model's projection alone, over the whole fit pool - not on
+    form, and not filtered by ownership. Captaincy is the one decision where
+    the question really is just "who scores most this week", and every other
+    section on this page already answers a narrower version of it.
+
+    Ownership breaks ties, highest first, which is the opposite of the
+    differentials section and deliberate. Two players projecting the same are
+    the same bet on points and a different bet on rank: if the model can't
+    separate them, the more-owned one is the one that doesn't cost you rank
+    when it goes wrong, and that is what a tie-break should pick."""
+    picks = []
+    for rec in pages.values():
+        if not _is_available(rec):
+            continue
+        pred = _predicted_for(rec, gameweek)
+        if pred is None:
+            continue
+        picks.append((pred, float(_stat(rec, "selected_by_percent") or 0.0), rec))
+
+    picks.sort(key=lambda t: (-t[0], -t[1]))
+
+    out = []
+    # The gap to the next name is what the section is really for - a 0.1
+    # difference is the model saying "either", and printing the two numbers
+    # without saying so invites a reader to treat it as a ranking.
+    top = picks[0][0] if picks else None
+    for rank, (pred, owned, rec) in enumerate(picks[:limit], start=1):
+        card = _base_card(rec, gameweek)
+        card["rank"] = rank
+        card["headline"] = f"{pred:.1f} projected"
+        card["behind_leader"] = round(top - pred, 1) if top is not None else None
+        card["why"] = _captain_reason(rec, pred, owned, rank,
+                                      card["behind_leader"], card["fixtures"])
+        out.append(card)
+    return out
+
+
+def _captain_reason(rec, pred, owned, rank, behind, fixtures):
+    """`fixtures` is the card's own list, which already starts at the gameweek
+    being reported on - so the opponent named here is the one the projection
+    was made against rather than whichever game happens to be next."""
+    name = rec.get("web_name") or rec.get("full_name")
+    where = f" against {fixtures[0]['label']}" if fixtures else ""
+    if rank == 1:
+        line = f"{name} is the model's highest projection this gameweek at {pred:.1f} points{where}"
+    elif behind is not None and behind < 0.05:
+        # An outright tie. "Within 0.0 of the top pick" is what the near-tie
+        # wording below produces here, and it reads as a rounding error rather
+        # than as the statement it is.
+        line = (f"{name} projects the same {pred:.1f}{where} — the model cannot "
+                f"separate the two")
+    elif behind is not None and behind <= 0.3:
+        # Stated as a near-tie rather than as second place, because 0.2 points
+        # of projection is inside anyone's margin and calling it a ranking
+        # would be reading precision into the model it doesn't have.
+        line = (f"{name} projects {pred:.1f}{where} — within {behind:.1f} of the "
+                f"top pick, so the model rates the two as much the same bet")
+    else:
+        line = f"{name} projects {pred:.1f} points{where}, {behind:.1f} behind the leader"
+    if owned:
+        line += f", owned by {owned:.1f}%"
+    return line + "."
+
+
+# ---- section 3: differentials ---------------------------------------------
 
 def differentials(pages, gameweek, limit=SECTION_SIZE):
     """Low ownership, high projection.
@@ -409,6 +483,7 @@ def build(pages, gameweek, rotation_df=None, deadline=None, season_label=None):
         # preview once it's worth posting a day out, final once frozen. Set by
         # jobs.py as the edition moves through them; see social.STAGES.
         "stage": "draft",
+        "captains": captain_picks(pages, gameweek),
         "in_form": in_form(pages, gameweek),
         "differentials": differentials(pages, gameweek),
         "attack_runs": runs["attack"],
@@ -424,6 +499,12 @@ def summarise(report):
     the RSS description reuse. Built from whichever sections have content."""
     gw = report["gameweek"]
     bits = []
+    # Captaincy leads. It is the one decision every manager makes every week,
+    # and a standfirst that opens on it is answering the question the reader
+    # arrived with rather than the one this page finds most interesting.
+    if report.get("captains"):
+        c = report["captains"][0]
+        bits.append(f"{c['name']} is the model's top captain pick on {c['headline']}")
     if report["in_form"]:
         names = ", ".join(p["name"] for p in report["in_form"])
         bits.append(f"{names} lead the form table")

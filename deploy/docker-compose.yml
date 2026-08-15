@@ -63,6 +63,50 @@ services:
       # trade costs. Unset, the route doesn't exist.
       #   openssl rand -hex 32
       FPL_SOCIAL_KEY: ${FPL_SOCIAL_KEY:-}
+      # --- Alerting ----------------------------------------------------------
+      # Where a failed or overdue scheduled job pushes a message. Optional:
+      # unset, nothing is ever sent and nothing complains about it.
+      #
+      # This reaches the cron jobs as well as the web app - `docker exec`
+      # inherits the container's environment, which is why no secret is passed
+      # in /etc/cron.d/fpl-buddy.
+      #
+      # Named here for the same reason GSC_PROPERTY had to be: a variable this
+      # block doesn't list never reaches the container however carefully it is
+      # set in .env, and the failure is silent - alerting would simply never
+      # fire, which is indistinguishable from nothing ever going wrong.
+      FPL_ALERT_WEBHOOK: ${FPL_ALERT_WEBHOOK:-}
+      # Three more channels, each falling back to FPL_ALERT_WEBHOOK when unset -
+      # so one variable gets you everything in one channel, and splitting them
+      # out later is one variable at a time.
+      #
+      #   drafts    post drafts as they become postable (the nightly player
+      #             write-up, the briefing a day out, the roundup)
+      #   gameweek  deadline reminders, and what the AI Manager did
+      #   seo       the weekly Search Console digest
+      #
+      # Worth splitting: these want different notification settings. `alerts`
+      # should buzz at 3am, `drafts` should be waiting in the morning, `seo` is
+      # a weekly read. One channel carrying all four ends up muted.
+      FPL_DRAFTS_WEBHOOK: ${FPL_DRAFTS_WEBHOOK:-}
+      FPL_GAMEWEEK_WEBHOOK: ${FPL_GAMEWEEK_WEBHOOK:-}
+      FPL_SEO_WEBHOOK: ${FPL_SEO_WEBHOOK:-}
+      # Ko-fi donations, relayed into Discord by POST /api/kofi.
+      #
+      # Two variables doing two different jobs, and a third already above:
+      #   FPL_KOFI_WEBHOOK  the DISCORD webhook this posts into
+      #   FPL_KOFI_TOKEN    the secret Ko-fi sends, proving a delivery is real
+      #   FPL_KOFI_HANDLE   the public name behind the site's donate button
+      #
+      # The route does not exist unless FPL_KOFI_TOKEN is set. That endpoint has
+      # to be reachable by Ko-fi's servers, which cannot authenticate, so the
+      # token in the payload is the only thing standing between it and anyone
+      # who finds the URL.
+      FPL_KOFI_WEBHOOK: ${FPL_KOFI_WEBHOOK:-}
+      FPL_KOFI_TOKEN: ${FPL_KOFI_TOKEN:-}
+      # Only needed if a URL isn't a Discord or Slack webhook and the
+      # auto-detection guesses wrong: discord | slack | text
+      FPL_ALERT_FORMAT: ${FPL_ALERT_FORMAT:-}
       # --- Search Console / Bing reporting -----------------------------------
       # Both optional: unset, the reporting job skips that source and says so
       # rather than failing.

@@ -1,0 +1,40 @@
+# /etc/logrotate.d/fpl-buddy
+#
+# The five cron jobs append to /var/log/fpl-buddy-*.log and nothing ever
+# truncated them. deadline-watch alone writes 24 entries a day, every day, for
+# as long as the box is up - so these grow without limit until the disk fills,
+# which on a Proxmox host takes down considerably more than this site.
+#
+# Install with:
+#   cp deploy/fpl-buddy.logrotate /etc/logrotate.d/fpl-buddy
+#   chmod 644 /etc/logrotate.d/fpl-buddy
+#
+# Check it before trusting it - logrotate silently skips a config file whose
+# permissions are wrong, which looks exactly like it working:
+#   logrotate -d /etc/logrotate.d/fpl-buddy
+
+/var/log/fpl-buddy-*.log {
+    # Weekly with eight kept is two months of history. These logs are read when
+    # something has gone wrong, and by then you want the run before the failure
+    # as well as the failure - a week's granularity keeps that findable.
+    weekly
+    rotate 8
+
+    # A gzipped log is a tenth the size and `zgrep` reads it directly. Delayed
+    # by one rotation so the most recent old file stays plain text, which is the
+    # one you actually open.
+    compress
+    delaycompress
+
+    # The jobs only write when cron runs them, so a log can legitimately be
+    # absent (a job that has never run) or empty (a quiet week). Neither is an
+    # error worth mailing anyone about.
+    missingok
+    notifempty
+
+    # No `create` and no `copytruncate`. The jobs open their log per run through
+    # the shell redirect in the cron entry rather than holding it open, so there
+    # is no long-lived file handle to invalidate - a plain rename is safe here,
+    # and copytruncate would risk losing lines written during the copy.
+    su root root
+}

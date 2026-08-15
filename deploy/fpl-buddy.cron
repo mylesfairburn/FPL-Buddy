@@ -1,10 +1,21 @@
 # /etc/cron.d/fpl-buddy
 #
-# Four jobs on different clocks - see deploy/README.md for the reasoning.
+# Five jobs on different clocks - see deploy/README.md for the reasoning.
 #   deadline-watch  : hourly, must be timing-accurate (FPL deadlines are irregular)
 #   daily-refresh   : 03:00, deliberately late (BPS/data_checked lags late kickoffs)
+#                     also: the roundup, the DB backup, and the staleness check
 #   gameweek-report : 03:15, after the refresh, before IndexNow reads the sitemap
+#                     also: tonight's player write-up
 #   indexnow        : 03:30, after the refresh has rewritten the player pages
+#   seo-report      : 04:00, the quiet slot nothing else waits on
+#
+# These jobs fail SILENTLY. The site keeps serving; the content just stops
+# changing. Every command now records whether it succeeded, so check with:
+#
+#   docker exec fpl-buddy python jobs.py status
+#
+# and set FPL_ALERT_WEBHOOK in the container's environment to be told without
+# having to ask.
 #
 # There is no separate job for publishing the postable gameweek briefing. It
 # rides on deadline-watch, because the moment it has to hit - about a day before
@@ -63,10 +74,28 @@ CRON_TZ=Europe/London
 5 * * * * root docker exec fpl-buddy python jobs.py deadline-watch >> /var/log/fpl-buddy-watch.log 2>&1
 
 # Daily heavy refresh + backfill of actual scores onto frozen snapshots.
+#
+# Also carries three things that have no cron line of their own, all for the
+# same reason: each wants to happen once a day, and a separate entry is another
+# thing that can silently fail to be installed.
+#
+#   - the gameweek roundup, written once FPL confirms a round's stats. That is
+#     the same condition the backfill above already waits for, so it can only
+#     run after it - and it must, because the roundup prints the AI squad's
+#     actual score, which the backfill is what writes.
+#   - a dated SQLite backup into state/backups/, 14 kept.
+#   - the check for jobs that have stopped running. If FPL_ALERT_WEBHOOK is set
+#     in the container's environment, an overdue job is pushed to your phone.
+#     Confirm with: docker exec fpl-buddy python jobs.py status
 0 3 * * * root docker exec fpl-buddy python jobs.py daily-refresh >> /var/log/fpl-buddy-daily.log 2>&1
 
-# Rebuild the gameweek page. After the refresh, so it reports today's form,
-# prices and injury news rather than yesterday's.
+# Rebuild the gameweek page, and write tonight's in-depth player write-up.
+# After the refresh, so it reports today's form, prices and injury news rather
+# than yesterday's.
+#
+# Both in one job because both need the rated player pool, and building it is
+# the expensive part of the night - about a minute of four-core CPU. A second
+# job would run it again for nothing.
 #
 # Safe to run every night for the whole season: once a gameweek's deadline
 # passes, the hourly watcher freezes that edition and this job skips it. It can

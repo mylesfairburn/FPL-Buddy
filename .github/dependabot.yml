@@ -1,0 +1,52 @@
+# Dependency updates, opened as pull requests.
+#
+# Worth having on a one-person project specifically BECAUSE it is a one-person
+# project: nobody else is watching for a CVE in fastapi or requests, and the
+# alternative is finding out from a scanner months later. Every PR it opens now
+# runs the full test suite before it can be merged (see deploy.yaml), so an
+# update that breaks the pipeline says so rather than being taken on trust.
+#
+# Monthly rather than weekly. This repo has eleven direct dependencies and a
+# weekly cadence would produce a stream of PRs that get rubber-stamped, which is
+# worse than reading a handful properly once a month.
+version: 2
+
+updates:
+  # pandas and numpy are pinned to exact versions in requirements.txt because
+  # the trained model bundles were produced against them; an unpinned upgrade
+  # can change unpickling behaviour. Dependabot will still propose bumps for
+  # them, and those are the PRs to read carefully rather than merge - the test
+  # suite boots the app and rates the full pool, so it does catch this.
+  - package-ecosystem: pip
+    directory: /python
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    labels:
+      - dependencies
+
+  # The workflow pins actions to major versions (@v6, @v4). Those tags do move,
+  # but a major bump is a breaking change by definition and is worth seeing as
+  # a PR rather than discovering when a deploy fails.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+
+  # The base image in the Dockerfile. Python patch releases carry security
+  # fixes and the image is rebuilt on every push anyway, so this is only about
+  # noticing when the pinned minor version falls behind.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: docker
+    labels:
+      - dependencies

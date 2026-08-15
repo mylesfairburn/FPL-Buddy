@@ -159,12 +159,19 @@ def imminent_deadlines(events=None, now=None, window_minutes=COMMIT_WINDOW_MINUT
 PREVIEW_WINDOW_HOURS = (22, 26)
 
 
-def preview_due(events=None, now=None, window_hours=PREVIEW_WINDOW_HOURS):
-    """Gameweeks whose deadline is about a day away.
+def deadlines_within(events=None, now=None, window_hours=(0, 24)):
+    """Gameweeks whose deadline falls inside a window of hours from now.
 
-    Returns (gameweek, deadline_iso, hours_left) oldest first. Same shape as
-    imminent_deadlines() above, and read the same way - the two are the two
-    stages of publishing one edition."""
+    Returns (gameweek, deadline_iso, hours_left) oldest first - the same shape
+    every other window function here returns, so they are all read the same
+    way.
+
+    Every window built on this is wider than the hourly poll interval, so a run
+    always lands inside one even if the box misses a poll. That means the
+    window can and will match on consecutive runs, and anything acting on it
+    has to be idempotent - the edition builders are, and the notifications go
+    through db.mark_notified.
+    """
     events = events if events is not None else get_events()
     now = now or datetime.now(timezone.utc)
     earliest = now + timedelta(hours=window_hours[0])
@@ -180,6 +187,37 @@ def preview_due(events=None, now=None, window_hours=PREVIEW_WINDOW_HOURS):
     return out
 
 
+def preview_due(events=None, now=None, window_hours=PREVIEW_WINDOW_HOURS):
+    """Gameweeks whose deadline is about a day away.
+
+    The moment the briefing becomes postable. See PREVIEW_WINDOW_HOURS above
+    for why this is a day out rather than at the deadline itself."""
+    return deadlines_within(events, now, window_hours)
+
+
+# When a deadline reminder is pushed to Discord, in hours before it.
+#
+# Two, because they do different jobs. The day-out one is the same moment the
+# briefing becomes postable and is a prompt to post it. The two-hour one is a
+# prompt to check your own team, which is a different thing entirely and lands
+# when there is still time to act.
+#
+# Both windows are at least two hours wide against an hourly poll, so a single
+# missed run costs nothing. They overlap the poll deliberately and are
+# deduplicated by the notification ledger rather than by narrowing them.
+REMINDER_WINDOWS = {"day": (22, 26), "final": (1, 3)}
+
+
+def reminders_due(events=None, now=None):
+    """(kind, gameweek, deadline_iso, hours_left) for every reminder that
+    should be sent right now, across both windows."""
+    out = []
+    for kind, window in REMINDER_WINDOWS.items():
+        for gw, deadline, hours in deadlines_within(events, now, window):
+            out.append((kind, gw, deadline, hours))
+    return out
+
+
 def gameweek_is_finished(gameweek, events=None):
     """True once FPL has both finished the round and confirmed its stats
     (`data_checked`). Bonus points aren't final until data_checked flips, so
@@ -189,6 +227,28 @@ def gameweek_is_finished(gameweek, events=None):
         if e.get("id") == gameweek:
             return bool(e.get("finished")) and bool(e.get("data_checked"))
     return False
+
+
+def latest_finished_gameweek(events=None):
+    """The highest gameweek FPL has both finished and had its stats checked.
+
+    This is the round the roundup writes up, and only this one. The alternative
+    - every finished gameweek without a roundup - looks like a harmless
+    backfill and isn't: a roundup names how many managers owned a player, and
+    the only ownership figure available now is today's. Writing up October in
+    January would print January's ownership under an October headline, on a
+    page that then freezes and says so forever.
+
+    Restricting it to the newest round means a missed night costs nothing (the
+    next run still writes it, and a week has to pass before a newer round can
+    displace it) and a first run against a mid-season database writes one
+    roundup rather than twenty wrong ones.
+    """
+    events = events if events is not None else get_events()
+    finished = [e.get("id") for e in events
+                if e.get("id") is not None
+                and e.get("finished") and e.get("data_checked")]
+    return max(finished) if finished else None
 
 
 def detect_mode(fixtures_path=None, events=None):
@@ -231,4 +291,32 @@ def get_event_live(gameweek):
         stats = el.get("stats") or {}
         if el.get("id") is not None and stats.get("total_points") is not None:
             out[int(el["id"])] = int(stats["total_points"])
+    return out
+
+
+def get_event_live_stats(gameweek):
+    """The same call, but the WHOLE stats block per element rather than just
+    the points total: minutes, goals, assists, bonus, bps and the expected-goal
+    columns.
+
+    Kept separate from get_event_live() rather than replacing it. That function
+    feeds the actual-points backfill, which wants exactly one integer per
+    element and would otherwise have to know which key to reach for on a dict
+    that FPL changes the shape of between seasons. This one feeds the gameweek
+    roundup, which is written precisely to say WHY a score happened - "returned
+    nothing from 0.8 expected goals" needs the column that sentence names.
+
+    Returns {element_id: stats_dict}, empty if the API is unreachable. An empty
+    result is a thin roundup, not a failed job.
+    """
+    data = _get(f"{BASE}/event/{int(gameweek)}/live/")
+    if not data:
+        return {}
+    out = {}
+    for el in data.get("elements", []):
+        if el.get("id") is None:
+            continue
+        stats = el.get("stats")
+        if isinstance(stats, dict):
+            out[int(el["id"])] = stats
     return out

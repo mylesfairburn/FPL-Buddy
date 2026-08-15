@@ -186,4 +186,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Wrapped so this records a heartbeat like the jobs.py commands do.
+    # Without it, `jobs.py status` would list indexnow as permanently overdue -
+    # it is in ops.JOB_INTERVALS because its failure matters, and a job that
+    # can never report success is a check that cries wolf forever.
+    import ops
+    sys.exit(ops.tracked("indexnow", main))

@@ -351,6 +351,169 @@ def test_gameweek_pages():
                "that will never come")
 
 
+def test_gameweek_roundup():
+    group("gameweek roundup", "high")
+    c = _client()
+    import db as _db
+
+    expect("an unwritten roundup 404s", "GET /gameweek/99/roundup", 404,
+           c.get("/gameweek/99/roundup").status_code, severity="high",
+           note="generating one on demand would report provisional bonus "
+                "points as final")
+
+    roundup = {
+        "gameweek": 1, "season": "2026-27",
+        "summary": "Test roundup for the suite.",
+        "top_scorers": [{"name": "Scorer", "path": "/player/scorer-1",
+                         "pos": "FWD", "team_code": 3, "team_name": "Arsenal",
+                         "cost": 9.0, "owned": 22.5, "points": 16,
+                         "headline": "16 points", "minutes": 90, "goals": 2,
+                         "assists": 1, "bonus": 3, "bps": 55,
+                         "clean_sheet": False, "saves": 0,
+                         "why": "Scorer scored 16 points."}],
+        "underperformers": [{"name": "Blanker", "path": "/player/blanker-2",
+                             "pos": "MID", "team_code": 8, "team_name": "Chelsea",
+                             "cost": 10.5, "owned": 31.2, "points": 1,
+                             "headline": "1 point", "minutes": 90, "xg": 0.7,
+                             "xa": 0.2, "xgi": 0.93, "bps": 12,
+                             "why": "Blanker returned 1 point."}],
+        "shocks": [{"headline": "Luton 2–0 Man City", "winner_code": 14,
+                    "winner_name": "Luton", "why": "18th beat 1st."}],
+        "momentum": [{"team_name": "Brentford", "team_code": 94,
+                      "headline": "3 straight wins", "count": 3,
+                      "why": "Brentford have won 3 in a row."}],
+        "scorecard": {"predicted": 62.4, "actual": 71, "difference": 8.6},
+    }
+    wrote = _db.save_gw_roundup(1, roundup)
+    check("a roundup can be published", "save_gw_roundup(1)", True, wrote,
+          lambda v: v is True, severity="high")
+
+    r = c.get("/gameweek/1/roundup")
+    expect("a published roundup renders", "GET /gameweek/1/roundup", 200,
+           r.status_code, severity="critical")
+    check("the roundup names its players", "GET /gameweek/1/roundup",
+          "'Scorer' and 'Blanker' in the server-rendered HTML", r.text,
+          lambda b: "Scorer" in b and "Blanker" in b, severity="critical")
+    check("the roundup prints the scorecard", "GET /gameweek/1/roundup",
+          "the projected and actual figures", r.text,
+          lambda b: "62.4" in b and "71" in b, severity="high",
+          note="the one number on the site that costs something to publish")
+    check("the roundup carries Article structured data",
+          "GET /gameweek/1/roundup", '"@type": "Article"', r.text,
+          lambda b: '"Article"' in b)
+
+    m = re.search(r"<title>(.*?)</title>", r.text, re.S)
+    title = m.group(1).strip() if m else ""
+    check("the roundup has its own <title>", "GET /gameweek/1/roundup",
+          "a title naming this gameweek and the roundup", title,
+          lambda t: "Gameweek 1" in t and "roundup" in t.lower(),
+          severity="medium")
+    # The briefing and the roundup for one gameweek sit at adjacent URLs. If
+    # they shared a title they would compete with each other for every query.
+    brief = re.search(r"<title>(.*?)</title>", c.get("/gameweek/1").text, re.S)
+    check("the roundup's title differs from the briefing's",
+          "GET /gameweek/1 vs /gameweek/1/roundup", "two distinct titles",
+          title, lambda t: bool(brief) and t != brief.group(1).strip(),
+          severity="medium", note="self-competing near-duplicate pages")
+
+    # Written once from settled results, so a second write must not touch it.
+    again = _db.save_gw_roundup(1, {**roundup, "summary": "OVERWRITTEN"})
+    check("an existing roundup refuses to be rewritten",
+          "save_gw_roundup on a stored row", "False", again,
+          lambda v: v is False, severity="critical",
+          note="the daily job calls this every night for the rest of the season")
+    check("the stored roundup kept its original text", "GET /gameweek/1/roundup",
+          "the original summary", c.get("/gameweek/1/roundup").text,
+          lambda b: "OVERWRITTEN" not in b, severity="critical")
+    check("--replace is the deliberate escape hatch",
+          "save_gw_roundup(replace=True)", "True",
+          _db.save_gw_roundup(1, roundup, replace=True),
+          lambda v: v is True, severity="low")
+
+    check("a published roundup is in the sitemap", "GET /sitemap.xml",
+          "/gameweek/1/roundup present", c.get("/sitemap.xml").text,
+          lambda b: f"{main.SITE_URL}/gameweek/1/roundup<" in b, severity="high")
+
+    # One feed carrying both, so a subscriber doesn't have to choose.
+    feed = c.get("/gameweek/feed.xml").text
+    check("the roundup appears in the RSS feed", "GET /gameweek/feed.xml",
+          "a roundup item", feed,
+          lambda b: "/gameweek/1/roundup" in b, severity="medium")
+    check("the feed still carries the briefing too", "GET /gameweek/feed.xml",
+          "both item types", feed,
+          lambda b: "briefing" in b.lower() and "roundup" in b.lower(),
+          severity="medium")
+
+
+def test_gameweek_hub():
+    group("gameweek hub", "high")
+    c = _client()
+    import db as _db
+
+    # GW1's briefing and roundup already exist from the two suites above. Add a
+    # newer briefing so "the current one" and "an old one" are distinguishable.
+    #
+    # 38 rather than 2 on purpose: the suites share one database, and any other
+    # test that publishes an edition would otherwise become the newest one and
+    # silently change what this page is expected to show. 38 is the last
+    # gameweek of a season, so nothing can outrank it.
+    current = 38
+    _db.save_gw_report(current, {
+        "gameweek": current, "season": "2026-27",
+        "summary": "The current briefing.",
+        "deadline_label": "Sat 22 Aug, 11:00 UK", "stage": "preview",
+        "captains": [{"name": "Armband", "path": "/player/armband-9", "pos": "MID",
+                      "team_code": 3, "team_name": "Arsenal", "cost": 12.0,
+                      "owned": 40.0, "predicted": 7.4, "rank": 1,
+                      "behind_leader": 0.0, "headline": "7.4 projected",
+                      "why": "Armband is the model's highest projection.",
+                      "fixtures": [{"event": 2, "label": "BUR (H)"}]}],
+        "in_form": [], "differentials": [], "attack_runs": [],
+        "defence_runs": [], "news": [],
+    })
+
+    r = c.get("/gameweek")
+    expect("the hub 200s", "GET /gameweek", 200, r.status_code, severity="high")
+    check("the hub shows the current briefing", "GET /gameweek",
+          f"the Gameweek {current} briefing", r.text,
+          lambda b: f"The Gameweek {current} Briefing" in b, severity="high")
+    check("the hub shows the last roundup", "GET /gameweek",
+          "the newest roundup", r.text,
+          lambda b: "Roundup" in b and "/gameweek/1/roundup" in b,
+          severity="high")
+    check("the hub surfaces the top captain pick", "GET /gameweek",
+          "the armband name on the card", r.text,
+          lambda b: "Armband" in b, severity="medium",
+          note="it is the single thing most readers arrived for")
+
+    # The whole point of the restructure: superseded editions are DE-LISTED,
+    # not deleted. A 404 here would throw away every ranking they have earned.
+    check("old editions are no longer listed on the hub", "GET /gameweek",
+          "no link to /gameweek/1", r.text,
+          lambda b: 'href="/gameweek/1"' not in b, severity="high")
+    expect("but an old edition still resolves", "GET /gameweek/1", 200,
+           c.get("/gameweek/1").status_code, severity="critical",
+           note="de-listing costs nothing; 404ing throws away the rankings")
+    check("and is still in the sitemap", "GET /sitemap.xml",
+          "/gameweek/1 present", c.get("/sitemap.xml").text,
+          lambda b: f"{main.SITE_URL}/gameweek/1<" in b, severity="critical")
+
+    # A live briefing has no roundup yet, so the cross-link must not be there.
+    check("a briefing with no roundup does not link to one",
+          f"GET /gameweek/{current}", f"no /gameweek/{current}/roundup link",
+          c.get(f"/gameweek/{current}").text,
+          lambda b: f"/gameweek/{current}/roundup" not in b, severity="high",
+          note="an unconditional link 404s from every live edition")
+    check("a briefing whose roundup exists does link to it", "GET /gameweek/1",
+          "a /gameweek/1/roundup link", c.get("/gameweek/1").text,
+          lambda b: "/gameweek/1/roundup" in b, severity="medium")
+
+    # The nav label changed with the page's contents.
+    check("the nav names the page for what it now holds", "GET /about",
+          "'This gameweek' in the tab bar", c.get("/about").text,
+          lambda b: "This gameweek" in b, severity="low")
+
+
 def test_sitemap():
     group("sitemap.xml", "high")
     c = _client()
@@ -373,13 +536,14 @@ def test_sitemap():
     check("sitemap parses as XML", "GET /sitemap.xml", "valid urlset",
           f"{len(locs)} <loc> entries", lambda _: True, severity="critical")
 
-    # Three sources now: the routing table, one page per player, and one per
-    # published gameweek edition. The edition count is read live rather than
-    # hardcoded because it grows by one a week during a season.
+    # Four sources now: the routing table, one page per player, one per
+    # published gameweek briefing, and one per roundup. The last two are read
+    # live rather than hardcoded because each grows by one a week in season.
     expected = (len(main.PAGES) + len(main.player_page_index())
-                + len(main.db.gw_report_index()))
+                + len(main.db.gw_report_index())
+                + len(main.db.gw_roundup_index()))
     expect("sitemap URL count",
-           "len(PAGES) + len(player_page_index()) + published editions",
+           "len(PAGES) + players + briefings + roundups",
            expected, len(locs), severity="high")
     check("every loc is absolute", "all <loc> values",
           f"all start with {main.SITE_URL}", len(locs),
@@ -695,6 +859,7 @@ def test_server_rendered_tables():
 
 SUITES = [test_page_routes, test_tab_panes, test_head_requests, test_seo_tags,
           test_robots_and_security_txt, test_faq, test_gameweek_pages,
+          test_gameweek_roundup, test_gameweek_hub,
           test_sitemap, test_player_pages, test_az_index, test_compression,
           test_static_assets, test_site_name_signals,
           test_server_rendered_tables]

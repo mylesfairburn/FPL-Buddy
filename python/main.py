@@ -5,9 +5,12 @@ Run locally with:
     uvicorn main:app --reload
 """
 
+import hmac
+import json
 import math
 import os
 import re
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape as xml_escape
 
@@ -26,6 +29,7 @@ import gameweek as gw_clock
 import gw_report
 import kits
 import manager_history
+import ops
 import player_pages
 import seasons
 import seo_tables as seo_tables_builder
@@ -162,8 +166,12 @@ def tab_links():
 # `short` is the label used below 992px, where six full-length items stop
 # fitting on one row. Both labels are rendered and CSS picks between them, so
 # the choice can't depend on a viewport a crawler doesn't have.
+# "This gameweek" rather than "Gameweek briefings", which is what this said
+# when the page listed briefings and nothing else. It now carries two things -
+# the upcoming briefing and the last completed roundup - and a label naming one
+# of them would send anyone looking for the other past it.
 CONTENT_LINKS = [
-    {"path": "/gameweek", "label": "Gameweek briefings", "short": "Briefings"},
+    {"path": "/gameweek", "label": "This gameweek", "short": "Gameweek"},
     {"path": "/players/a-z", "label": "Players A–Z", "short": "A–Z"},
 ]
 
@@ -235,11 +243,15 @@ PAGES = {
                         "and what the numbers on the site actually mean."),
     },
     "/gameweek": {
-        "title": "FPL gameweek briefings — form, differentials and fixtures",
-        "description": ("Every gameweek written up: who is in form, the best differentials, "
-                        "the kindest fixture runs and the fitness flags that matter."),
+        "title": "This FPL gameweek — briefing and roundup | FPL Buddy",
+        "description": ("The FPL gameweek in two write-ups: who to captain and who is in "
+                        "form before the deadline, then who scored and who blanked "
+                        "after it."),
+        # Daily rather than weekly now. The page holds whichever briefing and
+        # roundup are current, so its content genuinely turns over twice a week
+        # rather than gaining an entry at the top of a list.
         "priority": "0.8",
-        "changefreq": "weekly",
+        "changefreq": "daily",
     },
     "/faq": {
         "title": "FPL Buddy FAQ — ratings, AI squads and your FPL ID",
@@ -978,6 +990,31 @@ def faq(request: Request):
 # built itself on demand would produce a different edition per visitor and
 # would put the whole rating pipeline behind a URL a crawler can hit.
 
+def _gw_roundup_meta(gw, roundup):
+    """Per-roundup title and description.
+
+    Built from the round's own contents for the same reason the briefing's are:
+    38 pages differing only by a number is how a site gets its own pages
+    classed as near-duplicates of each other. Naming who actually top scored
+    makes each one about something.
+
+    Deliberately different wording from the briefing for the same gameweek -
+    "roundup" against "briefing", results against predictions - because the two
+    pages sit at adjacent URLs and would otherwise compete with each other for
+    the same query."""
+    title = f"FPL Gameweek {gw} roundup — top scorers and results | {SITE_NAME}"
+    top = [p["name"] for p in roundup.get("top_scorers", [])][:3]
+    if top:
+        desc = (f"Fantasy Premier League Gameweek {gw} results: {', '.join(top)} "
+                "top scored, plus the widely-owned players who blanked, the "
+                "results against the table and who is on a run.")
+    else:
+        desc = (f"The Fantasy Premier League Gameweek {gw} roundup: top scorers, "
+                "the blanks that hurt, results against the table and clubs "
+                "finding form.")
+    return {"title": title, "description": desc[:160]}
+
+
 def _gw_report_meta(gw, report):
     """Per-edition title and description.
 
@@ -999,16 +1036,31 @@ def _gw_report_meta(gw, report):
 
 
 @app.get("/gameweek", response_class=HTMLResponse)
-def gameweek_archive(request: Request):
-    """Every published edition, newest first.
+def gameweek_hub(request: Request):
+    """This week: the upcoming briefing and the last completed roundup.
 
-    A real page rather than a redirect to the latest one. The editions need
-    something linking to them or they're orphans that only the sitemap knows
-    about, and "latest" as a URL competes with the dated URL it points at for
-    the same content."""
-    editions = db.gw_report_index()
+    This used to list every edition ever published, newest first, which was the
+    right page when there were four of them and the wrong one by about November
+    - a reader arriving wants this week, and was given a wall of dated links
+    with the useful one first and thirty dead ones under it.
+
+    The old editions are NOT gone. Every /gameweek/<n> URL still resolves and
+    stays in the sitemap; they are simply no longer listed here. That
+    distinction is the whole decision: those pages are the site's only
+    accumulating content and are already indexed, so de-listing them costs
+    nothing and 404ing them would throw away every ranking they have earned.
+
+    The briefing shown is the highest-numbered one, which is the upcoming
+    gameweek's by construction - `build_gameweek_report` always writes for
+    `next_gameweek`. The roundup is whichever is newest, which is not always
+    the last round to finish: one that ended while the box was down has no
+    roundup, and showing the last one that exists beats showing a gap.
+    """
+    index = db.gw_report_index()
+    brief = db.get_gw_report(index[0]["gameweek"]) if index else None
+    roundup = db.latest_gw_roundup()
     return html_response("pages/gameweek_index.html", request, "/gameweek",
-                         editions=editions)
+                         brief=brief, roundup=roundup)
 
 
 @app.get("/gameweek/feed.xml")
@@ -1020,35 +1072,56 @@ def gameweek_feed():
 
     The safe half of the distribution plan: aggregators and some crawlers poll
     a feed, and unlike an automated post it can't get an account banned."""
-    editions = db.gw_report_index()[:20]
-    items = []
-    for ed in editions:
-        gw = ed["gameweek"]
-        rec = db.get_gw_report(gw)
-        if not rec:
-            continue
-        summary = rec["payload"].get("summary", "")
-        # RFC 822 dates, which is what RSS wants - not the ISO strings stored.
-        stamp = ed.get("frozen_at") or ed["generated_at"]
+    def _rfc822(stamp):
+        """RSS wants RFC 822 dates, not the ISO strings stored."""
         try:
-            pub = datetime.fromisoformat(stamp).strftime("%a, %d %b %Y %H:%M:%S +0000")
+            return datetime.fromisoformat(stamp).strftime("%a, %d %b %Y %H:%M:%S +0000")
         except (TypeError, ValueError):
-            pub = ""
+            return ""
+
+    # Briefings and roundups in ONE feed, interleaved by publication time,
+    # rather than a second feed for the roundups. A subscriber wants everything
+    # this site publishes; two feeds would mean choosing, and the great majority
+    # of people who chose would pick one and never learn the other existed.
+    entries = []
+    for ed in db.gw_report_index()[:20]:
+        rec = db.get_gw_report(ed["gameweek"])
+        if rec:
+            entries.append((ed.get("frozen_at") or ed["generated_at"],
+                            f"Gameweek {ed['gameweek']} briefing",
+                            f"/gameweek/{ed['gameweek']}",
+                            rec["payload"].get("summary", "")))
+    for ed in db.gw_roundup_index()[:20]:
+        rec = db.get_gw_roundup(ed["gameweek"])
+        if rec:
+            entries.append((ed["generated_at"],
+                            f"Gameweek {ed['gameweek']} roundup",
+                            f"/gameweek/{ed['gameweek']}/roundup",
+                            rec["payload"].get("summary", "")))
+
+    # Newest first. A missing timestamp sorts last rather than crashing the
+    # feed - an item with no date is still worth serving.
+    entries.sort(key=lambda e: e[0] or "", reverse=True)
+
+    items = []
+    for stamp, title, path, summary in entries[:30]:
+        pub = _rfc822(stamp)
         items.append(
             "<item>"
-            f"<title>{xml_escape(f'Gameweek {gw}')}</title>"
-            f"<link>{SITE_URL}/gameweek/{gw}</link>"
-            f"<guid isPermaLink=\"true\">{SITE_URL}/gameweek/{gw}</guid>"
+            f"<title>{xml_escape(title)}</title>"
+            f"<link>{SITE_URL}{path}</link>"
+            f"<guid isPermaLink=\"true\">{SITE_URL}{path}</guid>"
             f"<description>{xml_escape(summary)}</description>"
             + (f"<pubDate>{pub}</pubDate>" if pub else "")
             + "</item>")
 
     xml = ('<?xml version="1.0" encoding="UTF-8"?>'
            '<rss version="2.0"><channel>'
-           f"<title>{xml_escape(SITE_NAME)} — gameweek briefings</title>"
+           f"<title>{xml_escape(SITE_NAME)} — gameweek briefings and roundups</title>"
            f"<link>{SITE_URL}/gameweek</link>"
-           "<description>Form, differentials, fixture swings and team news, "
-           "every gameweek.</description>"
+           "<description>Before each deadline: form, differentials, fixture "
+           "swings and team news. After each gameweek: who scored, who blanked "
+           "and what went against the table.</description>"
            "<language>en-gb</language>"
            f"{''.join(items)}"
            "</channel></rss>")
@@ -1071,7 +1144,28 @@ def gameweek_report_page(request: Request, gw: int):
         "pages/gameweek.html", request, f"/gameweek/{gw}",
         meta=_gw_report_meta(gw, report),
         report=report, frozen=bool(rec["frozen"]),
-        generated_at=rec["generated_at"], frozen_at=rec.get("frozen_at"))
+        generated_at=rec["generated_at"], frozen_at=rec.get("frozen_at"),
+        # A briefing is published about a week before its own roundup can
+        # exist, so the cross-link at the foot of the page is conditional.
+        has_roundup=db.get_gw_roundup(gw) is not None)
+
+
+@app.get("/gameweek/{gw}/roundup", response_class=HTMLResponse)
+def gameweek_roundup_page(request: Request, gw: int):
+    """One roundup: what actually happened in a settled gameweek.
+
+    404s when there isn't one, same as the briefing. A round with no roundup is
+    a round nobody wrote up - most often because it hasn't finished yet - and
+    generating one at request time would either report provisional bonus points
+    as final or put the whole pipeline behind a URL a crawler can hit."""
+    rec = db.get_gw_roundup(gw)
+    if not rec:
+        raise HTTPException(status_code=404, detail="No roundup for that gameweek")
+    roundup = rec["payload"]
+    return html_response(
+        "pages/gameweek_roundup.html", request, f"/gameweek/{gw}/roundup",
+        meta=_gw_roundup_meta(gw, roundup),
+        roundup=roundup, generated_at=rec["generated_at"])
 
 
 @app.get("/contact", response_class=HTMLResponse)
@@ -1146,6 +1240,16 @@ def sitemap():
                  f"<lastmod>{lastmod}</lastmod><changefreq>{freq}</changefreq>"
                  f"<priority>0.7</priority></url>")
 
+    # And one per roundup. `never` unconditionally: unlike a briefing, a roundup
+    # has no live phase at all - it is written from settled results and is final
+    # the moment it exists, so there has never been a version of it to recrawl
+    # for.
+    for ed in db.gw_roundup_index():
+        lastmod = (ed["generated_at"] or "")[:10] or today
+        urls += (f"<url><loc>{SITE_URL}/gameweek/{ed['gameweek']}/roundup</loc>"
+                 f"<lastmod>{lastmod}</lastmod><changefreq>never</changefreq>"
+                 f"<priority>0.7</priority></url>")
+
     xml = ('<?xml version="1.0" encoding="UTF-8"?>'
            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
            f"{urls}</urlset>")
@@ -1198,6 +1302,14 @@ def llms_txt():
         f"- [My team]({SITE_URL}/my-team): enter an FPL ID for predicted points,\n"
         "  an optimised XI, transfer suggestions and live scoring.\n"
         f"- [Players A-Z]({SITE_URL}/players/a-z): index of every player page.\n"
+        f"- [This gameweek]({SITE_URL}/gameweek): the current briefing and the\n"
+        "  last completed roundup. A briefing is written before a deadline and\n"
+        f"  frozen at it, at {SITE_URL}/gameweek/<n> — captaincy shortlist, form,\n"
+        "  differentials, fixture swings and fitness flags. A roundup is written\n"
+        f"  after the round is settled, at {SITE_URL}/gameweek/<n>/roundup — top\n"
+        "  scorers, widely-owned players who blanked, results against the league\n"
+        "  table, clubs on a run, and the AI Best XI's projection for that round\n"
+        "  against what it actually scored.\n"
         f"- [About]({SITE_URL}/about): how the model works and what it can't do.\n"
         f"- [FAQ]({SITE_URL}/faq): common questions about the ratings and squads.\n"
         "\n"
@@ -1645,7 +1757,20 @@ def ai_status():
         "next_gameweek": gw_clock.next_gameweek(events),
         "processed_deadlines": db.processed_deadlines(),
         "known_managers": len(db.known_managers()),
+        # Whether the cron jobs are still running. Everything else on this
+        # endpoint describes the state of the data; this describes whether
+        # anything is still updating it, which is the question you actually
+        # have when a page looks stale. Guarded because a diagnostic endpoint
+        # that can 500 is one you cannot use in the situation it is for.
+        "jobs": _jobs_health(),
     }
+
+
+def _jobs_health():
+    try:
+        return ops.health()
+    except Exception as e:
+        return {"available": False, "detail": str(e)}
 
 
 @app.get("/api/manager/{fpl_id}/history")
@@ -1697,9 +1822,7 @@ def _drafts_or_404(gw=None):
         raise HTTPException(
             status_code=404,
             detail=f"No drafts for GW{gw} - has the report been built?")
-    # Belt and braces alongside the Disallow on /api/: robots.txt asks a crawler
-    # not to fetch, this tells anything that fetched anyway not to index.
-    return PlainTextResponse(text, headers={"X-Robots-Tag": "noindex, nofollow"})
+    return _noindex(text)
 
 
 @app.get("/api/social/{gw}", response_class=PlainTextResponse)
@@ -1713,16 +1836,198 @@ def social_drafts(gw: int, x_refresh_token: str = Header(default="")):
 # Declared conditionally, like the IndexNow key route: unset, the path simply
 # doesn't exist rather than existing and refusing. See FPL_SOCIAL_KEY above for
 # why this is a capability URL and what that costs.
+def _noindex(text):
+    """Belt and braces alongside the Disallow on /api/: robots.txt asks a
+    crawler not to fetch, this tells anything that fetched anyway not to
+    index."""
+    return PlainTextResponse(text, headers={"X-Robots-Tag": "noindex, nofollow"})
+
+
+def _roundup_drafts_or_404(gw=None):
+    """The roundup drafts for `gw`, or for the most recent gameweek with any."""
+    if gw is None:
+        available = social.list_roundup_drafts()
+        if not available:
+            raise HTTPException(
+                status_code=404,
+                detail="No roundup drafts yet - has a gameweek finished?")
+        gw = available[0]
+    text = social.read_roundup_drafts(gw)
+    if text is None:
+        raise HTTPException(status_code=404,
+                            detail=f"No roundup drafts for GW{gw}")
+    return _noindex(text)
+
+
+def _player_drafts_or_404(day=None):
+    """One night's player write-up drafts, or the newest.
+
+    Defaulting to the newest is the whole point: this is read on a phone every
+    morning, and a URL with a date in it would have to be edited daily, which
+    is exactly the friction that stops the routine happening."""
+    if day is None:
+        available = social.list_player_drafts()
+        if not available:
+            raise HTTPException(
+                status_code=404,
+                detail="No player write-ups yet - has the nightly job run?")
+        day = available[0]
+    text = social.read_player_drafts(day)
+    if text is None:
+        raise HTTPException(status_code=404,
+                            detail=f"No player write-up for {day}")
+    return _noindex(text)
+
+
 if SOCIAL_KEY:
     @app.get(f"/api/social/{SOCIAL_KEY}/latest", response_class=PlainTextResponse)
     def social_drafts_latest():
         """The newest gameweek's drafts. This is the one to bookmark."""
         return _drafts_or_404()
 
+    @app.get(f"/api/social/{SOCIAL_KEY}/roundup", response_class=PlainTextResponse)
+    def social_roundup_latest():
+        """The newest roundup's drafts. Declared before the /{gw} route below,
+        which would otherwise try to read "roundup" as a gameweek number."""
+        return _roundup_drafts_or_404()
+
+    @app.get(f"/api/social/{SOCIAL_KEY}/roundup/{{gw}}",
+             response_class=PlainTextResponse)
+    def social_roundup_keyed(gw: int):
+        return _roundup_drafts_or_404(gw)
+
+    @app.get(f"/api/social/{SOCIAL_KEY}/player", response_class=PlainTextResponse)
+    def social_player_index():
+        """Every player write-up still on disk, newest first.
+
+        An index rather than a bare list of dates: the whole point of the
+        nightly post is deciding each morning whether tonight's is worth
+        posting, and a list of filenames doesn't help with that. Each line
+        carries the player, the angle and the gameweek it was written for.
+        """
+        days = social.list_player_drafts()
+        if not days:
+            raise HTTPException(status_code=404, detail="No player write-ups yet.")
+
+        # The ledger has the player and angle without decoding the payloads.
+        # A file with no matching row is still listed - deleting the row and
+        # leaving the file is a state worth being able to see.
+        ledger = {r["post_date"]: r for r in db.recent_player_posts(limit=400)}
+        lines = [f"FPL Buddy — player write-ups ({len(days)} on disk)", "=" * 46, ""]
+        for day in days:
+            row = ledger.get(day)
+            if row:
+                post = db.get_player_post(day)
+                payload = (post or {}).get("payload") or {}
+                lines.append(
+                    f"{day}  GW{row['gameweek']:<3} "
+                    f"{payload.get('name', '?'):<18} "
+                    f"{payload.get('angle_label', row['angle'])}")
+            else:
+                lines.append(f"{day}  (file only — no ledger row)")
+        lines += ["", f"Read one:  /api/social/{SOCIAL_KEY}/player/<date>",
+                  f"Newest:    /api/social/{SOCIAL_KEY}/player/latest"]
+        return _noindex("\n".join(lines))
+
+    @app.get(f"/api/social/{SOCIAL_KEY}/player/latest",
+             response_class=PlainTextResponse)
+    def social_player_latest():
+        """Tonight's write-up. This is the one to bookmark.
+
+        Declared before the /{day} route so "latest" isn't taken as a date."""
+        return _player_drafts_or_404()
+
+    @app.get(f"/api/social/{SOCIAL_KEY}/player/{{day}}",
+             response_class=PlainTextResponse)
+    def social_player_day(day: str):
+        """An earlier night's write-up, by date.
+
+        `day` goes into a filename, so social.read_player_drafts validates it
+        against YYYY-MM-DD and returns None for anything else - which lands
+        here as a 404 rather than as a path traversal."""
+        return _player_drafts_or_404(day)
+
     @app.get(f"/api/social/{SOCIAL_KEY}/{{gw}}", response_class=PlainTextResponse)
     def social_drafts_keyed(gw: int):
-        """A specific gameweek, for going back to an earlier week."""
+        """A specific gameweek, for going back to an earlier week.
+
+        Declared LAST of the keyed routes. It takes an int, so FastAPI would
+        422 rather than match "player" or "roundup" - but relying on that means
+        the ordering becomes load-bearing the first time one of those paths
+        takes a string segment, which is the kind of thing that breaks quietly."""
         return _drafts_or_404(gw)
+
+
+# Ko-fi's webhook, relayed into Discord.
+#
+# Ko-fi can POST to an arbitrary URL on every donation. It cannot post to a
+# Discord webhook directly - Discord expects its own JSON shape and would
+# reject or mangle Ko-fi's - so this endpoint is the translation, and it is
+# also where the two things Ko-fi gets wrong for us are fixed: the payload
+# carries the donor's EMAIL, which has no business in a chat channel, and the
+# donor's name and message are free text typed by a stranger.
+#
+# Unset, the route does not exist - the same rule the IndexNow and social key
+# routes follow. An endpoint that exists and refuses is one more thing on the
+# internet to probe.
+KOFI_TOKEN = os.environ.get("FPL_KOFI_TOKEN", "").strip()
+
+# Ko-fi's payloads are small - a few hundred bytes. This is generous enough for
+# a long donor message and small enough that the endpoint cannot be used to
+# make the app read a large body from an unauthenticated caller.
+KOFI_MAX_BODY = 16 * 1024
+
+if KOFI_TOKEN:
+    @app.post("/api/kofi", include_in_schema=False)
+    async def kofi_webhook(request: Request):
+        """Relay a Ko-fi donation into Discord.
+
+        Publicly reachable by necessity - Ko-fi's servers have to be able to
+        POST here and they do not authenticate. What makes that safe is the
+        `verification_token` Ko-fi includes in every payload, compared here in
+        constant time against FPL_KOFI_TOKEN.
+
+        Returns 200 for anything it accepts, including a duplicate. Ko-fi
+        retries on a non-2xx, so a genuine delivery that this app has already
+        handled must not be reported as a failure or it will be redelivered
+        forever.
+        """
+        body = await request.body()
+        if len(body) > KOFI_MAX_BODY:
+            raise HTTPException(status_code=413, detail="Payload too large")
+
+        # Ko-fi sends form-encoded with the JSON in a `data` field. Plain JSON
+        # is accepted too, so a change at their end doesn't silently drop
+        # every donation.
+        payload = None
+        try:
+            text = body.decode("utf-8", "replace")
+            fields = urllib.parse.parse_qs(text)
+            raw = (fields.get("data") or [None])[0]
+            payload = json.loads(raw if raw is not None else text)
+        except (ValueError, TypeError):
+            payload = None
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="Unreadable payload")
+
+        # Constant-time, so the endpoint cannot be used to recover the token a
+        # character at a time by timing the responses.
+        supplied = str(payload.get("verification_token") or "")
+        if not hmac.compare_digest(supplied, KOFI_TOKEN):
+            raise HTTPException(status_code=403, detail="Bad verification token")
+
+        # Ko-fi retries a delivery it didn't get a 2xx for, and a retry of a
+        # message already relayed should not post a second time.
+        message_id = str(payload.get("message_id")
+                         or payload.get("kofi_transaction_id") or "")
+        if message_id and not db.mark_notified("kofi", message_id):
+            return {"ok": True, "duplicate": True}
+
+        # Deliberately nothing about the payload is logged. It carries an email
+        # address, and a log line is a copy of it that outlives every promise
+        # the privacy policy makes.
+        sent = ops.notify("kofi", social.channel_kofi(payload))
+        return {"ok": True, "notified": bool(sent)}
 
 
 @app.post("/api/refresh")

@@ -64,7 +64,7 @@
     </p>
 </header>
 
-{% if not (report.in_form or report.differentials or report.attack_runs or report.news) %}
+{% if not (report.captains or report.in_form or report.differentials or report.attack_runs or report.news) %}
 <p class="gw-empty">
     Nothing worth reporting yet. Form, ownership and fixture difficulty all need
     matches to have been played, so this edition fills out once the season is
@@ -72,9 +72,46 @@
 </p>
 {% endif %}
 
-{# ============================ LEAD: IN FORM ============================ #}
-{% if report.in_form %}
+{# ============================ LEAD: THE ARMBAND ============================
+   First on the page because it is the decision every manager makes every week
+   and the one they arrive looking for. Editions written before this section
+   existed simply don't have the key, and `{% if %}` on a missing key is false -
+   so an archived page from before the change renders exactly as it did. #}
+{% if report.captains %}
 <section class="gw-section gw-lead">
+    <h2 class="gw-section-head"><span>The Armband</span></h2>
+    <p class="gw-section-sub">The three highest projections in the game this gameweek, whoever owns them.</p>
+    <div class="gw-cards gw-cards-3">
+    {% for p in report.captains %}
+        <article class="gw-card gw-card-captain">
+            <div class="gw-card-top">
+                {% with code = p.team_code, label = p.team_name %}{% include 'partials/club_chip.html' %}{% endwith %}
+                <span class="gw-pos">{{ p.pos }}</span>
+            </div>
+            <h3 class="gw-card-name">
+                {% if p.path %}<a href="{{ p.path }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}
+            </h3>
+            <p class="gw-card-figure">{{ p.headline }}</p>
+            <p class="gw-card-why">{{ p.why }}</p>
+            <dl class="gw-stats">
+                {% if p.cost %}<div><dt>Price</dt><dd>&pound;{{ '%.1f'|format(p.cost) }}m</dd></div>{% endif %}
+                {% if p.owned is not none %}<div><dt>Owned</dt><dd>{{ '%.1f'|format(p.owned) }}%</dd></div>{% endif %}
+                {# Only on the names that aren't the leader: "0.0 behind" under
+                   the top pick is a number that says nothing. #}
+                {% if p.behind_leader %}<div><dt>Behind</dt><dd>{{ '%.1f'|format(p.behind_leader) }}</dd></div>{% endif %}
+            </dl>
+            {% if p.fixtures %}
+            <p class="gw-fixtures">{% for f in p.fixtures %}<span>{{ f.label }}</span>{% endfor %}</p>
+            {% endif %}
+        </article>
+    {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+{# ============================ IN FORM ============================ #}
+{% if report.in_form %}
+<section class="gw-section{{ ' gw-lead' if not report.captains }}">
     <h2 class="gw-section-head"><span>In Form</span></h2>
     <p class="gw-section-sub">The three highest form figures among players who are fit and playing regularly.</p>
     <div class="gw-cards gw-cards-3">
@@ -210,7 +247,15 @@
         by hand. How the model works is on the <a href="/about">about page</a>.
     </p>
     <p class="gw-footer-nav">
-        <a href="/gameweek">&larr; All gameweek briefings</a>
+        <a href="/gameweek">&larr; This gameweek</a>
+        {# Only once the round has actually been written up. A briefing is
+           published a week before its roundup can exist, so an unconditional
+           link here would 404 from every live edition - and, worse, would be
+           crawled and indexed as a broken link from the newest page on the
+           site. #}
+        {% if has_roundup %}
+        <a href="/gameweek/{{ report.gameweek }}/roundup">How Gameweek {{ report.gameweek }} went &rarr;</a>
+        {% endif %}
         <a href="/gameweek/feed.xml">RSS</a>
     </p>
 </footer>

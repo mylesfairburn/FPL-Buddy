@@ -1,43 +1,89 @@
 {% extends 'pages/_layout.html' %}
 
 {% block content %}
-<h1 class="page-title">Gameweek briefings</h1>
+<h1 class="page-title">This gameweek</h1>
 <p class="page-lede">
-    One write-up per gameweek: who is in form, the best differentials, whose
-    fixtures turn, and which widely-owned players are carrying a knock. Each
-    edition is rebuilt nightly until its deadline, then frozen &mdash; so an old
-    briefing still says what it said at the time, rather than being quietly
-    corrected afterwards.
+    Two write-ups a week, and only the two that are current. Before each deadline:
+    who to captain, who is in form, the best differentials and which widely-owned
+    players are carrying a knock. After the round is settled: who scored, who
+    blanked, and what the model got right and wrong.
 </p>
 
-{% if editions %}
-<ul class="gw-archive">
-    {% for ed in editions %}
-    <li class="gw-archive-item">
-        <a class="gw-archive-link" href="/gameweek/{{ ed.gameweek }}">
-            <span class="gw-archive-num">GW{{ ed.gameweek }}</span>
-            <span class="gw-archive-label">Gameweek {{ ed.gameweek }} briefing</span>
-        </a>
-        <span class="gw-archive-state {{ 'is-final' if ed.frozen else 'is-live' }}">
-            {{ "Final" if ed.frozen else "Live" }}
-        </span>
-    </li>
-    {% endfor %}
-</ul>
+{% if brief or roundup %}
+<div class="gw-hub">
+
+    {# ---------------- The upcoming briefing ---------------- #}
+    {% if brief %}
+    {% set b = brief.payload %}
+    {% set is_preview = not brief.frozen and b.stage == 'preview' %}
+    <article class="gw-hub-card gw-hub-brief">
+        <div class="gw-hub-top">
+            <span class="gw-hub-kicker">Before the deadline</span>
+            <span class="gw-status {{ 'is-final' if brief.frozen else ('is-preview' if is_preview else 'is-live') }}">
+                {{ "Final edition" if brief.frozen else ("Preview edition" if is_preview else "Updated nightly") }}
+            </span>
+        </div>
+        <h2 class="gw-hub-title">
+            <a href="/gameweek/{{ b.gameweek }}">The Gameweek {{ b.gameweek }} Briefing</a>
+        </h2>
+        {% if b.deadline_label %}
+        <p class="gw-hub-deadline">Deadline <strong>{{ b.deadline_label }}</strong></p>
+        {% endif %}
+        <p class="gw-hub-summary">{{ b.summary }}</p>
+        {# The top captain pick is the single thing most readers arrived for, so
+           it is on the card rather than one click behind it. Guarded because
+           editions written before the armband section existed have no key. #}
+        {% if b.captains %}
+        <p class="gw-hub-lead">
+            <strong>Top captain pick:</strong>
+            {% set c = b.captains[0] %}
+            {% if c.path %}<a href="{{ c.path }}">{{ c.name }}</a>{% else %}{{ c.name }}{% endif %}
+            &mdash; {{ c.headline }}
+        </p>
+        {% endif %}
+        <p class="gw-hub-go"><a href="/gameweek/{{ b.gameweek }}">Read the briefing &rarr;</a></p>
+    </article>
+    {% endif %}
+
+    {# ---------------- The last completed roundup ---------------- #}
+    {% if roundup %}
+    {% set r = roundup.payload %}
+    <article class="gw-hub-card gw-hub-roundup">
+        <div class="gw-hub-top">
+            <span class="gw-hub-kicker">After the round</span>
+            <span class="gw-status is-final">Final</span>
+        </div>
+        <h2 class="gw-hub-title">
+            <a href="/gameweek/{{ r.gameweek }}/roundup">The Gameweek {{ r.gameweek }} Roundup</a>
+        </h2>
+        <p class="gw-hub-summary">{{ r.summary }}</p>
+        {% if r.scorecard %}
+        <p class="gw-hub-lead">
+            <strong>The model:</strong> projected
+            {{ '%.1f'|format(r.scorecard.predicted) }}, scored {{ r.scorecard.actual }}
+        </p>
+        {% endif %}
+        <p class="gw-hub-go"><a href="/gameweek/{{ r.gameweek }}/roundup">Read the roundup &rarr;</a></p>
+    </article>
+    {% endif %}
+
+</div>
 {% else %}
 {# Expected for most of a preseason, and on a first deploy before the nightly
-   job has run. Says so plainly rather than showing an empty list, which reads
-   as a broken page. #}
+   job has run. Says so plainly rather than showing an empty page, which reads
+   as broken. #}
 <p class="gw-empty">
-    No briefings published yet. The first one appears once the season's opening
-    gameweek is in sight &mdash; they're generated overnight.
+    Nothing published yet. The first briefing appears once the season's opening
+    gameweek is in sight &mdash; they&rsquo;re generated overnight, and the first
+    roundup follows once that gameweek has been played.
 </p>
 {% endif %}
 
 <h2>Following along</h2>
 <p>
-    New editions appear in the <a href="/gameweek/feed.xml">RSS feed</a>. If you
-    want the underlying numbers rather than the write-up, the
+    Both go into the <a href="/gameweek/feed.xml">RSS feed</a> as they're published
+    &mdash; one feed carrying briefings and roundups together. If you want the
+    underlying numbers rather than the write-up, the
     <a href="/players">player ratings</a> and the
     <a href="/fixture-rotator">fixture planner</a> are where they come from.
 </p>
