@@ -9,7 +9,7 @@ starlette<1.0.0
 # failure lands at import time on a fresh install.
 markupsafe
 pandas==3.0.0
-numpy==2.4.1
+numpy==2.5.2
 scikit-learn==1.8.0
 joblib
 matplotlib
