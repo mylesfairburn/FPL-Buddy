@@ -62,6 +62,39 @@ jobs:
       - name: Run the test suite
         run: python tests/run_tests.py
 
+      # Without this, a failed run says "Process completed with exit code 1"
+      # and nothing else - the failing rows are only in the report files, which
+      # means downloading an artifact to learn the name of the test that broke.
+      # On a one-person project that is the difference between fixing it now
+      # and fixing it at the weekend.
+      - name: Show what failed
+        if: failure()
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          p = pathlib.Path("tests/reports/results.json")
+          if not p.exists():
+              print("No results.json - the suite died before writing one.")
+              raise SystemExit(0)
+          rows = json.loads(p.read_text(encoding="utf-8")).get("rows", [])
+          bad = [r for r in rows if not r.get("ok")]
+          # Highest severity first: the gate only trips on critical/high, so
+          # those are the rows that actually blocked the deploy. Medium and
+          # below are printed underneath as context.
+          order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+          bad.sort(key=lambda r: order.get(str(r.get("severity")).lower(), 9))
+          print(f"{len(bad)} failing row(s):\n")
+          for r in bad:
+              print(f"[{str(r.get('severity','?')).upper()}] "
+                    f"{r.get('group','?')} - {r.get('name','?')}")
+              print(f"    input:    {str(r.get('input',''))[:200]}")
+              print(f"    expected: {str(r.get('expected',''))[:200]}")
+              print(f"    actual:   {str(r.get('actual',''))[:400]}")
+              if r.get("note"):
+                  print(f"    note:     {r['note']}")
+              print()
+          PY
+
       # Kept even when the tests fail - that is the run whose report you want.
       - name: Upload the test report
         if: always()
