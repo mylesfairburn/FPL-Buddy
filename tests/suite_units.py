@@ -9,7 +9,11 @@ import json
 import math
 import os
 import re
+import tempfile
 from datetime import date
+
+import joblib
+import pandas as pd
 
 import drafts
 import gw_report as gwr
@@ -17,7 +21,10 @@ import gw_roundup as gwru
 import kits
 import player_pages as pp
 import player_spotlight as ps
+import rating_model
+import seasons
 import social
+import train_model as tm
 from harness import check, expect, group, safe
 
 
@@ -1799,6 +1806,142 @@ def test_kit_colours():
            note="a promoted club not yet in kits.js hits this")
 
 
+def test_model_leakage_and_scale():
+    """The two properties the points model is only correct because of.
+
+    Both are silent when broken: a leaking feature makes the training numbers
+    look better, and a mis-scaled one still predicts something. Neither shows up
+    as an error anywhere.
+    """
+    group("model features", "critical")
+
+    # One player, one season, scoring 1, 2, 3, 4 in consecutive gameweeks.
+    frame = pd.DataFrame({
+        'player_key': [1] * 4, 'season_start': [2025] * 4, 'round': [1, 2, 3, 4],
+        'total_points': [1, 2, 3, 4], 'minutes': [90] * 4,
+    })
+    for col in tm.ROLLING_COLS:
+        if col not in frame.columns:
+            frame[col] = 0.0
+    built = tm.build_rolling_features(frame).sort_values('round')
+
+    # GW1 has nothing before it, so every feature must be NaN. If the shift
+    # were missing this would be 1.0 - the gameweek's own result.
+    expect("first gameweek has no history to average", "GW1 total_points_roll3",
+           True, bool(pd.isna(built['total_points_roll3'].iloc[0])))
+    expect("a gameweek never sees its own result", "GW4 total_points_roll3",
+           2.0, round(float(built['total_points_roll3'].iloc[3]), 3),
+           severity="critical")
+    expect("the level is the mean of everything before", "GW4 total_points_level",
+           2.0, round(float(built['total_points_level'].iloc[3]), 3))
+    expect("games_seen counts earlier rows only", "GW4 games_seen",
+           3, int(built['games_seen'].iloc[3]))
+
+    # Rolling must not carry across a season boundary.
+    two = pd.concat([frame, frame.assign(season_start=2026, total_points=[9] * 4)])
+    across = tm.build_rolling_features(two)
+    first_2026 = across[(across.season_start == 2026) & (across['round'] == 1)]
+    check("form does not carry across a summer", "GW1 of the following season",
+          "NaN, not last season's average",
+          "NaN" if bool(pd.isna(first_2026['total_points_roll3'].iloc[0])) else "carried",
+          lambda v: v == "NaN", severity="critical",
+          note="grouping by player alone would make last May the form for "
+               "this August, across a transfer window")
+
+
+def test_team_strength_ranks_are_scale_free():
+    """Strength features are percentile ranks, and that is load-bearing.
+
+    FPL has already changed this scale once: 2025-26's teams.csv carries
+    strength_overall_home around 975-1355, and 2026-27's carries the same column
+    as 2-5. The old model fed `difficulty * 220` into a scaler fitted on the
+    first, which put an easy fixture eight standard deviations outside anything
+    it had seen.
+    """
+    group("team strength scale", "high")
+
+    ranks = tm.team_strength_ranks(seasons.current_season())
+    check("the current season has usable strength ranks", "team_strength_ranks()",
+          "a table, not None", "table" if ranks is not None else "None",
+          lambda v: v == "table", severity="high")
+    if ranks is None:
+        return
+
+    for column in ('overall_home_rank', 'attack_home_rank', 'defence_away_rank'):
+        check(f"{column} is populated", f"team_strength_ranks()[{column!r}]",
+              "not all NaN", "populated" if ranks[column].notna().any() else "all NaN",
+              lambda v: v == "populated", severity="high",
+              note="FPL ships strength_attack_* and strength_defence_* as "
+                   "all-zero every preseason; these must fall back to the "
+                   "overall rating rather than going missing, or the fixture "
+                   "stops affecting the projection at all")
+
+    values = ranks['overall_home_rank'].dropna()
+    check("ranks are percentiles", "overall_home_rank range",
+          "between 0 and 1", f"{values.min():.2f}-{values.max():.2f}",
+          lambda _: bool(values.min() > 0) and bool(values.max() <= 1.0),
+          severity="high")
+
+
+def test_model_bundle_version_guard():
+    """A stale pickle must be refused, not used.
+
+    The bundles live on the deployment's mounted volume and ensure_seeded()
+    only ever copies files that are MISSING, so a deploy hands new inference
+    code the pickle the volume already had. Feeding that model a feature list it
+    was never fitted on is the one failure here that produces plausible,
+    confident, wrong numbers on every page.
+    """
+    group("model bundle version", "critical")
+
+    with tempfile.TemporaryDirectory() as directory:
+        joblib.dump({'version': tm.MODEL_VERSION - 1, 'kind': 'old'},
+                    os.path.join(directory, 'midfielder_model.pkl'))
+        raised = safe(rating_model.load_models, directory)
+        check("an out-of-date bundle is refused", "load_models() on version N-1",
+              "StaleModelError", type(raised).__name__ if isinstance(raised, Exception)
+              else str(raised)[:40],
+              lambda v: "StaleModel" in str(v), severity="critical")
+
+    check("the bundles on disk are current", "load_models()",
+          f"version {tm.MODEL_VERSION}",
+          "current" if not isinstance(safe(rating_model.load_models), Exception)
+          else "stale", lambda v: v == "current", severity="high",
+          note="if this fails locally, run `python train_model.py`")
+
+
+def test_two_stage_predictions():
+    """The blended figure must sit between a cameo and a full start.
+
+    E[points] = P(start) x points-if-he-starts + P(cameo) x cameo points, so it
+    can never exceed the if-he-starts number. A blend that came out above it
+    would mean the arithmetic had been rearranged wrongly, which is exactly the
+    kind of change that still produces believable output.
+    """
+    group("two-stage blend", "high")
+
+    bundles = safe(rating_model.load_models)
+    if isinstance(bundles, Exception) or not bundles:
+        check("models available to score", "load_models()", "at least one bundle",
+              "none", lambda v: False, severity="high",
+              note="run `python train_model.py`")
+        return
+
+    position, bundle = sorted(bundles.items())[0]
+    rows = pd.DataFrame([{c: 1.0 for c in bundle['feature_cols']} for _ in range(3)])
+    expected, if_starts, p_start = tm.predict_bundle(bundle, rows)
+
+    check("start probability is a probability", f"{position} P(start)",
+          "0 to 1", f"{p_start.min():.2f}-{p_start.max():.2f}",
+          lambda _: bool(p_start.min() >= 0 and p_start.max() <= 1), severity="high")
+    check("points if he starts are non-negative", f"{position} if-starts",
+          ">= 0", f"{if_starts.min():.2f}",
+          lambda _: bool(if_starts.min() >= 0), severity="high")
+    check("the blend never exceeds a full start", f"{position} expected vs if-starts",
+          "expected <= if_starts", f"{expected.max():.2f} vs {if_starts.max():.2f}",
+          lambda _: bool((expected <= if_starts + 1e-9).all()), severity="high")
+
+
 SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_a_to_z_grouping, test_draft_validation, test_storage_kind,
           test_horizon_points, test_gw_report_predicted_for,
@@ -1815,4 +1958,6 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_notification_channels, test_channel_messages,
           test_kofi_message, test_kofi_route_absent_when_unconfigured,
           test_declared_dependencies,
+          test_model_leakage_and_scale, test_team_strength_ranks_are_scale_free,
+          test_model_bundle_version_guard, test_two_stage_predictions,
           test_kit_colours]

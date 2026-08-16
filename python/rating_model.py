@@ -8,54 +8,136 @@ import numpy as np
 import pandas as pd
 
 import seasons
+import train_model
+from train_model import predict_bundle
 
 MODEL_DIR = seasons.MODELS_DIR
 ROLL_WINDOW = 3
 
 
+class StaleModelError(RuntimeError):
+    """A bundle on disk predates the current feature set."""
+
+
 def load_models(model_dir=MODEL_DIR):
-    """Loads the {model, scaler, feature_cols} bundle saved by train_model.py, per position."""
+    """Load the per-position bundle saved by train_model.py.
+
+    Refuses a bundle from an older MODEL_VERSION rather than using it. That
+    sounds unhelpful for a site that would rather serve something than nothing,
+    but the failure it prevents is worse than an outage: the bundles live on the
+    deployment's mounted volume, `seasons.ensure_seeded()` only ever copies
+    files that are MISSING, and a deploy therefore hands new inference code the
+    pickle the volume already had. Feature names have changed across that
+    boundary, and a model asked for columns it has never seen either raises deep
+    inside sklearn or - worse - silently scores every player off whatever
+    happened to line up. Failing here names the fix instead:
+
+        docker exec fpl-buddy python train_model.py
+    """
     bundles = {}
-    for filename in os.listdir(model_dir):
-        if filename.endswith('_model.pkl'):
-            position = filename.replace('_model.pkl', '').capitalize()
-            bundles[position] = joblib.load(f'{model_dir}/{filename}')
+    stale = []
+    for filename in sorted(os.listdir(model_dir)):
+        if not filename.endswith('_model.pkl'):
+            continue
+        position = filename.replace('_model.pkl', '').capitalize()
+        bundle = joblib.load(f'{model_dir}/{filename}')
+        if bundle.get('version') != train_model.MODEL_VERSION:
+            stale.append(f"{filename} (version {bundle.get('version', 'unversioned')})")
+            continue
+        bundles[position] = bundle
+    if stale:
+        raise StaleModelError(
+            f"{len(stale)} model bundle(s) predate this code and were not loaded: "
+            f"{', '.join(stale)}. Expected version {train_model.MODEL_VERSION}. "
+            "Retrain with `python train_model.py` (in production: "
+            "`docker exec fpl-buddy python train_model.py`).")
     return bundles
 
 
+def _current_strength_ranks():
+    """This season's club strength percentiles, keyed by team id.
+
+    The same table `train_model.team_strength_ranks` builds for a training
+    season, for the season being predicted. Going through that one function is
+    the point: the ranks the model was fitted on and the ranks it is asked to
+    predict from are then produced by the same code, and cannot drift apart the
+    way the old `difficulty * 220` scaling did.
+    """
+    ranks = train_model.team_strength_ranks(seasons.current_season())
+    if ranks is None:
+        return None
+    return ranks.set_index('team_id')
+
+
+def _opponent_rank_columns(rows, ranks):
+    """Attach opp_*/own_* rank columns to a frame of upcoming fixtures.
+
+    `rows` needs `team`, `opponent` and `was_home`. A club's HOME strength is
+    what it brings to its own ground, so the opponent contributes its away
+    rating when the player is at home - the same convention
+    train_model.add_fixture_context uses.
+    """
+    empty = pd.Series(np.nan, index=rows.index)
+    if ranks is None:
+        for name in ('opp_strength_rank', 'opp_attack_rank', 'opp_defence_rank',
+                     'own_attack_rank', 'own_defence_rank'):
+            rows[name] = empty
+        return rows
+
+    home = rows['was_home'].astype(bool)
+
+    def lookup(ids, column):
+        if column not in ranks.columns:
+            return empty
+        return pd.Series(ids, index=rows.index).map(ranks[column])
+
+    for out, kind in (('opp_strength_rank', 'overall'),
+                      ('opp_attack_rank', 'attack'),
+                      ('opp_defence_rank', 'defence')):
+        rows[out] = np.where(home,
+                             lookup(rows['opponent'], f'{kind}_away_rank'),
+                             lookup(rows['opponent'], f'{kind}_home_rank'))
+    for out, kind in (('own_attack_rank', 'attack'), ('own_defence_rank', 'defence')):
+        rows[out] = np.where(home,
+                             lookup(rows['team'], f'{kind}_home_rank'),
+                             lookup(rows['team'], f'{kind}_away_rank'))
+    return rows
+
+
 def build_fixture_features(fixtures_df, n_fixtures=3):
-    """For each team, averages difficulty and home ratio across their next
-    N unplayed fixtures - this replaces the neutral placeholders with real
-    upcoming schedule strength."""
+    """For each team, the average strength of their next N unplayed fixtures.
+
+    Averaged across the run rather than taken one at a time, because this feeds
+    the single blended `predicted_points` figure. Per-gameweek numbers come from
+    build_per_gameweek_fixture_features below.
+    """
     upcoming = fixtures_df[fixtures_df['finished'] == False].sort_values('event')
+    ranks = _current_strength_ranks()
 
-    team_features = []
+    rows = []
     team_ids = pd.concat([upcoming['team_h'], upcoming['team_a']]).unique()
-
     for team_id in team_ids:
-        home_fixtures = upcoming[upcoming['team_h'] == team_id][['event', 'team_h_difficulty']] \
-            .rename(columns={'team_h_difficulty': 'difficulty'})
-        home_fixtures['was_home'] = True
+        home = upcoming[upcoming['team_h'] == team_id][['event', 'team_a']] \
+            .rename(columns={'team_a': 'opponent'})
+        home['was_home'] = True
+        away = upcoming[upcoming['team_a'] == team_id][['event', 'team_h']] \
+            .rename(columns={'team_h': 'opponent'})
+        away['was_home'] = False
 
-        away_fixtures = upcoming[upcoming['team_a'] == team_id][['event', 'team_a_difficulty']] \
-            .rename(columns={'team_a_difficulty': 'difficulty'})
-        away_fixtures['was_home'] = False
-
-        team_fixtures = pd.concat([home_fixtures, away_fixtures]).sort_values('event').head(n_fixtures)
-
-        if team_fixtures.empty:
+        fixtures = pd.concat([home, away]).sort_values('event').head(n_fixtures)
+        if fixtures.empty:
             continue
+        fixtures['team'] = team_id
+        rows.append(fixtures)
 
-        team_features.append({
-            'team': team_id,
-            # FPL's difficulty is 1 (easiest) to 5 (hardest) - inverted here
-            # so it aligns with opponent_strength direction the model was
-            # trained on (higher strength = harder opponent).
-            'opponent_strength': team_fixtures['difficulty'].mean() * 220,  # roughly matches teams_df's strength scale
-            'was_home': team_fixtures['was_home'].mean(),
-        })
+    if not rows:
+        return pd.DataFrame()
 
-    return pd.DataFrame(team_features)
+    frame = _opponent_rank_columns(pd.concat(rows, ignore_index=True), ranks)
+    rank_cols = ['opp_strength_rank', 'opp_attack_rank', 'opp_defence_rank',
+                 'own_attack_rank', 'own_defence_rank']
+    return (frame.groupby('team')[rank_cols + ['was_home']]
+            .mean().reset_index())
 
 
 def build_per_gameweek_fixture_features(fixtures_df, n_fixtures=3):
@@ -80,11 +162,15 @@ def build_per_gameweek_fixture_features(fixtures_df, n_fixtures=3):
         if tf.empty:
             continue
         tf['team'] = team_id
-        # Same 1-5 -> strength scaling the model was trained against.
-        tf['opponent_strength'] = tf['fpl_difficulty'] * 220
         rows.append(tf)
 
-    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+    if not rows:
+        return pd.DataFrame()
+    # `fpl_difficulty` is carried through untouched for the UI - it is what
+    # colours each fixture cell, and the front end uses the same 1-5 key as the
+    # rotator page. It is no longer a model input.
+    return _opponent_rank_columns(pd.concat(rows, ignore_index=True),
+                                  _current_strength_ranks())
 
 
 def attach_per_gameweek_points(position_dfs, model_bundles, form_features,
@@ -110,27 +196,24 @@ def attach_per_gameweek_points(position_dfs, model_bundles, form_features,
             continue
 
         bundle = model_bundles[position]
-        model, scaler, feature_cols = bundle['model'], bundle['scaler'], bundle['feature_cols']
 
         # Build features on a CLEAN frame of just the join keys. df here is the
-        # already-rated df, which already carries was_home/opponent_strength/roll
+        # already-rated df, which already carries the fixture and rolling
         # columns from predict_ratings - merging onto it directly would collide
-        # and get suffixed (_x/_y), so feature_cols would go missing.
-        work = df[['code', 'team']].drop_duplicates()
+        # and get suffixed (_x/_y), so the feature columns would go missing.
+        keys = ['code', 'team'] + (['now_cost'] if 'now_cost' in df.columns else [])
+        work = df[keys].drop_duplicates()
         work = work.merge(form_features, on='code', how='left')
         work = work.merge(per_gw_features, on='team', how='left')  # -> one row per (player, upcoming GW)
+        work = _attach_price(work)
 
-        if any(c not in work.columns for c in feature_cols):
-            # Defensive: never crash startup over a missing feature column.
-            df['next_gameweeks'] = [[] for _ in range(len(df))]
-            updated[position] = df
-            continue
-
-        has_features = work[feature_cols].notna().all(axis=1)
+        seen = work.get('games_seen')
+        has_features = seen.notna() & (seen > 0) if seen is not None else pd.Series(
+            False, index=work.index)
         work['gw_points'] = np.nan
         if has_features.any():
-            X = scaler.transform(work.loc[has_features, feature_cols])
-            work.loc[has_features, 'gw_points'] = model.predict(X)
+            expected, _, _ = predict_bundle(bundle, work.loc[has_features])
+            work.loc[has_features, 'gw_points'] = expected
 
         # One ordered list of gameweeks per player code.
         by_code = {}
@@ -426,8 +509,6 @@ def build_current_form_features(
     current_players_path = current_players_path or seasons.players_path()
     previous_players_path = previous_players_path or seasons.players_path(prev)
 
-    stat_cols = ['expected_goal_involvements', 'minutes', 'bonus']
-
     if mode == 'preseason':
         use_fallback = True
     elif mode == 'inseason':
@@ -470,31 +551,105 @@ def build_current_form_features(
     source = source.dropna(subset=['code'])
     source['code'] = source['code'].astype(int)
 
-    for col in stat_cols:
-        source[col] = pd.to_numeric(source[col], errors='coerce')
+    if use_fallback:
+        # Filter out players with minimal minutes so a single substitute cameo
+        # doesn't produce a misleadingly high per-game average.
+        minutes_played = pd.to_numeric(source['minutes'], errors='coerce') \
+            .groupby(source['code']).sum()
+        eligible = minutes_played[minutes_played >= 180].index  # ~2 full games
+        source = source[source['code'].isin(eligible)]
+
+    form = _features_for_next_gameweek(source)
 
     if use_fallback:
-        # Full-season average, not just the last 3 GWs - avoids being skewed by
-        # end-of-season rotation/dead rubbers, which is exactly what was
-        # producing unreliable ratings (e.g. Haaland ranking low due to a
-        # rested run-in, fringe players ranking high off one lucky game).
-        # Filter out players with minimal minutes so a single substitute
-        # cameo doesn't produce a misleadingly high average.
-        minutes_played = source.groupby('code')['minutes'].sum()
-        eligible_codes = minutes_played[minutes_played >= 180].index  # ~2 full games minimum
-        source = source[source['code'].isin(eligible_codes)]
-        form = source.groupby('code')[stat_cols].mean()
-    else:
-        source = source.sort_values(['code', 'round'])
-        recent = source.groupby('code').tail(ROLL_WINDOW)
-        form = recent.groupby('code')[stat_cols].mean()
+        # Preseason only: flatten the short windows onto the season-long level.
+        #
+        # The rolling columns would otherwise hold last season's FINAL three and
+        # six gameweeks, which is the run-in - rested title winners, rotated
+        # squads, dead rubbers. That is the exact bug this fallback was written
+        # to avoid: Haaland ranked low off a rested finish, fringe players
+        # ranked high off one lucky game. Across a summer of transfers those
+        # last three games carry no more information than the season did, so
+        # they are set to the season average rather than trusted as "form".
+        for col in train_model.ROLLING_COLS:
+            level = f'{col}_level'
+            if level not in form.columns:
+                continue
+            for window in train_model.ROLL_WINDOWS:
+                if f'{col}_roll{window}' in form.columns:
+                    form[f'{col}_roll{window}'] = form[level]
 
-    form.columns = [f'{c}_roll{ROLL_WINDOW}' for c in stat_cols]
     return form.reset_index()
 
 
+def _features_for_next_gameweek(source):
+    """Per-player features describing the state going INTO the next gameweek.
+
+    The trainer's features are all `shift(1)`-then-aggregate, so the row for
+    gameweek R carries the history of everything before R. The numbers wanted
+    here are the ones a hypothetical *next* row would carry - so that row is
+    exactly what gets appended: one blank gameweek per player, at one past the
+    last real round. `train_model.build_rolling_features` then fills it in, and
+    the appended rows are read back out.
+
+    Going through the trainer's own function rather than recomputing the
+    aggregates is the whole point. There are 86 features across four families
+    and two window lengths; a second implementation of that arithmetic would
+    agree with the first on the day it was written and quietly stop agreeing
+    later. This cannot: there is only one implementation.
+    """
+    source = source.copy()
+    source['round'] = pd.to_numeric(source['round'], errors='coerce')
+    source = source.dropna(subset=['round'])
+    # One season's worth of history at a time, so the grouping key the trainer
+    # uses is constant here.
+    source['season_start'] = 0
+    source['player_key'] = source['code']
+
+    future = source.sort_values('round').groupby('code', as_index=False).tail(1).copy()
+    future['round'] = source['round'].max() + 1
+    for col in train_model.ROLLING_COLS + ['value']:
+        if col in future.columns:
+            future[col] = np.nan
+    future['is_future'] = True
+    source['is_future'] = False
+
+    combined = train_model.build_rolling_features(
+        pd.concat([source, future], ignore_index=True))
+    rows = combined[combined['is_future']].set_index('code')
+
+    keep = [c for c in rows.columns
+            if c.endswith(('_roll3', '_roll6', '_level', '_per90'))
+            or c == 'games_seen']
+    return rows[keep]
+
+
+def _attach_price(df):
+    """`price` in millions, from the live bootstrap rather than last season.
+
+    The trainer derives it from each gameweek row's `value`; here the only
+    honest source is what the player costs today, which is what `now_cost`
+    is."""
+    if 'now_cost' in df.columns:
+        df['price'] = pd.to_numeric(df['now_cost'], errors='coerce') / 10.0
+    else:
+        df['price'] = np.nan
+    return df
+
+
 def predict_ratings(position_dfs, model_bundles, form_features, fixture_features):
-    """Predicts expected points per player, converts to a 0-100 rating per position."""
+    """Expected points per player, and a 0-100 rating per position.
+
+    Three numbers come out of this rather than one:
+
+      predicted_points  P(start) x points-if-he-starts, plus the cameo term.
+                        What the tables sort on and what the site shows.
+      points_if_starts  What the model expects from him on the pitch, with the
+                        rotation risk taken back out. The more useful number
+                        when comparing a nailed starter to a 60% one, and the
+                        one a write-up should quote.
+      start_probability The other half of that comparison.
+    """
     updated = {}
 
     for position, df in position_dfs.items():
@@ -507,20 +662,30 @@ def predict_ratings(position_dfs, model_bundles, form_features, fixture_features
             continue
 
         bundle = model_bundles[position]
-        model, scaler, feature_cols = bundle['model'], bundle['scaler'], bundle['feature_cols']
 
         merged = df.merge(form_features, on='code', how='left')
-        # Real upcoming fixture difficulty/home-ratio, keyed by the player's team
-        merged = merged.merge(fixture_features, on='team', how='left')
+        # Real upcoming fixture strength, keyed by the player's team.
+        if not fixture_features.empty:
+            merged = merged.merge(fixture_features, on='team', how='left')
+        merged = _attach_price(merged)
 
-        has_features = merged[feature_cols].notna().all(axis=1)
+        # A player needs SOME history to be scored at all. The boosters handle
+        # missing values natively, so this is not "every feature present" as it
+        # was under the old scaler - it is "we have seen him play", which is the
+        # honest floor. Everyone else keeps a NaN projection and ranks last,
+        # which is what a player with no evidence deserves.
+        seen = merged.get('games_seen')
+        has_features = seen.notna() & (seen > 0) if seen is not None else pd.Series(
+            False, index=merged.index)
 
-        predicted_points = pd.Series(np.nan, index=merged.index)
+        for col in ('predicted_points', 'points_if_starts', 'start_probability'):
+            merged[col] = np.nan
         if has_features.any():
-            X = scaler.transform(merged.loc[has_features, feature_cols])
-            predicted_points.loc[has_features] = model.predict(X)
-
-        merged['predicted_points'] = predicted_points
+            rows = merged.loc[has_features]
+            expected, if_starts, p_start = predict_bundle(bundle, rows)
+            merged.loc[has_features, 'predicted_points'] = expected
+            merged.loc[has_features, 'points_if_starts'] = if_starts
+            merged.loc[has_features, 'start_probability'] = p_start
 
         # 0-100 rating via percentile rank within position - players with no
         # predictable form (e.g. never played) naturally rank at the bottom

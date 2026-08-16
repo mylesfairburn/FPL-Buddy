@@ -12,10 +12,19 @@ just your FPL ID.
 ## What it does
 
 **Player ratings.** Every player in the game scored by a gradient-boosted model
-trained on completed-season data, one model per position. Ratings drive
+trained on completed-season data, one pair of models per position. Ratings drive
 predicted points for each of the next eight gameweeks, and each of the ~570
 players gets [their own page](https://fpl.mfhost.co.uk/players/a-z) with their
 underlying numbers written out in prose.
+
+A pair rather than one model, because "how many points will he score" is really
+two questions. Half of all gameweek rows are players who didn't get on the
+pitch, so a single model fitted across them mostly learns who plays and pulls
+every projection toward the middle — the whole table ended up within a point of
+each other. Instead: a classifier for whether he starts, and a Poisson
+regressor for what he scores when he does, fitted only on appearances. The site
+can then say *6.9 if he starts, and he starts 88% of the time*, which is two
+useful numbers where there was one blurred one.
 
 **Two AI squads, every gameweek.**
 

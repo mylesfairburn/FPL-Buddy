@@ -374,6 +374,41 @@ trainer picks up every season from 2025-26 onward automatically, so rerunning
 
 `FPL_DATA_ROOT` overrides the root if you ever want data on a volume too.
 
+### Retraining after a change to the model — READ BEFORE DEPLOYING ONE
+
+A deploy does **not** ship a new model, and nothing warns you about it. Three
+facts combine into that:
+
+- `data/models/*.pkl` is gitignored, so a fresh checkout — and therefore the CI
+  build context — has none.
+- In production `FPL_DATA_ROOT=/app/data-live`, which is the mounted volume, so
+  the bundles the app loads are the ones sitting on `/srv/fpl-companion/data/`.
+- `seasons.ensure_seeded()` copies **only files that are missing**. It will never
+  overwrite a bundle the volume already holds — which is correct, and is also
+  why a new image cannot replace one.
+
+So new inference code lands against whatever pickle was already there. That
+combination used to be capable of producing confident, plausible, wrong numbers
+on every page. It now can't: bundles carry a `MODEL_VERSION`, and
+`rating_model.load_models()` refuses one it doesn't recognise rather than
+scoring players off a feature list the model was never fitted on.
+
+After deploying a change to `train_model.py`, retrain on the box:
+
+```bash
+docker exec fpl-buddy python train_model.py
+```
+
+then rebuild the rated pool so the site picks it up:
+
+```bash
+docker exec fpl-buddy python jobs.py daily-refresh
+```
+
+Training takes about five seconds and writes straight to the volume. Until you
+run it, the app raises `StaleModelError` on boot with the same instruction —
+loud, and on purpose.
+
 ### Nightly stats pull
 
 `jobs.py daily-refresh` now pulls this season's per-gameweek player rows into
