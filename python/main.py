@@ -10,6 +10,7 @@ import json
 import math
 import os
 import re
+import secrets
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape as xml_escape
@@ -35,7 +36,7 @@ import seasons
 import seo_tables as seo_tables_builder
 import social
 from pipeline import run_pipeline
-from rating_model import get_rated_position_dfs
+from rating_model import StaleModelError, get_rated_position_dfs
 from fixture_rotator import (get_rotation_data, rank_rotation_pairs, recommend_pair_players, team_fixture_map)
 from search import search_player
 from squad_optimiser import DEFAULT_BUDGET, OptimisationError
@@ -463,23 +464,70 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(HeadAsGet)
 
 
+def content_security_policy(nonce):
+    """The policy, built around a per-request nonce.
+
+    `script-src` takes the nonce and nothing else - no 'unsafe-inline', which
+    would make the whole exercise decorative. That is only possible because
+    every inline on* attribute has been removed: script-src blocks those
+    regardless of where the markup came from, including strings this app's own
+    JavaScript builds and assigns through innerHTML.
+
+    `style-src` still carries 'unsafe-inline', and that is a real gap rather
+    than an oversight. The front end sets element.style directly in a number of
+    places (the pitch layout, the chip cards, sizing that depends on measured
+    widths), and a nonce cannot cover a style property assigned from script.
+    Measured rather than assumed: /fixture-rotator alone renders 739 elements
+    carrying a style attribute, /ai-teams 499. Closing it means moving those to
+    classes. Worth doing; it is not what protects against script injection,
+    which is what this policy is for.
+
+    Every directive is 'self' now that Bootstrap is vendored into /static -
+    there is no third-party origin left to allow. `font-src` needs nothing
+    beyond 'self' because Bootstrap 5.3 ships a system font stack and requests
+    no webfont, and `img-src` keeps `data:` for the 23 inline SVGs its form
+    controls and accordion arrows are drawn with.
+
+    `object-src 'none'` and `base-uri 'self'` are the two cheap ones people
+    forget: the first kills a class of plugin-based bypass, the second stops an
+    injected <base> tag repointing every relative URL on the page.
+    """
+    return "; ".join([
+        "default-src 'self'",
+        f"script-src 'self' 'nonce-{nonce}'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self'",
+        "connect-src 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'self'",
+        "base-uri 'self'",
+        "object-src 'none'",
+    ])
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     """Headers a browser needs in order to defend the page.
 
-    Deliberately not including a Content-Security-Policy: the templates carry
-    several inline <script> blocks (the initial pane, the landing-page redirect)
-    and a real policy needs those moved out or given nonces first. A CSP added
-    without that work either does nothing useful or breaks the site, so it's
-    tracked as its own job rather than half-done here.
+    The nonce is minted BEFORE the handler runs, not after, because the
+    templates have to render it into their <script> tags - a value generated
+    once the response body exists would be too late to appear in it. It rides on
+    request.state, which is where page_context() reads it from.
 
     HSTS is only sent over HTTPS. Sent on a plain-HTTP local run it would pin
     the developer's browser to https://localhost and make the app unreachable.
     """
+    request.state.csp_nonce = secrets.token_urlsafe(16)
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # Only on documents. A JSON response carries no scripts to govern, and a
+    # policy on /static would apply to assets the policy itself permits.
+    if response.headers.get("content-type", "").startswith("text/html"):
+        response.headers.setdefault(
+            "Content-Security-Policy", content_security_policy(request.state.csp_nonce))
     if request.url.scheme == "https":
         response.headers.setdefault(
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -602,7 +650,35 @@ def load_data(mode=None):
         print(f"Can't use inseason ratings yet ({e}) - falling back to preseason.")
         mode = "preseason"
         position_dfs = get_rated_position_dfs(data["position_dfs"], mode=mode)
+    except StaleModelError as e:
+        # The model bundles on the volume are older than this code. Serve the
+        # site without ratings rather than refusing to start.
+        #
+        # This ran as a hard failure exactly once, which was enough. A deploy
+        # never ships new bundles - they are gitignored, so the image has none,
+        # and ensure_seeded() only copies files that are MISSING, so it cannot
+        # replace the ones already on the volume. The first deploy after the
+        # model changed therefore met bundles it could not read, raised out of
+        # startup(), and uvicorn exited. The container crash-looped, cloudflared
+        # had nothing to forward to, and the whole site returned a Cloudflare
+        # 502 - prose pages, gameweek archive and all - because the projections
+        # could not be computed.
+        #
+        # Refusing to print wrong numbers was right. Refusing to serve anything
+        # was not: `state["position_dfs"] = None` is a state every consumer
+        # already handles (see /api/ratings), so the tables come back empty and
+        # everything that isn't a projection carries on working.
+        print(f"MODEL BUNDLES ARE STALE: {e}\n"
+              "Serving without ratings. Retrain to restore them:\n"
+              "  docker exec fpl-buddy python train_model.py")
+        state["mode"] = mode
+        state["position_dfs"] = None
+        state["rotation_df"] = None
+        state["degraded"] = str(e)
+        clear_preview_cache()
+        return
 
+    state.pop("degraded", None)
     rotation_df = get_rotation_data(mode=mode, n_gameweeks=8)
 
     state["mode"] = mode
@@ -770,6 +846,10 @@ def page_context(request, path, meta=None, **extra):
     return {
         "request": request,
         "asset_version": asset_version(),
+        # Minted by the security_headers middleware before this handler ran.
+        # Every inline <script> in the templates must carry it or the browser
+        # will refuse to run it.
+        "csp_nonce": getattr(request.state, "csp_nonce", ""),
         "site_url": SITE_URL,
         "site_name": SITE_NAME,
         "emails": EMAILS,
@@ -1585,8 +1665,28 @@ def get_draft(fpl_id: int):
 
 
 @app.post("/api/draft/{fpl_id}")
-def save_draft(fpl_id: int, payload: dict = Body(...)):
-    """Save the working squad. Replaces whatever was stored for this id."""
+def save_draft(fpl_id: int, payload: dict = Body(...),
+               x_draft_token: str = Header(default="")):
+    """Save the working squad. Replaces whatever was stored for this id.
+
+    Token-gated. The FPL id is public - it is in the URL of every manager's
+    Points page - so without this any guessable integer could overwrite a
+    stranger's squad. The first save on an unclaimed id mints the token and
+    returns it as `draft_token` for the client to keep; later saves must send
+    it back in `X-Draft-Token`.
+    """
+    # Validate BEFORE claiming. The claim is trust-on-first-use, so authorising
+    # first would let one junk payload take ownership of an id nobody had saved
+    # yet - locking out the real manager, who would then have neither the token
+    # nor a way to release it. A malformed body is a 400 whoever sends it.
+    try:
+        drafts.validate_picks(payload.get("picks") or [])
+    except drafts.DraftError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    try:
+        token = drafts.authorise_write(fpl_id, x_draft_token)
+    except drafts.DraftForbidden as e:
+        raise HTTPException(status_code=403, detail=str(e))
     try:
         result = drafts.save_draft(
             fpl_id, payload.get("picks") or [],
@@ -1600,11 +1700,21 @@ def save_draft(fpl_id: int, payload: dict = Body(...)):
         db.record_known_manager(fpl_id)
     except Exception:
         pass
-    return result
+    return {**result, "draft_token": token}
 
 
 @app.delete("/api/draft/{fpl_id}")
-def clear_draft(fpl_id: int):
+def clear_draft(fpl_id: int, x_draft_token: str = Header(default="")):
+    """Delete the draft and release the id, so it can be claimed again.
+
+    Gated like the save above, and for a stronger reason: this is the one call
+    that destroys data, and it is the documented way out of a lockout, so
+    letting anyone make it would defeat both halves of the design.
+    """
+    try:
+        drafts.authorise_write(fpl_id, x_draft_token)
+    except drafts.DraftForbidden as e:
+        raise HTTPException(status_code=403, detail=str(e))
     return drafts.delete_draft(fpl_id)
 
 

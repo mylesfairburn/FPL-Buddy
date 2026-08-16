@@ -9,7 +9,7 @@
        `|safe` inside tojson is not needed and would be wrong: tojson escapes
        for a JSON string literal, which is exactly what's wanted here. The
        answers contain inline HTML, which the FAQPage spec permits. #}
-    <script type="application/ld+json">
+    <script type="application/ld+json" nonce="{{ csp_nonce }}">
     {
       "@context": "https://schema.org",
       "@type": "FAQPage",

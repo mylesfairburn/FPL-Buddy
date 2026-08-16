@@ -157,6 +157,35 @@ CREATE TABLE IF NOT EXISTS manager_draft_picks (
 );
 CREATE INDEX IF NOT EXISTS idx_draft_picks ON manager_draft_picks (draft_id);
 
+-- Binds writes on an FPL id to the device that first saved one.
+--
+-- The id itself cannot do this job: it is a public integer printed in the URL
+-- of every manager's Points page, so anyone able to guess one could overwrite
+-- or delete the squad stored against it. Reads are left open - that is the
+-- low-harm direction and the whole no-account design rests on it - but a
+-- destructive write now has to present a secret the reader never sees.
+--
+-- Trust on first use, deliberately: an id with no row here is claimed by the
+-- next writer. Anything else would lock out every manager who saved a draft
+-- before this table existed, and there is no account to recover through.
+-- That leaves a real gap (an attacker who writes first claims the id), which
+-- is the price of not having accounts; it is strictly better than the
+-- everyone-can-write it replaces.
+--
+-- Kept in its own table rather than a column on manager_draft because
+-- save_draft() replaces that row wholesale on every save, and the deadline
+-- watcher replaces it again with the official picks - a token stored there
+-- would be destroyed by the first write it was meant to authorise.
+--
+-- The token is stored as a SHA-256 hex digest, never in the clear: this file
+-- is a plain SQLite database on a mounted volume, and a copy of it should not
+-- hand over write access to every squad in it.
+CREATE TABLE IF NOT EXISTS draft_claim (
+    fpl_id      INTEGER PRIMARY KEY,
+    token_hash  TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
 -- One published gameweek report per gameweek: the newspaper page at
 -- /gameweek/<n>.
 --

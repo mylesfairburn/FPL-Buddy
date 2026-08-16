@@ -16,9 +16,15 @@ The lifecycle mirrors the real game:
 the UI can tell you whether you're looking at your own draft or your locked-in
 team rather than silently blurring them.
 
-No auth: anyone who knows an FPL id can read and overwrite that id's draft.
-That's inherent to FPL-id-as-identity and is called out in the API docstrings.
+Reads are unauthenticated: anyone who knows an FPL id can see that id's draft,
+which is inherent to FPL-id-as-identity. Writes are not - see `authorise_write`
+and the draft_claim table - because an id being public means a guessable
+integer could otherwise overwrite or delete a stranger's squad.
 """
+
+import hashlib
+import hmac
+import secrets
 
 from db import connect, utcnow
 
@@ -30,12 +36,62 @@ class DraftError(ValueError):
     """Rejected draft - the message is safe to show the user."""
 
 
-def _validate(picks):
+class DraftForbidden(PermissionError):
+    """The caller does not hold the write token for this FPL id."""
+
+
+def _hash(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def authorise_write(fpl_id, token):
+    """Check a caller may write to this id, and return the token it should keep.
+
+    Trust on first use. An id nobody has claimed is claimed here and now, and
+    the freshly minted token comes back for the client to store; from then on
+    every write to that id has to present it. An id that IS claimed must match
+    or this raises.
+
+    Returned rather than stored-and-forgotten because the client has nowhere
+    else to get it: there is no account and no email, so the one moment the
+    plaintext exists is the response to the write that created it.
+    """
+    fpl_id = int(fpl_id)
+    token = (token or "").strip()
+
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT token_hash FROM draft_claim WHERE fpl_id = ?", (fpl_id,)).fetchone()
+
+        if row is None:
+            minted = token or secrets.token_urlsafe(32)
+            conn.execute(
+                "INSERT INTO draft_claim (fpl_id, token_hash, created_at) VALUES (?, ?, ?)",
+                (fpl_id, _hash(minted), utcnow()))
+            return minted
+
+    # compare_digest rather than ==, so a wrong token can't be recovered a
+    # character at a time off the response timing.
+    if not token or not hmac.compare_digest(_hash(token), row["token_hash"]):
+        raise DraftForbidden(
+            "This FPL ID's saved team is claimed by another device. Load it on "
+            "the device you saved it from, or clear it there first.")
+    return token
+
+
+def validate_picks(picks):
     """Reject anything that isn't a structurally valid 15-man squad.
 
-    The endpoint is unauthenticated and writes to a shared table, so it does
-    not trust the client: a malformed or oversized payload is a 400, not
-    something that lands in the DB and breaks every later read."""
+    The endpoint writes to a shared table, so it does not trust the client: a
+    malformed or oversized payload is a 400, not something that lands in the DB
+    and breaks every later read.
+
+    Public because the endpoint runs it BEFORE authorise_write. Order matters:
+    claiming first would mean a single junk payload aimed at an unclaimed id
+    took ownership of it, and the real manager - with no token and no way to
+    delete - would be locked out of their own squad permanently. Nothing here
+    touches the database or the caller, so running it for an unauthorised
+    caller gives nothing away."""
     if not isinstance(picks, list):
         raise DraftError("picks must be a list")
     if len(picks) != SQUAD_SIZE:
@@ -77,7 +133,7 @@ def _validate(picks):
 
 def save_draft(fpl_id, picks, gameweek=None, bank=None, source="user"):
     """Create or replace a manager's draft. Idempotent by fpl_id."""
-    cleaned = _validate(picks)
+    cleaned = validate_picks(picks)
     with connect() as conn:
         conn.execute("DELETE FROM manager_draft WHERE fpl_id = ?", (int(fpl_id),))
         cur = conn.execute(
@@ -141,8 +197,18 @@ def get_draft(fpl_id, pool=None):
 
 
 def delete_draft(fpl_id):
+    """Delete the draft AND release the claim on the id.
+
+    Releasing it is what makes the lockout recoverable. A token lives in one
+    browser's localStorage and nowhere else - there is no account to reset it
+    through - so a cleared browser would otherwise mean nobody could ever write
+    to that id again. Delete is itself token-gated at the endpoint, so only the
+    holder can hand the id back, and once handed back the next writer claims it
+    the same way the first one did.
+    """
     with connect() as conn:
         cur = conn.execute("DELETE FROM manager_draft WHERE fpl_id = ?", (int(fpl_id),))
+        conn.execute("DELETE FROM draft_claim WHERE fpl_id = ?", (int(fpl_id),))
     return {"deleted": cur.rowcount > 0}
 
 

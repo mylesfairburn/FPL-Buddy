@@ -4,7 +4,7 @@
     {# Person markup. Modest ranking benefit on its own, but it's what lets a
        search engine understand this page is ABOUT a named footballer rather
        than a page that happens to mention one. #}
-    <script type="application/ld+json">
+    <script type="application/ld+json" nonce="{{ csp_nonce }}">
     {
       "@context": "https://schema.org",
       "@type": "Person",

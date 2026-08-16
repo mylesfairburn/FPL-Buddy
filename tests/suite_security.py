@@ -68,6 +68,9 @@ def test_sql_injection():
                   r.status_code, lambda v: v in ok, severity="critical")
 
     # The same strings through a POST body, where the value reaches drafts.py.
+    # No write token needed and none sent: the endpoint validates before it
+    # authorises, so a malformed body is a 400 for any caller - which is the
+    # whole point of running these unauthenticated.
     for payload in SQLI:
         picks = [{"element_id": 100 + i, "position": i + 1} for i in range(15)]
         picks[0]["element_id"] = payload
@@ -474,17 +477,22 @@ def test_privacy_surface():
               lambda hits: hits != "none found", severity="medium",
               note="UK GDPR: the site stores an FPL id and a squad against it")
 
-    # The draft API is unauthenticated by design; state that as a finding rather
-    # than a failure, so it stays visible.
+    # Draft READS are unauthenticated by design; state that as a finding rather
+    # than a failure, so it stays visible. Writes are no longer part of this
+    # finding - they are token-gated, and suite_api covers the refusals.
+    import drafts
+    drafts.delete_draft(999999995)        # release any claim from a previous run
     picks = [{"element_id": 100 + i, "position": i + 1} for i in range(15)]
-    c.post("/api/draft/999999995", json={"picks": picks})
+    token = (c.post("/api/draft/999999995", json={"picks": picks}).json()
+             or {}).get("draft_token", "")
     r = c.get("/api/draft/999999995")
     check("any caller can read any id's draft", "GET /api/draft/<someone else's id>",
           "documented as unauthenticated", r.json().get("available"),
           lambda v: v is not True, severity="medium",
-          note="deliberate - FPL id is the whole identity - but it means one "
-               "guessable integer exposes and overwrites a stored squad")
-    c.delete("/api/draft/999999995")
+          note="deliberate and read-only - FPL id is the whole identity, so a "
+               "guessable integer still EXPOSES a stored squad. It can no "
+               "longer overwrite or delete one: that needs the write token")
+    c.delete("/api/draft/999999995", headers={"X-Draft-Token": token})
 
 
 def test_http_methods():

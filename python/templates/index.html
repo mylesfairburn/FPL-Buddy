@@ -37,7 +37,7 @@
     <!-- Which tab this URL is. app.js could read it back off location.pathname,
          but then the path→pane mapping would live in two places and could drift;
          the server owns the routing table, so the server states the answer. -->
-    <script>window.__INITIAL_PANE__ = "{{ initial_pane }}";</script>
+    <script nonce="{{ csp_nonce }}">window.__INITIAL_PANE__ = "{{ initial_pane }}";</script>
 
     <!-- kits.js defines shirtImg(), which app.js calls while rendering the
          pitch, so it has to be parsed first. -->

@@ -8,7 +8,7 @@
        unusable for anyone with an ID saved - clicking "home" would bounce them
        straight back to the tab they just left. Googlebot has no localStorage, so
        a crawler always gets the page itself. #}
-    <script>
+    <script nonce="{{ csp_nonce }}">
         (function () {
             // The tabs used to be '#pane-players' and friends on this URL. A
             // fragment never reaches the server, so an old bookmark can only be
@@ -149,7 +149,7 @@
 {% endblock %}
 
 {% block scripts %}
-    <script>
+    <script nonce="{{ csp_nonce }}">
         // Deliberately not app.js: that file wires up the pitch, the tab panes
         // and the team loader, none of which exist here. This page needs one
         // thing - take an ID and hand off to /my-team, which does the rest.

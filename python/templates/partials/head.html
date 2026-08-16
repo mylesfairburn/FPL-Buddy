@@ -40,7 +40,7 @@
       No SearchAction here: that markup claims a URL where a visitor can run a
       site search and read the results, and /api/search returns JSON. #}
 {% if is_home %}
-   <script type="application/ld+json">
+   <script type="application/ld+json" nonce="{{ csp_nonce }}">
    {"@context": "https://schema.org", "@graph": [
      {"@type": "WebSite",
       "@id": {{ (site_url + "/#website")|tojson }},
@@ -73,7 +73,20 @@
       image down to 16. #}
    <link rel="icon" type="image/png" sizes="144x144" href="/static/favicon_144.png">
    <link rel="icon" type="image/png" sizes="32x32" href="/static/favicon.png">
-   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+   {# Bootstrap 5.3.3, served from this origin rather than cdn.jsdelivr.net.
+      Off a CDN it was the one third-party origin left in the CSP, and a
+      stylesheet is not the harmless case it looks like: CSS can read the DOM
+      through attribute selectors and exfiltrate what it finds through
+      background-image URLs, so a compromised CDN did not need script execution
+      to do damage. Subresource Integrity would have pinned the bytes, but it
+      pins them to a host that still has to be reachable - self-hosting removes
+      the origin from the policy instead of trusting it harder.
+
+      The file is vendored as-is (MIT, copyright notice intact at the top).
+      Upgrading is a re-download of the same URL and a bump of the version in
+      this comment; it carries no @import and no external url(), only 23 inline
+      data: URIs that img-src already allows, so nothing else has to change. #}
+   <link rel="stylesheet" href="/static/bootstrap.min.css?v={{ asset_version }}">
    <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 
    {# AdSense, disabled. The site carries no <ins class="adsbygoogle"> slots and

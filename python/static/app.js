@@ -8,6 +8,30 @@
  * templates/partials/ (navbar, tabs, footer, player modal).
  */
 
+// ---- Broken-image fallbacks ----
+// Images that should quietly disappear rather than show a broken-image icon
+// carry data-onerror="hide" (removes the space too) or "invisible" (keeps the
+// layout). One delegated listener replaces what used to be four inline
+// onerror="" attributes across the navbar, the footer and two chip templates.
+//
+// Inline handlers had to go before a Content-Security-Policy could be added:
+// script-src blocks an on* attribute whatever its content, and it blocks it
+// wherever it came from - including strings built in this file and assigned
+// through innerHTML. So the two in here were as much of a problem as the two in
+// the templates, and less obvious, because the security test only reads the
+// markup the server sends.
+//
+// Registered in the CAPTURE phase, which is load-bearing: `error` events from
+// an <img> do not bubble, so a listener on document would never see one. They
+// do capture.
+document.addEventListener('error', (e) => {
+    const el = e.target;
+    if (!(el instanceof HTMLImageElement)) return;
+    const mode = el.dataset.onerror;
+    if (mode === 'hide') el.style.display = 'none';
+    else if (mode === 'invisible') el.style.visibility = 'hidden';
+}, true);
+
 // ---- Tabs ----
 // Each tab is a real URL served by the server, not a fragment of one document.
 // Switching tabs still happens entirely in the browser - nothing is re-fetched -
@@ -220,6 +244,17 @@ function wireClear(input, btn, cb) {
 //  MY TEAM
 // =====================================================================
 const FPL_ID_KEY = 'fpl_team_id';
+// Write token for this FPL id's saved squad. The id is public, so the server
+// binds saves and deletes to whoever claimed it first and hands back a secret
+// on that first save; this is the only place it is kept. Reads never need it,
+// so the squad still loads on any device — it is editing that is bound to
+// this one. Per-id, because "Change ID" should not carry one id's token to
+// another.
+const DRAFT_TOKEN_KEY = id => `fpl_draft_token_${id}`;
+function getDraftToken(id) { return localStorage.getItem(DRAFT_TOKEN_KEY(id)) || ''; }
+function setDraftToken(id, token) {
+    if (token) localStorage.setItem(DRAFT_TOKEN_KEY(id), token);
+}
 const idPrompt = document.getElementById('idPrompt');
 const idInput = document.getElementById('idInput');
 const idSave = document.getElementById('idSave');
@@ -1100,7 +1135,7 @@ function renderChips(gw) {
     bar.innerHTML = CHIPS.map(c => {
         const available = avail.includes(c.key);
         return `<div class="chip-card ${available ? 'chip-avail' : 'chip-unavail'}" tabindex="0" data-i="${c.key}">
-            <img class="chip-img" src="/static/${c.key}.svg" alt="${c.name}" onerror="this.style.visibility='hidden'">
+            <img class="chip-img" src="/static/${c.key}.svg" alt="${c.name}" data-onerror="invisible">
             <div class="chip-card-name">${c.name}</div>
             <div class="chip-status">${available ? 'Available' : 'Unavailable'}</div>
         </div>`;
@@ -1137,7 +1172,10 @@ document.getElementById('saveTeamBtn').addEventListener('click', () => {
 
     fetch(`/api/draft/${id}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            'X-Draft-Token': getDraftToken(id),
+        },
         body: JSON.stringify({
             bank: teamView.gw ? teamView.gw.bank : null,
             picks: snap.map(p => ({
@@ -1150,6 +1188,10 @@ document.getElementById('saveTeamBtn').addEventListener('click', () => {
     .then(r => r.json().then(d => ({ ok: r.ok, d })))
     .then(({ ok, d }) => {
         if (!ok) throw new Error(d.detail || 'save failed');
+        // First save on this id mints the token; every later one echoes back
+        // the same value, so storing it unconditionally is a no-op after the
+        // first and means a cleared token re-binds on the next successful save.
+        setDraftToken(id, d.draft_token);
         savedDraft = null;   // force a re-read next time the team loads
         // The saved state becomes the new "actual" that Reset reverts to.
         teamView.squad = snap.map(p => ({ ...p }));
@@ -2395,7 +2437,7 @@ function renderMgrChipPlan(d) {
             const playing = d.chip === key;
             return `<div class="chip-card ${isAvailable ? 'chip-avail' : 'chip-unavail'}${playing ? ' chip-playing' : ''}" data-i="${key}">
                 <img class="chip-img" src="/static/${key}.svg" alt="${CHIP_NAMES[key]}"
-                     onerror="this.style.visibility='hidden'">
+                     data-onerror="invisible">
                 <div class="chip-card-name">${CHIP_NAMES[key]}</div>
                 <div class="chip-status">${playing ? 'Playing' : (isAvailable ? 'Available' : 'Used')}</div>
             </div>`;

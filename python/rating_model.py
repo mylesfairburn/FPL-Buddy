@@ -386,15 +386,17 @@ def zero_unavailable_points(position_dfs, fixtures_df, now=None):
             updated[position] = df
             continue
 
-        new_gameweeks, new_points = [], []
+        new_gameweeks, new_points, new_ratings = [], [], []
         for _, row in df.iterrows():
             gws = row.get("next_gameweeks")
             gws = list(gws) if isinstance(gws, list) else []
             predicted = row.get("predicted_points")
+            rating = row.get("rating")
 
             if not _blocking_chance(row):
                 new_gameweeks.append(gws)
                 new_points.append(predicted)
+                new_ratings.append(rating)
                 continue
 
             back = parse_return_date(row.get("news"), row.get("news_added"), now=now)
@@ -424,10 +426,21 @@ def zero_unavailable_points(position_dfs, fixtures_df, now=None):
                 blocked_now = back is None or back > now
             new_gameweeks.append(out)
             new_points.append(0.0 if blocked_now else predicted)
+            # The rating goes with it. It used to be left alone, which was
+            # survivable while it was a percentile of predicted_points and the
+            # two at least moved together - but it still meant a torn hamstring
+            # showed "0.0 predicted, rating 94". Ranking on points_if_starts
+            # makes that worse rather than better, because ability is exactly
+            # what an injury doesn't touch: the best unavailable players would
+            # sit at the top of a table sorted by rating. A player who cannot
+            # play this round is not a 94.
+            new_ratings.append(0.0 if blocked_now else rating)
 
         df["next_gameweeks"] = pd.Series(new_gameweeks, index=df.index, dtype=object)
         if "predicted_points" in df.columns:
             df["predicted_points"] = new_points
+        if "rating" in df.columns:
+            df["rating"] = new_ratings
         updated[position] = df
 
     return updated
@@ -637,18 +650,92 @@ def _attach_price(df):
     return df
 
 
-def predict_ratings(position_dfs, model_bundles, form_features, fixture_features):
+# How much rotation risk the preseason rating carries, as the exponent on
+# start probability in `rating_basis`.
+#
+# Ranking on ability alone (0.0) fixed the original complaint - the table had
+# been sorted by who was nailed on rather than who was good - but overshot:
+# it put Diop top of the defenders on a 26% chance of starting and 1.6
+# projected points. Ranking on predicted_points (effectively 1.0) is the other
+# end, where Saka sits 12th of the midfielders. Both questions are real, so
+# the exponent picks a point between them.
+#
+# Measured on the current pool, as share of the ordering's variance coming
+# from ability rather than from minutes, with two players as landmarks:
+#
+#     w     ability   Diop (DEF)   Saka (MID)
+#   0.00      100%        1/105        3/141
+#   0.10       65%       13/105        3/141
+#   0.15       50%       16/105        3/141
+#   0.25       30%       38/105        3/141   <- here
+#   0.40       16%       61/105        5/141
+#   1.00        3%       89/105       12/141
+#
+# Note what those numbers do NOT say: at 0.25 minutes still carry 70% of the
+# ordering. A quarter-power sounds like a light touch and isn't, because the
+# two inputs have wildly different spreads - start probability runs 0.03-0.98
+# while points_if_starts is squeezed into sd 0.40 by the preseason fallback,
+# so even a quarter of the wide one outweighs all of the narrow one. The
+# 50/50 crossover is near 0.15, not 0.5. Chosen on the ordering it produces
+# rather than on that split: 0.25 is the point where the clearly-wrong cases
+# at both ends (Diop first, Saka twelfth) are both gone.
+#
+# Retune by moving this one number; nothing else needs to change. It stops
+# mattering entirely once three gameweeks exist, because the fallback lifts
+# and predicted_points becomes the basis again.
+PRESEASON_START_WEIGHT = 0.25
+
+
+def rating_basis(frame, start_weight=None):
+    """The series the 0-100 rating is a percentile of.
+
+    Kept separate from predict_ratings so the choice can be tested directly,
+    and re-derived rather than stored: it is an ordering device, not a number
+    the site quotes at anyone.
+    """
+    if start_weight is None:
+        return frame['predicted_points']
+    if_starts = frame['points_if_starts']
+    p_start = frame['start_probability'].clip(lower=0)
+    return if_starts * p_start ** float(start_weight)
+
+
+def predict_ratings(position_dfs, model_bundles, form_features, fixture_features,
+                    start_weight=None):
     """Expected points per player, and a 0-100 rating per position.
 
     Three numbers come out of this rather than one:
 
       predicted_points  P(start) x points-if-he-starts, plus the cameo term.
-                        What the tables sort on and what the site shows.
+                        What the squad optimiser works in and what the site
+                        shows as the expected haul.
       points_if_starts  What the model expects from him on the pitch, with the
                         rotation risk taken back out. The more useful number
                         when comparing a nailed starter to a 60% one, and the
                         one a write-up should quote.
       start_probability The other half of that comparison.
+
+    `start_weight` decides how much rotation risk the 0-100 rating carries:
+
+        None -> rank on predicted_points, unchanged. Correct in season.
+        w    -> rank on points_if_starts x start_probability ** w
+
+    which is one family with the two extremes at either end: w=1 is roughly
+    predicted_points again, w=0 is pure ability with rotation risk ignored
+    entirely. See PRESEASON_START_WEIGHT for why the preseason value sits
+    where it does.
+
+    The knob exists because on the preseason fallback predicted_points is the
+    wrong basis. `points_if_starts` collapses to near-constant when every
+    player's "form" is a whole-season average - measured at sd 0.40 for
+    defenders and 0.18 for goalkeepers, against last season's realised 0.96 -
+    and a product with one near-constant factor is just the other factor. 96%
+    of the variance in the resulting order came from start_probability, so the
+    table ranked by who was nailed on rather than who was good, and pushed
+    Saka and Cherki below squad players who happened to be first choice.
+
+    None of this pretends the model can separate players it cannot: the spread
+    stays as narrow as it honestly is. It only decides what sorts the page.
     """
     updated = {}
 
@@ -688,9 +775,10 @@ def predict_ratings(position_dfs, model_bundles, form_features, fixture_features
             merged.loc[has_features, 'start_probability'] = p_start
 
         # 0-100 rating via percentile rank within position - players with no
-        # predictable form (e.g. never played) naturally rank at the bottom
-        merged['rating'] = (merged['predicted_points'].rank(pct=True) * 100).round(1)
-        merged.loc[merged['predicted_points'].isna(), 'rating'] = 0
+        # predictable form (e.g. never played) naturally rank at the bottom.
+        basis = rating_basis(merged, start_weight)
+        merged['rating'] = (basis.rank(pct=True) * 100).round(1)
+        merged.loc[basis.isna(), 'rating'] = 0
 
         updated[position] = merged
 
@@ -752,7 +840,13 @@ def get_rated_position_dfs(position_dfs, mode='preseason', n_gameweeks=8):
     fixtures_df = get_fixtures()
     fixture_features = build_fixture_features(fixtures_df, n_fixtures=3)
 
-    rated = predict_ratings(position_dfs, model_bundles, form_features, fixture_features)
+    # Asked of the same function build_current_form_features just used, so the
+    # rating basis cannot disagree with the form source it is ranking. Reverts
+    # to predicted_points on its own once three gameweeks exist - there is no
+    # switch to remember to flip back.
+    start_weight = PRESEASON_START_WEIGHT if using_fallback_form(mode) else None
+    rated = predict_ratings(position_dfs, model_bundles, form_features,
+                            fixture_features, start_weight=start_weight)
 
     # Per-gameweek points for the 'next 3 GWs' columns on ratings/search.
     per_gw_features = build_per_gameweek_fixture_features(fixtures_df, n_fixtures=n_gameweeks)

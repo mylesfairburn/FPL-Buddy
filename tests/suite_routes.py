@@ -131,8 +131,17 @@ def test_head_requests():
              + ["/", "/about", "/faq", "/privacy", "/contact", "/players/a-z",
                 "/gameweek", a_player, "/robots.txt", "/sitemap.xml",
                 "/api/all_players"])
+    # Identity encoding on both requests, because the comparison below is
+    # between two SEPARATE responses and gzip makes their sizes incomparable:
+    # every HTML page embeds a fresh random CSP nonce, and a random 22-character
+    # string compresses to a different number of bytes each time. Uncompressed,
+    # the nonce is always exactly 22 characters, so the two bodies are the same
+    # length and Content-Length can be compared for real. Asking for identity
+    # narrows what is under test - gzip's own Content-Length isn't checked - but
+    # the alternative is an assertion that fails a few pages at random per run.
+    RAW = {"Accept-Encoding": "identity"}
     for path in paths:
-        head, get = c.head(path), c.get(path)
+        head, get = c.head(path, headers=RAW), c.get(path, headers=RAW)
         expect(f"HEAD {path} matches GET's status", f"HEAD {path}",
                get.status_code, head.status_code, severity="high",
                note="a 405 here tells a crawler the method is refused on every "
@@ -232,7 +241,7 @@ def test_faq():
     r = c.get("/faq")
     expect("/faq 200", "GET /faq", 200, r.status_code, severity="high")
 
-    m = re.search(r'<script type="application/ld\+json">(.*?)</script>', r.text, re.S)
+    m = re.search(r'<script type="application/ld\+json"[^>]*>(.*?)</script>', r.text, re.S)
     check("/faq carries FAQPage JSON-LD", "GET /faq", "one ld+json block", bool(m),
           lambda v: v, severity="medium")
     if not m:
@@ -726,7 +735,7 @@ def test_site_name_signals():
     body = c.get("/").text
 
     blocks = re.findall(
-        r'<script type="application/ld\+json">(.*?)</script>', body, re.S)
+        r'<script type="application/ld\+json"[^>]*>(.*?)</script>', body, re.S)
     check("the home page carries JSON-LD", "GET /", "at least one ld+json block",
           len(blocks), lambda v: v >= 1)
 

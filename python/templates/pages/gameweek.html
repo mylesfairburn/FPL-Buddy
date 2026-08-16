@@ -9,7 +9,7 @@
        No `author` block: an author must be a Person or Organization with a
        real identity behind it, and inventing one for a page assembled by a
        cron job would be a claim rather than a description. #}
-    <script type="application/ld+json">
+    <script type="application/ld+json" nonce="{{ csp_nonce }}">
     {
       "@context": "https://schema.org",
       "@type": "Article",

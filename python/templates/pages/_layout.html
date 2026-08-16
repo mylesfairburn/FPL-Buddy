@@ -32,7 +32,7 @@
        pitch and the FPL ID prompt, none of which exist on a prose page, and it
        would throw on the first missing element. These pages need one small
        behaviour instead. #}
-    <script>
+    <script nonce="{{ csp_nonce }}">
         // Email addresses are rendered as "user (at) domain" so a scraper
         // reading the HTML doesn't get a harvestable address. This turns them
         // back into real mailto links for anyone actually reading the page.

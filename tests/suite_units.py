@@ -153,7 +153,7 @@ def test_draft_validation():
 
     ok_picks = squad()
     check("a valid 15-man squad is accepted", "15 unique players, positions 1-15",
-          "returns 15 cleaned picks", drafts._validate(ok_picks),
+          "returns 15 cleaned picks", drafts.validate_picks(ok_picks),
           lambda v: isinstance(v, list) and len(v) == 15)
 
     rejects = [
@@ -186,7 +186,7 @@ def test_draft_validation():
     ]
     for name, desc, payload in rejects:
         try:
-            drafts._validate(payload)
+            drafts.validate_picks(payload)
             got, ok = "accepted", False
         except drafts.DraftError as e:
             got, ok = f"DraftError: {e}", True
@@ -198,7 +198,7 @@ def test_draft_validation():
               severity="high")
 
     # Coercion, not rejection: these are valid but sloppy, and should be cleaned.
-    cleaned = drafts._validate(squad(patch={0: {"is_captain": 1, "cost": "5.5"}}))
+    cleaned = drafts.validate_picks(squad(patch={0: {"is_captain": 1, "cost": "5.5"}}))
     check("captain flag normalised to 0/1", "is_captain=1",
           "int 0 or 1", cleaned[0]["is_captain"], lambda v: v in (0, 1))
     check("cost coerced to float", "cost='5.5'", "float 5.5",
@@ -209,7 +209,7 @@ def test_draft_validation():
     # SQL metacharacters in a field that reaches the database.
     inj = squad(patch={0: {"element_id": "1); DROP TABLE manager_draft;--"}})
     try:
-        drafts._validate(inj)
+        drafts.validate_picks(inj)
         got, ok = "accepted — string reached the DB layer", False
     except drafts.DraftError:
         got, ok = "DraftError", True

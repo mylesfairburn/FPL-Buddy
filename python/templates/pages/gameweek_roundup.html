@@ -9,7 +9,7 @@
        No `author`, for the same reason as the briefing: an author has to be a
        real identity, and inventing one for a page a cron job assembled would
        be a claim rather than a description. #}
-    <script type="application/ld+json">
+    <script type="application/ld+json" nonce="{{ csp_nonce }}">
     {
       "@context": "https://schema.org",
       "@type": "Article",
