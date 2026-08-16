@@ -174,7 +174,8 @@ def build_per_gameweek_fixture_features(fixtures_df, n_fixtures=3):
 
 
 def attach_per_gameweek_points(position_dfs, model_bundles, form_features,
-                               per_gw_features, team_id_to_short=None, n_gameweeks=3):
+                               per_gw_features, team_id_to_short=None, n_gameweeks=3,
+                               calibrators=None):
     """Adds a `next_gameweeks` column to each position df: a per-player list of
     {event, opponent, was_home, difficulty, points} for the next N gameweeks.
     `difficulty` is FPL's own 1 (easy) - 5 (hard) rating, so the front end can
@@ -212,7 +213,16 @@ def attach_per_gameweek_points(position_dfs, model_bundles, form_features,
             False, index=work.index)
         work['gw_points'] = np.nan
         if has_features.any():
-            expected, _, _ = predict_bundle(bundle, work.loc[has_features])
+            rows = work.loc[has_features]
+            expected, if_starts, p_start = predict_bundle(bundle, rows)
+            # Same dispersion correction as the headline figure, from the same
+            # fitted map. Without it the "next 3 GWs" cells would sit a point
+            # below the projection printed beside them on the same row.
+            calibrator = (calibrators or {}).get(position)
+            if calibrator is not None:
+                raw = pd.Series(if_starts, index=rows.index)
+                mapped = apply_calibration(raw, calibrator)
+                expected = np.clip(expected + p_start * (mapped - raw), 0, None)
             work.loc[has_features, 'gw_points'] = expected
 
         # One ordered list of gameweeks per player code.
@@ -686,6 +696,193 @@ def _attach_price(df):
 PRESEASON_START_WEIGHT = 0.25
 
 
+# ---------------------------------------------------------------------------
+#  Dispersion calibration
+# ---------------------------------------------------------------------------
+# The preseason model is right in the middle and far too narrow at the edges.
+# Measured against last season's realised points per start:
+#
+#                        model    real
+#     mean                3.79    3.73     <- centred correctly
+#     sd                  0.47    0.96     <- half the spread
+#     p90                 4.34    4.94
+#     share >= 5.0        1.8%    9.7%     <- five times too few
+#
+# That is a calibration fault, not the model honestly declining to guess. A
+# forecast whose marginal distribution does not match the outcomes it predicts
+# is mis-calibrated in a way that has a standard correction, and this is it:
+# map each player's points-per-start onto the quantile of last season's
+# realised distribution that sits at the same rank.
+#
+# What that does and does not claim matters. The map is monotone, so the
+# ORDER is untouched - it adds no information about who is better than whom,
+# and cannot, because there is none to add. It only fixes the shape. A player
+# the model cannot distinguish from his neighbour still can't be; he is just
+# no longer reported as a 3.7 when a player at his rank scored 4.9.
+#
+# Preseason only. In season the rolling windows carry real signal, the model's
+# own dispersion recovers, and applying this on top would over-correct.
+
+# Cut-offs for the target distribution: enough starts that a per-start average
+# means something, and 60 minutes as the definition of a start (matching the
+# trainer's fallback when `starts` is absent).
+_CALIB_MIN_STARTS = 5
+_CALIB_QUANTILES = np.linspace(0.0, 1.0, 101)
+_TARGET_CACHE = {}
+
+_POSITION_FROM_SHORT = {'GK': 'Goalkeeper', 'GKP': 'Goalkeeper', 'DEF': 'Defender',
+                        'MID': 'Midfielder', 'FWD': 'Forward'}
+
+
+def realised_points_per_start(season=None):
+    """{position: array of last season's points-per-start}, one per player.
+
+    The target the projections are mapped onto. Read from the previous
+    season's gameweek stats, which is the same file the preseason form
+    fallback already stands on - so this introduces no new data dependency
+    and no new way for a deployment to be missing something.
+
+    Returns {} if the file is unreadable, which turns calibration off rather
+    than failing a nightly job nobody is watching.
+    """
+    season = season or seasons.previous_season() or seasons.FIRST_TRAINING_SEASON
+    if season in _TARGET_CACHE:
+        return _TARGET_CACHE[season]
+
+    try:
+        gw = pd.read_csv(seasons.gameweek_stats_path(season))
+    except (FileNotFoundError, OSError, pd.errors.EmptyDataError, pd.errors.ParserError):
+        _TARGET_CACHE[season] = {}
+        return {}
+
+    needed = {'minutes', 'total_points', 'position'}
+    if not needed.issubset(gw.columns):
+        _TARGET_CACHE[season] = {}
+        return {}
+
+    key = 'element' if 'element' in gw.columns else 'player_id'
+    if key not in gw.columns:
+        _TARGET_CACHE[season] = {}
+        return {}
+
+    gw = gw.copy()
+    gw['minutes'] = pd.to_numeric(gw['minutes'], errors='coerce')
+    gw['total_points'] = pd.to_numeric(gw['total_points'], errors='coerce')
+    if 'starts' in gw.columns:
+        started = pd.to_numeric(gw['starts'], errors='coerce') == 1
+    else:
+        started = gw['minutes'] >= 60
+    gw = gw[started & gw['total_points'].notna()]
+
+    gw['position'] = gw['position'].map(
+        lambda v: _POSITION_FROM_SHORT.get(str(v).upper(), v))
+
+    targets = {}
+    for position, block in gw.groupby('position'):
+        per_player = block.groupby(key)['total_points'].agg(['mean', 'size'])
+        per_player = per_player[per_player['size'] >= _CALIB_MIN_STARTS]['mean']
+        if len(per_player) >= 20:          # too few and the quantiles are noise
+            targets[position] = np.sort(per_player.to_numpy(dtype=float))
+
+    _TARGET_CACHE[season] = targets
+    return targets
+
+
+def fit_calibrators(position_dfs, season=None):
+    """{position: (src, dst)} quantile pairs for mapping points_if_starts.
+
+    `src` is where the model's own projections sit, `dst` is where last
+    season's players actually landed, both read at the same 101 quantiles.
+    Applying it is then a single np.interp.
+
+    Fitted from the whole player pool once, and reused for the per-gameweek
+    numbers rather than refitted there. Refitting would rank a player among
+    (player x gameweek) rows instead of among players, which is a different
+    question with a different answer - and the headline figure and the next-3
+    cells beside it would stop agreeing.
+    """
+    targets = realised_points_per_start(season)
+    calibrators = {}
+    for position, df in position_dfs.items():
+        dst = targets.get(position)
+        if dst is None or df.empty or 'points_if_starts' not in df.columns:
+            continue
+        values = pd.to_numeric(df['points_if_starts'], errors='coerce').dropna()
+        if len(values) < 20:
+            continue
+        src = np.quantile(values.to_numpy(dtype=float), _CALIB_QUANTILES)
+        # np.interp needs a strictly increasing x. Ties are common at the
+        # squeezed centre of the model's range, and a flat segment there would
+        # make the map ambiguous, so they collapse to one point.
+        src, keep = np.unique(src, return_index=True)
+        calibrators[position] = (src, np.quantile(dst, _CALIB_QUANTILES)[keep])
+    return calibrators
+
+
+def apply_calibration(if_starts, calibrator):
+    """Map model points-per-start onto the realised scale. Monotone by
+    construction, so ranks are preserved exactly.
+
+    Values outside the fitted range clamp to its ends, which is np.interp's
+    default and the right behaviour here: the map is only evidence about the
+    span it was fitted over, and Haaland sitting above every projection in the
+    pool should stay at the top rather than be extrapolated into fiction.
+    """
+    if calibrator is None:
+        return if_starts
+    src, dst = calibrator
+    values = pd.to_numeric(if_starts, errors='coerce')
+    mapped = np.interp(values.to_numpy(dtype=float), src, dst)
+    return pd.Series(np.where(values.isna(), np.nan, mapped), index=if_starts.index)
+
+
+def calibrate_position_dfs(position_dfs, calibrators, start_weight=None):
+    """Rewrite points_if_starts onto the realised scale, and carry
+    predicted_points and the rating with it.
+
+    predicted_points is adjusted rather than recomputed, because the cameo term
+    it also contains does not depend on points_if_starts:
+
+        expected = p_start * if_starts + p_cameo * cameo_points
+        expected' = expected + p_start * (mapped - if_starts)
+
+    which is exact, and avoids either duplicating the blend here or making
+    predict_bundle return a fourth number for one caller's benefit.
+
+    The rating is recomputed rather than left alone. Mapping is monotone in
+    points_if_starts, so a pure-ability rating would be unchanged - but the
+    preseason basis mixes in start probability, and rescaling one factor of a
+    product does change the order. Ranking on the calibrated scale is also the
+    more defensible of the two: it is the scale the numbers are read on.
+    """
+    updated = {}
+    for position, df in position_dfs.items():
+        df = df.copy()
+        calibrator = calibrators.get(position)
+        if calibrator is None or df.empty or 'points_if_starts' not in df.columns:
+            updated[position] = df
+            continue
+
+        raw = df['points_if_starts']
+        mapped = apply_calibration(raw, calibrator)
+        if 'predicted_points' in df.columns and 'start_probability' in df.columns:
+            shift = df['start_probability'] * (mapped - raw)
+            df['predicted_points'] = (df['predicted_points'] + shift).clip(lower=0)
+        df['points_if_starts'] = mapped
+        _assign_rating(df, start_weight)
+        updated[position] = df
+    return updated
+
+
+def _assign_rating(frame, start_weight=None):
+    """0-100 percentile rank within the frame, in place. Players with no
+    predictable form (never played) land at the bottom on 0."""
+    basis = rating_basis(frame, start_weight)
+    frame['rating'] = (basis.rank(pct=True) * 100).round(1)
+    frame.loc[basis.isna(), 'rating'] = 0
+    return frame
+
+
 def rating_basis(frame, start_weight=None):
     """The series the 0-100 rating is a percentile of.
 
@@ -774,11 +971,7 @@ def predict_ratings(position_dfs, model_bundles, form_features, fixture_features
             merged.loc[has_features, 'points_if_starts'] = if_starts
             merged.loc[has_features, 'start_probability'] = p_start
 
-        # 0-100 rating via percentile rank within position - players with no
-        # predictable form (e.g. never played) naturally rank at the bottom.
-        basis = rating_basis(merged, start_weight)
-        merged['rating'] = (basis.rank(pct=True) * 100).round(1)
-        merged.loc[basis.isna(), 'rating'] = 0
+        _assign_rating(merged, start_weight)
 
         updated[position] = merged
 
@@ -844,9 +1037,17 @@ def get_rated_position_dfs(position_dfs, mode='preseason', n_gameweeks=8):
     # rating basis cannot disagree with the form source it is ranking. Reverts
     # to predicted_points on its own once three gameweeks exist - there is no
     # switch to remember to flip back.
-    start_weight = PRESEASON_START_WEIGHT if using_fallback_form(mode) else None
+    fallback = using_fallback_form(mode)
+    start_weight = PRESEASON_START_WEIGHT if fallback else None
     rated = predict_ratings(position_dfs, model_bundles, form_features,
                             fixture_features, start_weight=start_weight)
+
+    # Preseason only, and for the same reason the start weight is: the model's
+    # spread is squeezed by the flattened form features, not by anything about
+    # the players. Fitted before the per-gameweek pass so both use one map.
+    calibrators = fit_calibrators(rated) if fallback else {}
+    if calibrators:
+        rated = calibrate_position_dfs(rated, calibrators, start_weight=start_weight)
 
     # Per-gameweek points for the 'next 3 GWs' columns on ratings/search.
     per_gw_features = build_per_gameweek_fixture_features(fixtures_df, n_fixtures=n_gameweeks)
@@ -855,6 +1056,7 @@ def get_rated_position_dfs(position_dfs, mode='preseason', n_gameweeks=8):
     rated = attach_per_gameweek_points(
         rated, model_bundles, form_features, per_gw_features,
         team_id_to_short=team_id_to_short, n_gameweeks=n_gameweeks,
+        calibrators=calibrators,
     )
 
     # Last, and deliberately so: the model knows nothing about fitness, so a

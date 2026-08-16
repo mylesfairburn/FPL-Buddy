@@ -13,6 +13,7 @@ import tempfile
 from datetime import date
 
 import joblib
+import numpy
 import pandas as pd
 
 import drafts
@@ -1942,6 +1943,60 @@ def test_two_stage_predictions():
           lambda _: bool((expected <= if_starts + 1e-9).all()), severity="high")
 
 
+def test_dispersion_calibration():
+    """The preseason quantile map may reshape, but must never reorder.
+
+    That is the entire licence for doing it. The model's preseason spread is
+    about half of what last season actually produced, and mapping onto the
+    realised distribution fixes the shape - but only honestly if it adds no
+    opinion about who is better than whom. A map that reordered anyone would
+    be inventing exactly the information the model has been measured not to
+    have.
+    """
+    group("dispersion calibration", "high")
+
+    model = pd.Series([3.2, 3.4, 3.4, 3.6, 3.9, 4.1, 4.5, 5.0] * 4)
+    real = pd.Series([1.5, 2.2, 2.8, 3.1, 3.6, 4.0, 4.8, 7.0] * 4)
+
+    frame = {"Midfielder": pd.DataFrame({"points_if_starts": model})}
+    calibrators = rating_model.fit_calibrators(frame, season="__nonexistent__")
+    check("no targets means no calibration", "fit_calibrators, unreadable season",
+          "empty mapping", calibrators, lambda v: v == {}, severity="high",
+          note="a missing previous season must switch this off, not crash a "
+               "nightly job or silently map onto nothing")
+
+    # The calibrator shape fit_calibrators produces: the two distributions read
+    # at the same quantiles, with ties in the source collapsed.
+    qs = [i / 100 for i in range(101)]
+    src, keep = numpy.unique(model.quantile(qs).to_numpy(), return_index=True)
+    cal = (src, real.quantile(qs).to_numpy()[keep])
+
+    mapped = rating_model.apply_calibration(model, cal)
+
+    check("order is preserved exactly", "apply_calibration",
+          "same ranking before and after",
+          "checked",
+          lambda _: bool(model.rank(method="average")
+                         .equals(mapped.rank(method="average"))),
+          severity="high",
+          note="a reordering here would mean the map invented a preference "
+               "between two players the model rated equally")
+    check("spread moves onto the target scale", "apply_calibration",
+          f"sd near {real.std():.2f}, from {model.std():.2f}",
+          f"{mapped.std():.2f}",
+          lambda _: abs(mapped.std() - real.std()) < 0.25, severity="high")
+    check("nothing is mapped below zero", "apply_calibration",
+          ">= 0", f"{mapped.min():.2f}",
+          lambda _: bool(mapped.min() >= 0), severity="high")
+
+    passthrough = rating_model.apply_calibration(model, None)
+    check("no calibrator is a pass-through", "apply_calibration(x, None)",
+          "unchanged", "checked",
+          lambda _: bool(passthrough.equals(model)), severity="high",
+          note="in season this is the path taken, so it must not touch a "
+               "single number")
+
+
 SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_a_to_z_grouping, test_draft_validation, test_storage_kind,
           test_horizon_points, test_gw_report_predicted_for,
@@ -1954,6 +2009,7 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_spotlight_injury_return, test_spotlight_underlying,
           test_spotlight_minutes_and_fixtures, test_spotlight_choice_and_ledger,
           test_spotlight_post, test_spotlight_drafts,
+          test_dispersion_calibration,
           test_retention, test_ops_heartbeat, test_ops_backups,
           test_notification_channels, test_channel_messages,
           test_kofi_message, test_kofi_route_absent_when_unconfigured,
