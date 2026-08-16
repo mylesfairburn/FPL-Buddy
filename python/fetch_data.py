@@ -169,6 +169,43 @@ def get_previous_season_fixture_strength(fixtures_path=None, teams_path=None, se
     return strength.reset_index(drop=True)
 
 
+# ClubElo is an optional enrichment with a working cache behind it, not a
+# dependency: it only fills in preseason team strength before FPL's own numbers
+# exist. It does not deserve the 20s the FPL API gets. Eight is generous for a
+# 32 KB static CSV, and it caps what a ClubElo outage costs every app boot.
+CLUBELO_TIMEOUT = 8
+
+
+def clubelo_cache_is_current(data, on_date):
+    """Is every cached rating still in force on `on_date`?
+
+    ClubElo publishes a rating as valid over a date range - `From` until the
+    club's next fixture, `To` - so the file itself says whether it has expired.
+    That is worth using instead of the file's mtime, because
+    `data/reference/clubelo_ratings.csv` is COMMITTED and therefore baked into
+    the image. On a fresh volume `ensure_seeded()` copies it across, which
+    stamps it with today's mtime and would make a file built months ago look
+    like this morning's fetch. The dates inside it cannot be faked that way.
+
+    Any row already expired means the cache is stale as a whole, since that
+    club has played since it was written.
+    """
+    if data is None or data.empty or 'To' not in data.columns:
+        return False
+    to = pd.to_datetime(data['To'], errors='coerce')
+    if to.isna().any():
+        return False
+    return bool(to.min() >= pd.Timestamp(on_date))
+
+
+def _read_clubelo_cache(cache_path):
+    try:
+        return pd.read_csv(cache_path)
+    except (FileNotFoundError, OSError, pd.errors.EmptyDataError,
+            pd.errors.ParserError):
+        return None
+
+
 def get_clubelo_ratings(cache_path=None, on_date=None):
     """Current Elo rating for every club, from clubelo.com. Unlike FPL's own
     team strength fields, Elo carries over between seasons rather than
@@ -176,12 +213,30 @@ def get_clubelo_ratings(cache_path=None, on_date=None):
     matches have generated FPL's own numbers.
 
     The date is today's by default rather than a pinned string: a hardcoded
-    date silently goes stale and starts returning last year's ratings."""
+    date silently goes stale and starts returning last year's ratings.
+
+    A cache that is still in force is used WITHOUT going to the network. That
+    is not a staleness trade: the endpoint is keyed by date and the ratings
+    carry the range they are valid over, so an unexpired cache is the same
+    answer the request would return. It was worth doing because this call sat
+    on the app's startup path and on every /api/refresh, and a single 20-second
+    timeout against an unreachable ClubElo was costing more than rating the
+    entire player pool - twenty of the forty-six seconds a cold boot took.
+    """
     from datetime import date as _date
     cache_path = cache_path or seasons.clubelo_path()
+    # An explicitly requested date must not be answered from a cache holding a
+    # different one. Only the default (today) can be served locally.
+    wants_today = on_date is None
     on_date = on_date or _date.today().isoformat()
+
+    cached = _read_clubelo_cache(cache_path)
+    if wants_today and clubelo_cache_is_current(cached, on_date):
+        return cached
+
     try:
-        response = requests.get(f"http://api.clubelo.com/{on_date}", timeout=20)
+        response = requests.get(f"http://api.clubelo.com/{on_date}",
+                                timeout=CLUBELO_TIMEOUT)
         response.raise_for_status()
         from io import StringIO
         data = pd.read_csv(StringIO(response.text))
@@ -190,10 +245,7 @@ def get_clubelo_ratings(cache_path=None, on_date=None):
         return data
     except (requests.exceptions.RequestException, ValueError):
         print("ClubElo unavailable, falling back to cached ratings")
-        try:
-            return pd.read_csv(cache_path)
-        except (FileNotFoundError, OSError):
-            return pd.DataFrame()
+        return cached if cached is not None else pd.DataFrame()
 
 
 # ClubElo uses its own naming convention - map to FPL's short_name per team.

@@ -11,6 +11,7 @@ import math
 import os
 import re
 import secrets
+import threading
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape as xml_escape
@@ -701,6 +702,109 @@ def load_data(mode=None):
     print(f"Ready ({mode}).")
 
 
+# ---------------------------------------------------------------------------
+#  Warm-up
+# ---------------------------------------------------------------------------
+# load_data() used to run inside startup(), which meant uvicorn answered
+# nothing until it finished - the pipeline, rating the whole pool, the rotation
+# table and the Best-XI ILP behind seo_tables(). Locally that is 15 seconds; on
+# the VM it is longer, and it was most of the minute the site was unreachable
+# on every watchtower deploy. The container swap itself is a few seconds.
+#
+# So the load moved to a background thread and startup() returns immediately.
+# The app is up and serving in about as long as it takes to import pandas.
+#
+# This is only safe because serving without ratings is a state the app already
+# supports deliberately - see the StaleModelError branch above, where
+# `position_dfs = None` leaves every non-projection page working. The warm-up
+# window is the same state, reached for a different reason and lasting seconds.
+READY = threading.Event()
+
+# One load at a time. The nightly cron jobs poke /api/refresh, and without this
+# a job firing during a deploy would run a second full pipeline concurrently
+# with the warm-up - two rating passes competing for the same CPU, then racing
+# to assign `state`.
+_LOAD_LOCK = threading.Lock()
+
+
+def load_data_serialised(mode=None):
+    """load_data() with the lock held, and READY set once it has run."""
+    with _LOAD_LOCK:
+        try:
+            load_data(mode)
+        finally:
+            READY.set()
+
+
+def _warm_up():
+    """The startup load, in the background.
+
+    Swallows failures on purpose. On the startup path an exception killed
+    uvicorn and the container crash-looped, taking down prose pages and the
+    gameweek archive along with the projections; in a thread the same
+    exception would silently kill the thread and leave READY unset, which
+    would 503 the whole site forever. Neither is acceptable, so a failure is
+    recorded where /api/ai/status will show it and the app serves what it can.
+    The next nightly refresh retries from scratch.
+    """
+    try:
+        load_data_serialised()
+    except Exception as e:
+        print(f"WARNING: the initial data load failed ({e}). Serving without "
+              "ratings - the next /api/refresh or nightly job will retry.")
+        state["degraded"] = f"initial load failed: {e}"
+
+
+# Paths that mean something without ratings, and so stay up during the warm-up
+# window. An allowlist rather than a list of pages to block, deliberately: a
+# route added later and forgotten then answers 503 for twenty seconds, which is
+# a temporary and self-correcting mistake. The other way round it would serve a
+# crawler an empty table and invite it to index that, which is neither.
+_WARMUP_SAFE_PREFIXES = (
+    "/static/",
+    "/about", "/privacy", "/faq", "/contact",       # prose, no projections
+    "/robots.txt", "/llms.txt", "/.well-known/",
+    "/api/ai/status",                               # the ops check must not 503
+)
+
+
+def _serves_without_ratings(path):
+    if INDEXNOW_KEY and path == f"/{INDEXNOW_KEY}.txt":
+        return True
+    return path.startswith(_WARMUP_SAFE_PREFIXES)
+
+
+@app.middleware("http")
+async def warmup_gate(request: Request, call_next):
+    """503 + Retry-After while the ratings are still being built.
+
+    A 503 rather than an empty page because this is a crawler-facing site:
+    Google is documented to treat 503 as "come back later" and leaves the
+    indexed version alone, whereas a 200 carrying an empty table is an
+    invitation to index the empty version. Retry-After tells it how long.
+
+    `no-store` matters more than it looks. Cloudflare sits in front of this,
+    and a cached 503 would outlive the twenty seconds that justified it.
+    """
+    if READY.is_set() or _serves_without_ratings(request.url.path):
+        return await call_next(request)
+
+    headers = {"Retry-After": "20", "Cache-Control": "no-store"}
+    if request.url.path.startswith("/api/"):
+        return Response(
+            content=json.dumps({"detail": "Starting up - ratings are still "
+                                          "being built. Retry shortly."}),
+            status_code=503, media_type="application/json", headers=headers)
+    return HTMLResponse(
+        "<!doctype html><meta charset=utf-8><title>Starting up</title>"
+        "<meta http-equiv=refresh content=20>"
+        "<style>body{font-family:system-ui,sans-serif;margin:4rem auto;"
+        "max-width:32rem;padding:0 1rem;line-height:1.5}</style>"
+        "<h1>Just a moment</h1><p>FPL Buddy is starting up and rebuilding its "
+        "projections. This page will reload itself in a few seconds.</p>",
+        status_code=503, headers=headers)
+
+
 def _player_pool():
     """Flat rated player pool from the in-memory state, for DB read-joins."""
     if state["position_dfs"] is None:
@@ -834,7 +938,10 @@ def startup():
         print(f"SQLite: {db.init_db()}")
     except Exception as e:
         print(f"WARNING: couldn't initialise SQLite ({e}); AI tabs will be unavailable.")
-    load_data()
+    # Deliberately NOT awaited: see the warm-up block above. Startup returns in
+    # milliseconds, uvicorn starts answering, and the ratings land underneath.
+    # daemon=True so a shutdown mid-load doesn't hold the process open.
+    threading.Thread(target=_warm_up, name="fpl-warmup", daemon=True).start()
 
 def page_context(request, path, meta=None, **extra):
     """Shared template context: metadata for `path` plus site-wide values.
@@ -1908,7 +2015,9 @@ def set_mode(mode: str, x_refresh_token: str = Header(default="")):
     if mode not in ("preseason", "inseason"):
         return {"status": "error", "detail": "mode must be 'preseason' or 'inseason'"}
     try:
-        load_data(mode)
+        # Serialised for the same reason /api/refresh is: this is a second full
+        # pipeline run, and it must not race the startup warm-up.
+        load_data_serialised(mode)
         return {"status": "ok", "mode": state["mode"]}
     except Exception as e:
         return {"status": "error", "detail": str(e)}
@@ -2147,7 +2256,13 @@ def refresh(x_refresh_token: str = Header(default="")):
 
     Token-gated when FPL_REFRESH_TOKEN is set: this triggers a full pipeline run
     (~a minute of CPU) and is what the cron jobs call, so it shouldn't be
-    anonymously reachable from the internet."""
+    anonymously reachable from the internet.
+
+    Serialised against the startup warm-up: a nightly job firing while a deploy
+    is still building its ratings would otherwise run a second pipeline beside
+    the first. This blocks until the warm-up finishes and then does its own
+    pass, which is slower than failing fast but is what the caller asked for.
+    """
     require_refresh_token(x_refresh_token)
-    load_data()
+    load_data_serialised()
     return {"status": "refreshed", "mode": state["mode"]}

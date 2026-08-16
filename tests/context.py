@@ -27,6 +27,23 @@ from fastapi.testclient import TestClient  # noqa: E402
 _ctx = TestClient(main.app, raise_server_exceptions=False)
 client = _ctx.__enter__()
 
+# Startup no longer loads the ratings - it kicks off a background thread and
+# returns, so the container answers requests within seconds of a deploy instead
+# of being unreachable for a minute (see main.READY). That means the app is
+# LISTENING here but not yet READY, and every route that needs projections
+# answers 503 until it is. Waiting is what the suite used to get for free from
+# a blocking startup.
+#
+# Failing loudly on a timeout rather than carrying on: a run that proceeded
+# would report several hundred spurious 503s, which reads as "the app is
+# broken" instead of "the fixture didn't wait".
+_WARMUP_TIMEOUT = 300
+if not main.READY.wait(timeout=_WARMUP_TIMEOUT):
+    raise RuntimeError(
+        f"The app was still warming up after {_WARMUP_TIMEOUT}s. Every rated "
+        "route would answer 503, so the suite would be measuring the fixture "
+        "rather than the app.")
+
 
 def teardown():
     try:

@@ -1943,6 +1943,58 @@ def test_two_stage_predictions():
           lambda _: bool((expected <= if_starts + 1e-9).all()), severity="high")
 
 
+def test_clubelo_cache_freshness():
+    """An unexpired ClubElo cache is used without a network round-trip.
+
+    This sat on the startup path: one unreachable ClubElo cost a 20s timeout on
+    every boot and every /api/refresh, which was 20 of the 46 seconds a cold
+    start took - more than rating the entire player pool.
+
+    The freshness test has to read the DATES INSIDE the file rather than its
+    mtime, because the cache is committed to the repo and therefore baked into
+    the image. `ensure_seeded()` copies it onto a fresh volume with today's
+    mtime, so an mtime check would treat a months-old file as current.
+    """
+    group("clubelo cache", "medium")
+
+    import fetch_data
+
+    def frame(to_dates):
+        return pd.DataFrame({"Club": ["A"] * len(to_dates),
+                             "Elo": [1500.0] * len(to_dates),
+                             "To": to_dates})
+
+    today = "2026-08-16"
+    check("a cache still in force is current", "To all after today",
+          True, fetch_data.clubelo_cache_is_current(
+              frame(["2026-08-21", "2026-08-30"]), today),
+          lambda v: v is True, severity="medium")
+    check("one expired row makes it stale", "To includes a past date",
+          False, fetch_data.clubelo_cache_is_current(
+              frame(["2026-08-14", "2026-08-30"]), today),
+          lambda v: v is False, severity="medium",
+          note="that club has played since the file was written, so its rating "
+               "has moved")
+    check("the fetch day itself counts as current", "To == today",
+          True, fetch_data.clubelo_cache_is_current(frame([today]), today),
+          lambda v: v is True, severity="medium")
+    for label, bad in (("empty frame", pd.DataFrame()),
+                       ("no To column", pd.DataFrame({"Club": ["A"]})),
+                       ("unparseable dates", frame(["not-a-date"])),
+                       ("missing file", None)):
+        check(f"{label} is treated as stale", label, False,
+              fetch_data.clubelo_cache_is_current(bad, today),
+              lambda v: v is False, severity="medium",
+              note="refetching costs a request; trusting a cache we can't "
+                   "date costs wrong team strengths all season")
+
+    check("the timeout is proportionate to an optional source",
+          "fetch_data.CLUBELO_TIMEOUT", "<= 10s", fetch_data.CLUBELO_TIMEOUT,
+          lambda v: v <= 10, severity="medium",
+          note="it has a working cache behind it and only fills in preseason "
+               "strength, so it must not block a boot the way the FPL API may")
+
+
 def test_dispersion_calibration():
     """The preseason quantile map may reshape, but must never reorder.
 
@@ -2009,7 +2061,7 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_spotlight_injury_return, test_spotlight_underlying,
           test_spotlight_minutes_and_fixtures, test_spotlight_choice_and_ledger,
           test_spotlight_post, test_spotlight_drafts,
-          test_dispersion_calibration,
+          test_clubelo_cache_freshness, test_dispersion_calibration,
           test_retention, test_ops_heartbeat, test_ops_backups,
           test_notification_channels, test_channel_messages,
           test_kofi_message, test_kofi_route_absent_when_unconfigured,
