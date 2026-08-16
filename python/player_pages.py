@@ -47,6 +47,13 @@ _STAT_COLS = [
     "expected_goal_involvements", "expected_goals_conceded",
     "influence", "creativity", "threat", "ict_index",
     "selected_by_percent", "form", "value_season",
+    # Market movement rather than performance, and the only two columns here
+    # that say anything at all before a ball is kicked: `cost_change_start` is
+    # price drift since FPL published the season's prices, and `transfers_in`
+    # is cumulative from the same moment. player_spotlight's early-season
+    # angles are built on them - every other column in this list is zero until
+    # the season starts.
+    "cost_change_start", "transfers_in",
 ]
 
 

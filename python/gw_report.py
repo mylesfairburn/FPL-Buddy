@@ -197,7 +197,8 @@ def _in_form_reason(rec, form):
 
 # ---- section 2: the armband -----------------------------------------------
 
-def captain_picks(pages, gameweek, limit=CAPTAIN_SHORTLIST):
+def captain_picks(pages, gameweek, limit=CAPTAIN_SHORTLIST,
+                  ratings_provisional=False):
     """The highest projections in the game for this gameweek.
 
     Ranked on the model's projection alone, over the whole fit pool - not on
@@ -209,7 +210,24 @@ def captain_picks(pages, gameweek, limit=CAPTAIN_SHORTLIST):
     differentials section and deliberate. Two players projecting the same are
     the same bet on points and a different bet on rank: if the model can't
     separate them, the more-owned one is the one that doesn't cost you rank
-    when it goes wrong, and that is what a tie-break should pick."""
+    when it goes wrong, and that is what a tie-break should pick.
+
+    Returns nothing while `ratings_provisional` - before enough of the season
+    has been played for form to mean anything, every projection is built on
+    last season's average, and the whole pool bunches into about two points.
+    A first-gameweek run had the top three as two sub-GBP6m defenders and then
+    Haaland, on 5.5, 5.5 and 5.2: not a wrong answer so much as no answer,
+    printed in the shape of a ranking. This is the same call `in_form` makes
+    one section above - returning nothing is the honest answer to "who should
+    I captain" before anyone has kicked a ball, and both sections fill in on
+    their own once the season supplies the numbers.
+
+    The other sections stay up because they survive the same conditions. The
+    fixture runs don't consult form at all, and the differentials are a claim
+    about ownership rather than a ranking of the league."""
+    if ratings_provisional:
+        return []
+
     picks = []
     for rec in pages.values():
         if not _is_available(rec):
@@ -462,14 +480,22 @@ def deadline_label(deadline):
     return f"{when:%a} {day} {when:%b}, {when:%H:%M} UK"
 
 
-def build(pages, gameweek, rotation_df=None, deadline=None, season_label=None):
+def build(pages, gameweek, rotation_df=None, deadline=None, season_label=None,
+          ratings_provisional=False):
     """The whole edition, as the JSON-serialisable dict stored in `gw_report`.
 
     Sections can legitimately come back empty - preseason there is no form to
     report, and an international break leaves the fixture section thin - so the
     template renders whatever is present rather than assuming four sections.
     An edition with nothing in it at all is still worth storing: it records
-    that the week was quiet, rather than looking like a job that failed."""
+    that the week was quiet, rather than looking like a job that failed.
+
+    `ratings_provisional` says the projections came off last season's average
+    rather than current-season form; ask `rating_model.using_fallback_form`
+    for it rather than deciding it here, so this page and the pipeline agree.
+    It suppresses the armband - see `captain_picks`. It is deliberately not
+    stored on the report: a frozen edition should read as what was published,
+    and a section that wasn't printed is already absent."""
     runs = fixture_runs(rotation_df, pages, gameweek)
     report = {
         "gameweek": int(gameweek),
@@ -483,7 +509,8 @@ def build(pages, gameweek, rotation_df=None, deadline=None, season_label=None):
         # preview once it's worth posting a day out, final once frozen. Set by
         # jobs.py as the edition moves through them; see social.STAGES.
         "stage": "draft",
-        "captains": captain_picks(pages, gameweek),
+        "captains": captain_picks(pages, gameweek,
+                                  ratings_provisional=ratings_provisional),
         "in_form": in_form(pages, gameweek),
         "differentials": differentials(pages, gameweek),
         "attack_runs": runs["attack"],

@@ -7,10 +7,10 @@ is something new to post on the days between briefings - which is most days.
 
 How a subject is chosen
 -----------------------
-Six detectors run over the whole pool, each looking for a different reason a
+Nine detectors run over the whole pool, each looking for a different reason a
 player is worth writing about tonight. Every candidate they return carries a
 score, the evidence behind it, and the angle it was found by; the highest score
-across all six wins the night.
+across all of them wins the night.
 
 Scores are comparable ACROSS detectors on purpose, and that is the one genuinely
 delicate thing in this module. Each detector weights its own finding onto a
@@ -19,6 +19,20 @@ should care, so a player returning from six weeks out beats a mild
 expected-goals overperformance, and both lose to nothing at all if the pool is
 quiet. Getting this wrong doesn't break anything; it just picks a duller player.
 
+Six of the nine, and three of the nine
+--------------------------------------
+The first six detectors all read this season's per-gameweek history, and until
+that history exists none of them can fire. That is not a rare edge: it is every
+night of preseason and the first fortnight of the season, and it used to mean
+`choose` returned None for weeks at a stretch while the job reported success -
+a silence indistinguishable from a broken cron.
+
+So there are three more, gated on `ctx["early"]`, built only from data that
+exists before a ball is kicked: last season's totals, the price FPL published,
+and the fixture list. They retire on their own once EARLY_ROUNDS_MAX rounds
+have been played, which is roughly when the six real ones start finding things.
+Nothing else about them is special - same shape, same scale, same ledger.
+
 Why there is no language model in here
 --------------------------------------
 The prose is templated from thresholds, exactly like `gw_report`. Every sentence
@@ -26,7 +40,7 @@ restates a number printed beside it, which means this cannot say something the
 data doesn't support - and it publishes itself at 03:15 with nobody reading it
 first. The cost of that choice is that a template repeats itself, so:
 
-  * six angles, and the ledger stops the same angle running two nights running
+  * nine angles, and the ledger stops the same angle running two nights running
   * three or four phrasings of each clause, chosen by a hash of (code, date),
     so the wording is reproducible but not identical week to week
   * the ledger also blocks the same player inside a fortnight
@@ -92,6 +106,40 @@ FIXTURE_MIN_SWING = 0.8
 # is a clean sheet waiting to happen.
 TEAM_MIN_GAP = 1.5
 
+# --- early season ----------------------------------------------------------
+
+# Rounds of this season that have to be in the history before the four
+# early-season angles stand down.
+#
+# Three rather than one, because the six in-season detectors do not become
+# useful the moment a round exists - most of them want MIN_WINDOW_MINUTES
+# behind them, which is two or three full games. Retiring these at the first
+# whistle would reopen the same silence a fortnight later.
+EARLY_ROUNDS_MAX = 3
+
+# Minutes a player needs from LAST season before his totals are worth quoting.
+# 900 is ten full games - the same bar team_service uses for its previous-season
+# fallback, and about where a per-90 stops being an artefact of three cameos.
+PRESEASON_MIN_MINUTES = 900
+
+# Goals per 90 last season that make an attacker worth a post. 0.30 is roughly
+# eleven goals in a full season of minutes: a genuine returner rather than a
+# midfielder who got on the end of a few.
+PRESEASON_MIN_GOALS_PER_90 = 0.30
+
+# Price drift since FPL published the season's prices, in tenths of a million.
+# Two is 0.2m, which preseason is a lot of managers moving in one direction.
+PRICE_MIN_CHANGE = 2
+
+# Mean FPL difficulty across the opening run that counts as an easy start.
+#
+# The scale is 1-5, but the means bunch far harder than that suggests: over
+# 2026-27's first five gameweeks every club sits between 2.6 and 3.6, and
+# thirteen of the twenty are on 3.0 exactly. So this is not "a soft schedule on
+# a 1-5 scale", it is "measurably below the league's own flat middle" - set at
+# 2.9 rather than the 2.6 that reads better and matches one club in twenty.
+OPENING_MAX_DIFFICULTY = 2.9
+
 # --- scoring ---------------------------------------------------------------
 
 # The ceiling every detector clamps its score to.
@@ -156,6 +204,21 @@ def _is_available(rec):
     if chance is None or chance != chance:
         return True
     return chance >= 100
+
+
+def _prev(rec, key, default=None):
+    """One of last season's totals for this player, or `default`.
+
+    `prev_season` is attached by player_pages.build_index and carries five
+    columns - minutes, goals_scored, expected_goals, goals_conceded and
+    expected_goals_conceded - summed across last season. It is None for anyone
+    who did not play in the Premier League last season, which the early-season
+    detectors read as a signal rather than as missing data.
+    """
+    prev = rec.get("prev_season")
+    if not isinstance(prev, dict):
+        return default
+    return _num(prev.get(key), default)
 
 
 def _predicted_for(rec, gameweek):
@@ -683,8 +746,177 @@ def detect_unlucky_defence(ctx):
     return out
 
 
+# ---------------------------------------------------------------------------
+#  Early season
+#
+#  The four below fire only while ctx["early"] is set - preseason and the first
+#  couple of rounds. Everything above this line reads this season's per-gameweek
+#  history; everything below it deliberately does not touch it, because during
+#  the window these run in, it does not exist.
+#
+#  They are held to the same standard as the rest: every claim comes off a
+#  number that is printed beside it. "Last season" is stated in every sentence
+#  they produce, because a per-90 from May quoted without its date is the one
+#  genuinely misleading thing this module could publish.
+# ---------------------------------------------------------------------------
+
+def detect_preseason_form(ctx):
+    """An attacker who scored at a real rate last season.
+
+    Restricted to midfielders and forwards because the only attacking columns
+    `prev_season` carries are goals and expected goals - no assists - and a
+    defender judged on goals alone would be ranked by the thing he does least.
+    Defenders get their preseason look through the fixtures angle below.
+    """
+    if not ctx["early"]:
+        return []
+    out = []
+    for code, rec in ctx["pages"].items():
+        if rec.get("pos") not in ("MID", "FWD") or not _is_available(rec):
+            continue
+        minutes = _prev(rec, "minutes")
+        goals = _prev(rec, "goals_scored")
+        if not minutes or minutes < PRESEASON_MIN_MINUTES or goals is None:
+            continue
+
+        per_90 = _per_90(goals, minutes)
+        if per_90 is None or per_90 < PRESEASON_MIN_GOALS_PER_90:
+            continue
+
+        xg = _prev(rec, "expected_goals")
+        predicted = _predicted_for(rec, ctx["gameweek"])
+        owned = _num(_stat(rec, "selected_by_percent"))
+        out.append({
+            "code": code, "angle": "preseason_form",
+            # The rate is the claim and the projection is what to do about it,
+            # same balance the in-season angles strike. Low ownership lifts it
+            # for the same reason it lifts newly_nailed: a proven scorer nobody
+            # has drafted is the more useful post.
+            "score": min(SCORE_CEILING, per_90 * 8.0 + (predicted or 0) * 0.5
+                         + (1.5 if (owned or 100) < 10 else 0.0)),
+            "evidence": {
+                "prev_minutes": round(minutes),
+                "prev_goals": round(goals),
+                "goals_per_90": round(per_90, 2),
+                "prev_xg": round(xg, 2) if xg is not None else None,
+                "xg_per_90": (round(_per_90(xg, minutes), 2)
+                              if xg is not None else None),
+                "owned": round(owned, 1) if owned is not None else None,
+                "predicted": round(predicted, 1) if predicted is not None else None,
+            },
+        })
+    return out
+
+
+def detect_price_watch(ctx):
+    """A player the market has already moved on, before a ball is kicked.
+
+    `cost_change_start` is the one column that carries information in August:
+    it is the only thing in the bootstrap that moves during preseason, and it
+    moves because hundreds of thousands of managers have drafted the same
+    player. Worth writing up in both directions - a riser is a consensus pick
+    to check, a faller is one the market has quietly given up on.
+    """
+    if not ctx["early"]:
+        return []
+    out = []
+    for code, rec in ctx["pages"].items():
+        if not _is_available(rec):
+            continue
+        change = _num(_stat(rec, "cost_change_start"))
+        if change is None or abs(change) < PRICE_MIN_CHANGE:
+            continue
+
+        predicted = _predicted_for(rec, ctx["gameweek"])
+        owned = _num(_stat(rec, "selected_by_percent"))
+        transfers = _num(_stat(rec, "transfers_in"))
+        out.append({
+            "code": code, "angle": "price_watch",
+            "score": min(SCORE_CEILING, 2.5 + abs(change) * 0.6
+                         + (predicted or 0) * 0.4),
+            "evidence": {
+                # Tenths of a million in the raw column; nobody outside the API
+                # thinks in tenths, so it is converted once, here, rather than
+                # in each of the three places that print it.
+                "price_change": round(change / 10.0, 1),
+                "direction": "risen" if change > 0 else "fallen",
+                "cost": rec.get("cost"),
+                "transfers_in": round(transfers) if transfers is not None else None,
+                "owned": round(owned, 1) if owned is not None else None,
+                "predicted": round(predicted, 1) if predicted is not None else None,
+            },
+        })
+    return out
+
+
+# There is deliberately no "new signing" angle here, and it is worth writing
+# down why so it isn't added back.
+#
+# Spotting one is trivial - a player with no `prev_season` row recorded no
+# Premier League minutes last season - and in 2026-27 that matches 88 players
+# priced at £5.0m or more. The problem is that there is nothing to say about
+# any of them. The ratings this window runs on are built from last season's
+# numbers, so a player with no last season has no projection: of those 88, six
+# carried a projection at all and every one of those was 0.00. The post would
+# be a name, a price, and an admission that this site has no opinion - which is
+# the exact post the module docstring says not to publish.
+#
+# It would need the rating model to price a newcomer from something other than
+# his own history - transfer fee, or the league he came from - and that is a
+# change to the model, not a detector.
+
+
+def detect_opening_fixtures(ctx):
+    """A club with a kind opening run, and its best-projected player.
+
+    The forward-looking half of `detect_fixture_swing`. That one needs a `past`
+    mean to measure a swing against, and before the season there are no
+    finished fixtures to build one from - so it judges the opening run on its
+    own merits instead. Same difficulty scale, same one-player-per-club rule.
+    """
+    if not ctx["early"]:
+        return []
+    out = []
+    seen_teams = set()
+    for code, rec in sorted(ctx["pages"].items(),
+                            key=lambda kv: -(_predicted_for(kv[1], ctx["gameweek"]) or 0)):
+        team_id = rec.get("team")
+        if team_id is None or team_id in seen_teams or not _is_available(rec):
+            continue
+        _past, future, upcoming = team_difficulty(
+            ctx["fixtures"], team_id, ctx["gameweek"])
+        if future is None or future > OPENING_MAX_DIFFICULTY:
+            continue
+
+        seen_teams.add(team_id)
+        predicted = _predicted_for(rec, ctx["gameweek"])
+        names = ctx.get("team_names") or {}
+        out.append({
+            "code": code, "angle": "opening_fixtures",
+            # Distance below an average schedule, not the raw mean: a smaller
+            # number is better here, and scoring the mean directly would rank
+            # the hardest run top.
+            "score": min(SCORE_CEILING, (3.0 - future) * 3.0
+                         + (predicted or 0) * 0.6),
+            "evidence": {
+                "team_name": names.get(team_id) or rec.get("team_name"),
+                "future_difficulty": round(future, 2),
+                "games": len(upcoming),
+                "upcoming": [
+                    {"event": e,
+                     "opponent": (ctx.get("team_shorts") or {}).get(o) or str(o),
+                     "at_home": bool(h), "difficulty": round(d, 1)}
+                    for e, d, o, h in upcoming],
+                "predicted": round(predicted, 1) if predicted is not None else None,
+            },
+        })
+    return out
+
+
 DETECTORS = (detect_injury_return, detect_unlucky, detect_regression,
-             detect_newly_nailed, detect_fixture_swing, detect_unlucky_defence)
+             detect_newly_nailed, detect_fixture_swing, detect_unlucky_defence,
+             detect_preseason_form, detect_price_watch,
+             detect_opening_fixtures)
 
 
 # ---------------------------------------------------------------------------
@@ -706,6 +938,11 @@ def candidates(pages, gameweek, history_df=None, fixtures_df=None,
         "fixtures": fixtures_df, "team_of": team_of,
         "team_names": team_names or {}, "team_shorts": team_shorts or {},
         "recent_rounds": rounds[-FORM_WINDOW:],
+        # Derived from the data rather than from the calendar or a mode string.
+        # A missing gameweek_stats.csv and a season that hasn't started produce
+        # the same empty history, and the answer to "can the six in-season
+        # detectors find anything" is the same in both cases: no.
+        "early": len(rounds) < EARLY_ROUNDS_MAX,
     }
 
     found = []
@@ -771,6 +1008,9 @@ ANGLE_LABELS = {
     "newly_nailed": "Now starting",
     "fixture_swing": "The fixtures turn",
     "unlucky_defence": "A defence due a clean sheet",
+    "preseason_form": "Last season's numbers",
+    "price_watch": "The market has moved",
+    "opening_fixtures": "A kind opening run",
 }
 
 
@@ -807,6 +1047,21 @@ def _headline(rec, angle, code, day):
             f"The numbers say {name} should have more clean sheets than this",
             f"{name} is at the back of a defence conceding more than it deserves",
         ],
+        "preseason_form": [
+            f"What {name} did last season, and whether to start with him",
+            f"{name} scored at a real rate last year — is he worth a place?",
+            f"The case for starting the season with {name}",
+        ],
+        "price_watch": [
+            f"The market has already made its mind up about {name}",
+            f"{name}'s price has moved before a ball has been kicked",
+            f"Why so many managers are drafting {name}",
+        ],
+        "opening_fixtures": [
+            f"{name} has the opening run to start the season with",
+            f"The fixture list is kind to {name} early on",
+            f"{name}'s first few gameweeks are as good as they get",
+        ],
     }
     return variant(options.get(angle, [f"{name}"]), code, day, "headline")
 
@@ -838,6 +1093,9 @@ def _paragraphs(rec, angle, evidence, gameweek, code, day):
         "newly_nailed": _nailed_paragraphs,
         "fixture_swing": _fixture_paragraphs,
         "unlucky_defence": _defence_paragraphs,
+        "preseason_form": _preseason_form_paragraphs,
+        "price_watch": _price_paragraphs,
+        "opening_fixtures": _opening_paragraphs,
     }.get(angle)
     if builder:
         paras += builder(rec, angle, evidence, short, code, day)
@@ -994,6 +1252,114 @@ def _defence_paragraphs(rec, angle, e, short, code, day):
     ]
 
 
+def _preseason_form_paragraphs(rec, angle, e, short, code, day):
+    line = (f"Last season {short} played {e['prev_minutes']} minutes and scored "
+            f"{e['prev_goals']} {_plural(e['prev_goals'], 'goal')} — "
+            f"{e['goals_per_90']} per 90")
+    if e.get("xg_per_90") is not None:
+        line += (f", from {e['prev_xg']} expected goals, or {e['xg_per_90']} "
+                 f"per 90")
+    paras = [line + "."]
+
+    # The one comparison worth making from these two numbers, and the reason
+    # xG is fetched at all: whether the rate came from the chances or from the
+    # finishing. Only drawn when both halves exist.
+    per_90, xg_90 = e.get("goals_per_90"), e.get("xg_per_90")
+    if per_90 is not None and xg_90 is not None:
+        if per_90 > xg_90 + 0.10:
+            paras.append(
+                "He scored more than the chances were worth, which is either "
+                "finishing the numbers do not capture or a rate that was never "
+                "going to hold. A year on, it is worth treating as the second "
+                "until he shows otherwise.")
+        elif xg_90 > per_90 + 0.10:
+            paras.append(
+                "The chances behind that were worth more than he took, so the "
+                "rate above is the floor of what he was doing rather than the "
+                "ceiling.")
+        else:
+            paras.append(
+                "The goals and the chances behind them agree, which is the "
+                "boring answer and the one most likely to repeat.")
+
+    paras.append(variant([
+        "None of this is from this season, because there is no this season "
+        "yet. It is the best evidence available in August, and it is evidence "
+        "about a player in a squad that may have changed around him.",
+        "A full season of minutes is the largest sample this site holds on "
+        "anyone. It is also twelve months old, and says nothing about a new "
+        "manager, a new role or a summer signing ahead of him.",
+        "Last year's rate is where everyone starts in August. It is worth "
+        "less than three games of this season will be, and those are the "
+        "games that have not happened.",
+    ], code, day, "preseason"))
+    return paras
+
+
+def _price_paragraphs(rec, angle, e, short, code, day):
+    change = abs(e["price_change"])
+    paras = [
+        f"{short} has {e['direction']} £{change}m since FPL published this "
+        f"season's prices, and now costs £{e['cost']}m."
+    ]
+    if e.get("transfers_in") is not None:
+        paras.append(
+            f"That move came from {e['transfers_in']:,} transfers in across "
+            f"the game — price changes here are driven by how many managers "
+            f"buy a player, not by how well he is playing.")
+
+    if e["direction"] == "risen":
+        paras.append(variant([
+            "A preseason riser is a consensus pick. That is worth knowing in "
+            "both directions: the crowd is usually right about who is good, "
+            "and owning what everyone owns is how you finish where everyone "
+            "finishes.",
+            "The market has decided before anyone has played. Whether to "
+            "follow it depends on whether you want the points or the rank — "
+            "a template player gives you the first and not the second.",
+            "Rising prices in August reflect popularity rather than form, "
+            "because there is no form. Worth checking the projection below "
+            "against the crowd's enthusiasm.",
+        ], code, day, "price"))
+    else:
+        paras.append(variant([
+            "A preseason faller is a player the crowd has quietly moved off, "
+            "usually on news rather than on numbers. Sometimes that news is "
+            "real and sometimes it is a rumour that never happened.",
+            "Falling prices in August mean managers are selling, which is not "
+            "the same as a player getting worse. It does mean he is cheaper "
+            "than he was, and cheaper than the crowd once thought he was worth.",
+            "The market has cooled on him. That is worth a look precisely "
+            "because everyone else has stopped looking.",
+        ], code, day, "price"))
+    return paras
+
+
+def _opening_paragraphs(rec, angle, e, short, code, day):
+    games = ", ".join(
+        f"{g['opponent']} ({'H' if g['at_home'] else 'A'}, {g['difficulty']:.0f})"
+        for g in e.get("upcoming", [])[:5])
+    paras = [
+        f"{e['team_name']}'s next {e['games']} "
+        f"{_plural(e['games'], 'game')} rate {e['future_difficulty']} on FPL's "
+        f"own difficulty scale, where 3 is about average and 5 is hardest.",
+    ]
+    if games:
+        paras.append(f"Those games: {games}.")
+    paras.append(variant([
+        "An easy opening run is the one thing about the season that is known "
+        "in advance. It is also the thing every other manager can see, so it "
+        "is a tie-breaker between similar players rather than a reason on "
+        "its own.",
+        "Fixture difficulty barely moves across a season and it is not a "
+        "projection. What it is good for is deciding which of two players you "
+        "were already weighing up to start with.",
+        "Starting the season with kind fixtures is worth real points, and it "
+        "is worth them early, when a bad start is hardest to make back.",
+    ], code, day, "opening"))
+    return paras
+
+
 def _verdict(rec, angle, e, short, gameweek, code, day):
     """The explicit answer. The task asked for "whether picking him is a good
     choice", and a write-up that lays out five paragraphs of evidence and then
@@ -1137,6 +1503,25 @@ def _stat_rows(angle, e):
             ("Expected per game", e.get("expected_per_game")),
             ("Gap per game", e.get("gap_per_game")),
             ("Gameweeks", e.get("rounds")),
+        ],
+        # Every label in the four below says "last season" or names the thing
+        # as a price. The table is read on its own, without the prose beside
+        # it, and a bare "Goals per 90" in August would be read as this season's.
+        "preseason_form": [
+            ("Goals per 90, last season", e.get("goals_per_90")),
+            ("Expected goals per 90, last season", e.get("xg_per_90")),
+            ("Goals, last season", e.get("prev_goals")),
+            ("Minutes, last season", e.get("prev_minutes")),
+        ],
+        "price_watch": [
+            ("Price change since launch", e.get("price_change")),
+            ("Current price", e.get("cost")),
+            ("Transfers in", e.get("transfers_in")),
+            ("Ownership", e.get("owned")),
+        ],
+        "opening_fixtures": [
+            ("Difficulty, next games", e.get("future_difficulty")),
+            ("Games rated", e.get("games")),
         ],
     }.get(angle, [])
     return [{"label": label, "value": value}

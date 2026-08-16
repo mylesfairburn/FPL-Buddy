@@ -350,12 +350,61 @@ def zero_unavailable_points(position_dfs, fixtures_df, now=None):
     return updated
 
 
+# How many completed current-season gameweeks the form features need before
+# they stop falling back to last season's average. Three, because that is the
+# window the rolling average is built over - below it the "rolling" figure is a
+# partial one dressed up as a full one.
+MIN_CURRENT_GAMEWEEKS = 3
+
+
+def completed_current_gameweeks(current_gw_path=None):
+    """How many distinct current-season gameweeks have stats on disk.
+
+    Zero when the file is missing, unreadable, or has no `round` column. That
+    is the preseason state - the stats pull doesn't write the file until a
+    round has been played - and it is also the honest answer for a file that
+    arrived half-written, which is worth failing back to last season's average
+    over rather than raising out of a job nobody is watching."""
+    current_gw_path = current_gw_path or seasons.gameweek_stats_path()
+    if not os.path.exists(current_gw_path):
+        return 0
+    try:
+        current = pd.read_csv(current_gw_path)
+    except (OSError, pd.errors.ParserError, pd.errors.EmptyDataError):
+        return 0
+    if 'round' not in current.columns:
+        return 0
+    return int(current['round'].nunique())
+
+
+def using_fallback_form(mode=None, current_gw_path=None,
+                        min_current_gameweeks=MIN_CURRENT_GAMEWEEKS):
+    """Whether ratings are standing on last season's average rather than
+    current-season form.
+
+    Asked from outside the pipeline to find out whether a projection is a real
+    ranking or a cold-start estimate. While this is true every player's "form"
+    is a whole-season average, which flattens the variance that separates
+    attackers far harder than it touches a defender's appearance-and-clean-sheet
+    floor: the projections bunch, and defenders drift to the top of them. See
+    `gw_report.captain_picks`, which declines to print a ranking on that basis.
+
+    `build_current_form_features` decides the same question by calling this, so
+    the page and the pipeline cannot disagree about which mode produced the
+    numbers on it."""
+    if mode == 'preseason':
+        return True
+    if mode == 'inseason':
+        return False
+    return completed_current_gameweeks(current_gw_path) < min_current_gameweeks
+
+
 def build_current_form_features(
     current_gw_path=None,
     fallback_path=None,
     current_players_path=None,
     previous_players_path=None,
-    min_current_gameweeks=3,
+    min_current_gameweeks=MIN_CURRENT_GAMEWEEKS,
     mode=None,
 ):
     """Builds a rolling-3-gameweek 'current form' row per player, keyed by
@@ -391,13 +440,12 @@ def build_current_form_features(
         if current['round'].nunique() < 1:
             raise ValueError("Current-season gameweek data is empty - can't use inseason mode")
     else:
-        use_fallback = True
-        if os.path.exists(current_gw_path):
+        use_fallback = using_fallback_form(mode, current_gw_path,
+                                           min_current_gameweeks)
+        if not use_fallback:
             current = pd.read_csv(current_gw_path)
             if 'element' in current.columns:
                 current = current.rename(columns={'element': 'player_id'})
-            if current['round'].nunique() >= min_current_gameweeks:
-                use_fallback = False
 
     if not use_fallback and os.path.exists(current_gw_path):
         current = pd.read_csv(current_gw_path)

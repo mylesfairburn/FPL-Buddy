@@ -391,7 +391,13 @@ def draft_reddit(report, stage="draft"):
     """
     gw = report["gameweek"]
     url = f"{_site_url()}/gameweek/{gw}"
-    out = [f"**Gameweek {gw}: the armband, differentials and fixture swings "
+    # The title names the sections the post actually carries. Early in a season
+    # the armband is withheld (see gw_report.captain_picks), and a headline
+    # promising it over a post without it is the sort of thing a subreddit
+    # notices first and reads second.
+    billed = ["the armband"] if report.get("captains") else []
+    billed += ["differentials", "fixture swings"]
+    out = [f"**Gameweek {gw}: {', '.join(billed[:-1])} and {billed[-1]} "
            "— from a trained points model**", ""]
     out += [hook(report), ""]
 
@@ -873,6 +879,9 @@ def _player_question(post):
         "newly_nailed": f"Has anyone already got {name}, or is this too early?",
         "fixture_swing": f"Worth planning a transfer around {name}'s run, or is that too far ahead?",
         "unlucky_defence": f"Anyone in on that defence yet, or waiting for the clean sheet to actually arrive?",
+        "preseason_form": f"Is anyone starting the season with {name}, or is last year's rate not enough to go on?",
+        "price_watch": f"Anyone following the crowd on {name}, or is this one to fade?",
+        "opening_fixtures": f"Worth starting with {name} for the fixtures alone, or is that not a good enough reason?",
     }.get(post.get("angle"), f"Anyone own {name}?")
 
 
@@ -1021,6 +1030,29 @@ def channel_player_post(post):
     if link:
         lines += ["", f"Full drafts (X thread, Reddit, Discord): <{link}>"]
     return "\n".join(lines)
+
+
+def channel_quiet_night(day, gameweek, reason):
+    """Said out loud when there is no write-up tonight.
+
+    A silent channel and a broken cron look identical from a phone, and that is
+    not a hypothetical: the nightly job ran for a week producing nothing, said
+    so only in a log file on the host, and the first anyone knew of it was the
+    write-up URL answering 404. One line a night costs nothing and closes that
+    gap permanently.
+
+    Deliberately not routed to `alerts`. Nothing has failed - the job worked and
+    the pool was quiet - and putting a working night in the channel reserved for
+    things that are broken is how that channel stops being read.
+    """
+    return "\n".join([
+        f"🌙 **No player write-up for {day}**",
+        "",
+        reason,
+        "",
+        f"The Gameweek {gameweek} briefing is unaffected, and the job itself "
+        "ran fine — this is the pool being quiet, not something being broken.",
+    ])
 
 
 def channel_briefing_ready(report):

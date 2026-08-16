@@ -212,6 +212,37 @@ def stale_jobs(intervals=None, grace=STALE_GRACE, now=None):
     return out
 
 
+def latest_player_post(now=None):
+    """When the nightly player write-up last produced something.
+
+    Separate from the job heartbeat above, and the distinction is the whole
+    point: `gameweek-report` succeeding says the job ran, not that it wrote
+    anything. Those two came apart for a fortnight - every run green, no post
+    on any of them - and there was no single place that showed it.
+
+    Keys match the `player_post` row and `db.recent_player_posts`, so the same
+    field names mean the same thing wherever a caller meets them. `post_date`
+    and `days_ago` are None when nothing has ever been written.
+    """
+    empty = {"post_date": None, "gameweek": None, "code": None,
+             "angle": None, "days_ago": None}
+    try:
+        with db.connect() as conn:
+            row = conn.execute(
+                """SELECT post_date, gameweek, code, angle FROM player_post
+                    ORDER BY post_date DESC LIMIT 1""").fetchone()
+    except sqlite3.Error:
+        return empty
+
+    if not row:
+        return empty
+
+    out = dict(row)
+    when = _parse(out.get("post_date"))
+    out["days_ago"] = ((now or _now()) - when).days if when else None
+    return out
+
+
 def health():
     """The whole picture, for /api/ai/status."""
     stale = stale_jobs()
@@ -224,6 +255,7 @@ def health():
         "alerting": bool(webhook_url()),
         "channels": configured_channels(),
         "backups": backup_status(),
+        "player_post": latest_player_post(),
     }
 
 

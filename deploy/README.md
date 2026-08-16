@@ -245,10 +245,17 @@ Must come before the IndexNow ping at 03:30, which reads the live sitemap.
 **Two things ride on `daily-refresh` rather than having cron lines of their
 own.** The gameweek roundup, because the moment it has to hit — after FPL
 confirms a round's stats — is the same condition the actual-points backfill
-already waits for. And the nightly housekeeping: the database backup, the disk
-tidy-up, and the check for jobs that have stopped running. A sixth crontab
-entry is a sixth thing that can silently not be installed, which is precisely
-the failure that check exists to catch.
+already waits for. And the nightly housekeeping: the database backup and the
+disk tidy-up.
+
+**The staleness check at 05:00, last.** It rode on `daily-refresh` until it was
+noticed doing the one thing a staleness check must never do. At 03:00 it judged
+five jobs, three of which run later that same night, so on any night the
+heartbeat table was young — a fresh deployment, a restored backup, a new volume
+— it reported `gameweek-report`, `indexnow` and `seo-report` as having never
+completed successfully, and sent an alert saying so, an hour before all three
+ran perfectly. It now has its own line an hour after the last nightly job. **If
+you add a job after 05:00, move that line down.**
 
 Install with:
 
@@ -261,7 +268,7 @@ Edit the paths and token at the top of that file first.
 
 ### Log rotation
 
-The five jobs append to `/var/log/fpl-buddy-*.log` and nothing truncates them.
+The six jobs append to `/var/log/fpl-buddy-*.log` and nothing truncates them.
 `deadline-watch` alone writes 24 entries a day, forever.
 
 ```bash

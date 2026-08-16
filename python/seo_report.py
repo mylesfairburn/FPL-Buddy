@@ -388,6 +388,52 @@ def summarise(report):
     return lines
 
 
+def _plural(n, one, many=None):
+    return one if n == 1 else (many or one + "s")
+
+
+def _totals_rows(gsc):
+    """The rows to add up for the headline figures, and where they came from.
+
+    This exists because of a genuinely misleading bug. The digest used to sum
+    the `queries` rows, which sounds like the obvious choice and is wrong:
+    Google anonymises rare search terms and OMITS them from any response
+    dimensioned by query. On a small site that is most of the traffic. From one
+    of this site's own stored reports, same property, same 28-day window:
+
+        queries    1 row    ->  0 clicks,  1 impression
+        pages      5 rows   ->  3 clicks, 64 impressions
+        dates      3 rows   ->  3 clicks, 64 impressions
+        devices    2 rows   ->  3 clicks, 64 impressions
+        countries 13 rows   ->  3 clicks, 64 impressions
+
+    The digest reported "0 clicks from 1 impression" for a week that had 3 and
+    64. Any dimension other than query totals correctly, so `dates` is used -
+    one row per day, the smallest of them, and the one whose row count is a
+    sanity check in itself.
+
+    No extra API call: fetch_gsc already requests all six dimensions and stores
+    them. The correct numbers were in the file the whole time.
+    """
+    for name in ("dates", "pages", "devices", "countries", "queries"):
+        rows = gsc.get(name)
+        if isinstance(rows, list) and rows:
+            return rows, name
+    return [], None
+
+
+def _totals(rows):
+    """(clicks, impressions, mean position) across `rows`."""
+    clicks = sum(r.get("clicks") or 0 for r in rows)
+    impressions = sum(r.get("impressions") or 0 for r in rows)
+    # Weighted by impressions, not a mean of the positions: an average over
+    # 400 rows is dominated by the long tail nobody searches, and would report
+    # a healthy site as sitting on page four.
+    position = (sum((r.get("position") or 0) * (r.get("impressions") or 0)
+                    for r in rows) / impressions) if impressions else 0
+    return clicks, impressions, position
+
+
 def digest(report):
     """The weekly Discord message: how search is going, in a dozen lines.
 
@@ -400,17 +446,28 @@ def digest(report):
 
     gsc = report.get("gsc") or {}
     rows = gsc.get("queries") if isinstance(gsc.get("queries"), list) else []
-    if rows:
-        clicks = sum(r.get("clicks") or 0 for r in rows)
-        impressions = sum(r.get("impressions") or 0 for r in rows)
-        # Weighted by impressions, not a mean of the positions: an average over
-        # 400 queries is dominated by the long tail nobody searches, and would
-        # report a healthy site as sitting on page four.
-        position = (sum((r.get("position") or 0) * (r.get("impressions") or 0)
-                        for r in rows) / impressions) if impressions else 0
+    totals_rows, totals_from = _totals_rows(gsc)
+    if rows or totals_rows:
+        clicks, impressions, position = _totals(totals_rows)
         lines += ["", f"**Google** ({gsc.get('start')} → {gsc.get('end')})",
-                  f"• {clicks:.0f} clicks from {impressions:.0f} impressions",
-                  f"• {len(rows)} queries, average position {position:.1f}"]
+                  f"• {clicks:.0f} {_plural(clicks, 'click')} from "
+                  f"{impressions:.0f} {_plural(impressions, 'impression')}",
+                  f"• {len(rows)} named {_plural(len(rows), 'query', 'queries')}, "
+                  f"average position {position:.1f}"]
+        # Named against the totals, whenever the two disagree. They almost
+        # always do, and the gap is the single most confusing thing this
+        # message prints - see _totals_rows.
+        named_clicks, named_impressions, _pos = _totals(rows)
+        if rows and (named_impressions < impressions or named_clicks < clicks):
+            lines.append(
+                f"• {'that query accounts' if len(rows) == 1 else 'those queries account'} "
+                f"for {named_clicks:.0f} {_plural(named_clicks, 'click')} and "
+                f"{named_impressions:.0f} "
+                f"{_plural(named_impressions, 'impression')} — "
+                "Google hides the rest")
+        elif totals_from == "queries":
+            lines.append("• totals are query-level only; Google's own figure "
+                         "will be higher")
 
         top = sorted(rows, key=lambda r: -(r.get("clicks") or 0))[:5]
         if any((r.get("clicks") or 0) > 0 for r in top):

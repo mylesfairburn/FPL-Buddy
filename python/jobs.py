@@ -43,6 +43,7 @@ import manager_history
 import ops
 import player_pages
 import player_spotlight
+import rating_model
 import retention
 import seasons
 import social
@@ -431,9 +432,18 @@ def build_gameweek_report(force_gameweek=None, position_dfs=None, events=None,
             deadline = ev.get("deadline_time")
             break
 
+    # Early in a season the ratings stand on last season's average, which
+    # bunches every projection together; the armband is left out entirely for
+    # as long as that's true. Asked here rather than inferred from the mode so
+    # this agrees with what the pipeline actually did.
+    ratings_provisional = rating_model.using_fallback_form()
+    if ratings_provisional:
+        log("  ratings still on last season's average - omitting the armband")
+
     report = gw_report_builder.build(
         pages, gw, rotation_df=rotation_df, deadline=deadline,
-        season_label=seasons.current_season())
+        season_label=seasons.current_season(),
+        ratings_provisional=ratings_provisional)
 
     # Carry the stage forward from whatever is already stored, then apply any
     # promotion this run is asking for. Never backwards - see the docstring.
@@ -559,17 +569,21 @@ def build_player_spotlight(force_date=None, position_dfs=None, events=None,
         log("No rated player pool - nothing to write up.")
         return 1
 
-    # The per-gameweek history is what every detector reads. Without it only
-    # the fixture-swing angle can fire, which is a thin but still-publishable
-    # post - so this failing costs candidates rather than the job.
+    # The per-gameweek history is what the six in-season detectors read.
+    # Without it only the three early-season angles can fire - which is the
+    # normal state of the world in August, not a fault, so this failing costs
+    # candidates rather than the job.
     history_df = None
+    history_detail = ""
     try:
         import pandas as pd
         path = seasons.gameweek_stats_path()
         history_df = pd.read_csv(path)
         log(f"  gameweek history: {len(history_df):,} rows from {path}")
     except Exception as e:
-        log(f"  gameweek history unavailable ({e}); most angles will not fire")
+        history_detail = str(e)
+        log(f"  gameweek history unavailable ({e}); "
+            "only the early-season angles can fire")
 
     fixtures_df = None
     try:
@@ -590,6 +604,24 @@ def build_player_spotlight(force_date=None, position_dfs=None, events=None,
         # interesting has already been written about. Saying so beats
         # publishing the least uninteresting player in the game.
         log(f"{day}: no player clears the bar tonight - nothing written.")
+
+        # ...but say it somewhere a person will see. This used to end here, and
+        # the resulting silence was indistinguishable from the job not running
+        # at all - which is exactly how it was eventually found. Keyed on the
+        # date, so a manual re-run never sends a second one.
+        # The exception text stays in the log and out of the message: it is a
+        # path inside the container, which tells a phone nothing and is not
+        # something to be posting into a chat channel.
+        reason = ("Nothing in the pool cleared the bar tonight. "
+                  + ("There is no gameweek history for this season yet, so "
+                     "only the early-season angles could run, and none of them "
+                     "found anything either."
+                     if history_detail else
+                     "Every angle came back empty — a quiet week, or everyone "
+                     "interesting has been written up in the last fortnight."))
+        if ops.notify_once("drafts", "player_quiet", day.isoformat(),
+                           social.channel_quiet_night(day.isoformat(), gw, reason)):
+            log("  told the drafts channel there is nothing tonight")
         return 0
 
     post = player_spotlight.build(candidate, pages, gw, today=day,
@@ -845,12 +877,14 @@ def daily_refresh(skip_stats=False):
 
 
 def daily_maintenance():
-    """Back up the database, tidy the volume, and shout if a job has stopped.
+    """Back up the database and tidy the volume.
 
-    All of it hangs off the daily refresh rather than its own cron line,
-    because every part of it wants to happen once a day and a sixth entry in
-    the crontab is a sixth thing that can silently not be installed - which is
-    precisely the failure this block exists to catch.
+    Both hang off the daily refresh rather than a cron line of their own,
+    because each wants to happen once a day and a separate entry is another
+    thing that can silently not be installed.
+
+    The staleness check used to be here too and is not any more - see the note
+    at the bottom of this function for why that was the wrong place for it.
 
     Every step is independently guarded. This is housekeeping attached to the
     end of the job that does the real work, and none of it is allowed to change
@@ -881,7 +915,32 @@ def daily_maintenance():
     except Exception as e:
         log(f"  pruning old caches FAILED: {e}")
 
-    # Last, so it reports on a world this run has already finished changing.
+    # The staleness check used to run here, and it was in the wrong place.
+    #
+    # This job is the 03:00 line. It judged five jobs, three of which are
+    # scheduled AFTER it - gameweek-report at 03:15, indexnow at 03:30,
+    # seo-report at 04:00 - so on any night where the heartbeat table was
+    # young, it read three jobs that had simply not had their turn yet and
+    # reported all three as having never completed successfully. Which is
+    # exactly what it did on the first night after the table existed: one alert
+    # naming those three, all five green by 04:00.
+    #
+    # It now has its own 05:00 cron line calling `jobs.py status --alert`, after
+    # every nightly job has run. See deploy/fpl-buddy.cron.
+
+
+def check_staleness():
+    """Alert on jobs that should have succeeded by now and haven't.
+
+    Its own entry point rather than a phase of another job, because the one
+    thing it must never do is judge a job that has not had its turn yet - and
+    it cannot promise that from inside a job that runs at 03:00. Whatever calls
+    this has to be the last thing of the night.
+
+    Returns 0 whether or not anything was overdue. Overdue jobs are what it
+    reports, not a failure of this check - exiting non-zero on them would make
+    the staleness checker itself go stale in the very table it reads.
+    """
     try:
         stale = ops.stale_jobs()
         if stale:
@@ -899,6 +958,7 @@ def daily_maintenance():
             log("  all scheduled jobs are up to date")
     except Exception as e:
         log(f"  staleness check FAILED: {e}")
+    return 0
 
 
 def main(argv=None):
@@ -961,6 +1021,12 @@ def main(argv=None):
 
     status = sub.add_parser("status",
                             help="print the job heartbeat and what is overdue")
+    status.add_argument("--alert", action="store_true",
+                        help="check for overdue jobs and push a summary to "
+                             "FPL_ALERT_WEBHOOK, printing nothing else. What "
+                             "the 05:00 cron line runs. Deliberately last in "
+                             "the night: run any earlier and it judges jobs "
+                             "that haven't had their turn yet.")
     status.add_argument("--test-alert", action="store_true",
                         help="send a test message to FPL_ALERT_WEBHOOK and "
                              "report whether it went. The only way to confirm "
@@ -1042,6 +1108,9 @@ def _dispatch(args):
     if args.command == "status":
         if args.test_alert:
             return send_test_alert()
+        if args.alert:
+            db.init_db()
+            return check_staleness()
         return print_status()
     return 0
 
@@ -1145,6 +1214,20 @@ def print_status():
     else:
         log("")
         log("  All jobs are up to date.")
+
+    # Reported next to the jobs rather than buried, because a green
+    # `gameweek-report` says the job ran and says nothing about whether it
+    # wrote anything. Those two came apart for a fortnight and this line is
+    # what would have shown it.
+    post = health.get("player_post") or {}
+    log("")
+    if post.get("post_date"):
+        age = post.get("days_ago")
+        log(f"Player write-ups: newest {post['post_date']} "
+            f"(GW{post.get('gameweek')}, {post.get('angle')})"
+            + (f", {age}d ago" if age else ", today"))
+    else:
+        log("Player write-ups: none written yet")
 
     backups = health["backups"]
     log("")

@@ -1,6 +1,6 @@
 # /etc/logrotate.d/fpl-buddy
 #
-# The five cron jobs append to /var/log/fpl-buddy-*.log and nothing ever
+# The six cron jobs append to /var/log/fpl-buddy-*.log and nothing ever
 # truncated them. deadline-watch alone writes 24 entries a day, every day, for
 # as long as the box is up - so these grow without limit until the disk fills,
 # which on a Proxmox host takes down considerably more than this site.

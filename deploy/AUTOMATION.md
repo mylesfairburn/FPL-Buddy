@@ -21,10 +21,18 @@ the thing that costs a month.
 | `gameweek-report` | 03:15 | The briefing stops updating; no nightly player write-up |
 | `indexnow` | 03:30 | New pages take longer to be indexed |
 | `seo-report` | 04:00 | No Search Console / Bing history accumulates |
+| `status --alert` | 05:00 | Any of the above can stop and nobody is told |
 
-Three of those five have the property that makes them dangerous: the site keeps
-serving perfectly, just with older and older content. Nothing 500s. Nothing
-appears in a log anyone reads.
+Three of the first five have the property that makes them dangerous: the site
+keeps serving perfectly, just with older and older content. Nothing 500s.
+Nothing appears in a log anyone reads.
+
+The 05:00 line is the one that watches the rest, and its position in the list
+is load-bearing rather than incidental. It ran at 03:00 for a while, folded
+into `daily-refresh`, where it judged three jobs that had not run yet and
+reported all three as having never succeeded. **A checker that runs before the
+things it checks reports the future as a failure.** If a job is ever scheduled
+after 05:00, this line moves after it.
 
 ---
 
