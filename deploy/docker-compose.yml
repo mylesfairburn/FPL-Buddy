@@ -102,6 +102,12 @@ services:
       FPL_DRAFTS_WEBHOOK: ${FPL_DRAFTS_WEBHOOK:-}
       FPL_GAMEWEEK_WEBHOOK: ${FPL_GAMEWEEK_WEBHOOK:-}
       FPL_SEO_WEBHOOK: ${FPL_SEO_WEBHOOK:-}
+      # Questions typed into the box on /faq. Unlike the four above, this
+      # channel IS the storage: /api/question writes nothing to the database
+      # and records no address, so a question that fails to send is one nobody
+      # ever sees. Falling back to the alerts channel is fine; leaving BOTH
+      # blank means the form tells the reader it couldn't send.
+      FPL_QUESTIONS_WEBHOOK: ${FPL_QUESTIONS_WEBHOOK:-}
       # Leave BLANK for Discord and Slack - their URLs are detected, and this
       # setting is ignored for them. It applies only to a receiver that is
       # neither (ntfy, a self-hosted endpoint), where "text" posts a plain body.
