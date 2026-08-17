@@ -12,28 +12,58 @@
 <h2>How players are rated</h2>
 <p>
     Every player carries a projected points figure for each of the next eight
-    gameweeks. That comes from a ridge regression trained separately for each
-    position — goalkeepers, defenders, midfielders and forwards score points in
-    genuinely different ways, so one model across all four would average away the
-    thing you actually want to know.
+    gameweeks. It comes from a pair of gradient-boosted models per position —
+    goalkeepers, defenders, midfielders and forwards score points in genuinely
+    different ways, so one model across all four would average away the thing you
+    actually want to know.
 </p>
 <p>
-    The model is trained on per-gameweek data from 2025/26 onwards, and gains a
-    season every year. Its inputs are a rolling three-gameweek average of expected
-    goal involvements, minutes and bonus points, plus whether the fixture is home or
-    away and how strong the opponent is. Rolling averages are shifted by one
-    gameweek before use, so a player's own result can never leak into the features
-    predicting it — the commonest way a model like this ends up looking far better
-    than it is.
+    A <em>pair</em> rather than one, because "how many points will he score" is
+    really two questions. Just over half of all gameweek rows are players who
+    didn't get on the pitch, and a single model fitted across that mixture mostly
+    learns who plays: it drags every projection toward the middle, and an earlier
+    version of this site had the whole table within about a point of itself. So
+    instead there is a classifier for whether he starts, and a separate model —
+    Poisson, because points are a count with a long right tail — for what he
+    scores when he does, fitted only on appearances. The two are combined as
+    <em>P(start) × points if he starts</em>, plus a smaller term for coming off
+    the bench.
 </p>
 <p>
-    Two deliberate omissions. Total points is not an input, even though it is the
-    most obviously predictive column available: it's Fantasy Premier League's own
-    formula applied to minutes, goals and bonus, so including it alongside its own
-    ingredients makes the model split credit between a total and the parts it was
-    built from. And form is measured over three gameweeks rather than five or ten,
-    because a longer window is steadier but slower to notice that something has
-    changed.
+    That split is worth keeping for a second reason: "6.9 if he starts, and he
+    starts 88% of the time" is two useful numbers, and a single blended figure
+    cannot say it.
+</p>
+<p>
+    The model is trained on per-gameweek data from 2025/26 onwards and gains a
+    season every year. Its inputs are FPL's own per-gameweek columns — expected
+    goals and assists, goals and assists, expected goals conceded, clean sheets,
+    defensive contribution, tackles and recoveries, minutes, starts, bonus and
+    BPS, and the ICT ratings — measured both as a short three-gameweek form
+    window and a longer six, alongside a season-to-date rate for each. Rate stats
+    are taken per 90 minutes, because a player on sixty minutes a week is not two
+    thirds as dangerous as one on ninety; he has two thirds of the time. Whether
+    the fixture is home or away and how strong the opponent is are also inputs.
+    Every rolling figure is shifted by one gameweek before use, so a player's own
+    result can never leak into the features predicting it — the commonest way a
+    model like this ends up looking far better than it is.
+</p>
+<p>
+    Total points is an input, which is a reversal. The earlier linear model left
+    it out for double-counting: it is FPL's own formula applied to minutes, goals
+    and bonus, so a regression handed both would split credit between a total and
+    the parts it was built from. A tree has no such problem — it splits on
+    whichever is more informative — and a player's own recent points rate turns
+    out to be the single best summary of how the scoring actually treats him,
+    bonus included, which is otherwise an opaque function of BPS.
+</p>
+<p>
+    Worth being straight about what this doesn't fix. The very top of the
+    distribution is still shrunk: the best midfielders in the game have averaged
+    closer to 6.7 points per start than the 5–6.5 the model gives them. A
+    conditional mean fitted to a single season will always pull the extremes in,
+    and there isn't enough evidence yet to do otherwise. It is a real improvement
+    on the flat table it replaced, not a solved problem.
 </p>
 
 <h2>Team rating, and what it isn't</h2>

@@ -350,13 +350,17 @@ FAQ_ITEMS = [
     },
     {
         "q": "How are the predicted points calculated?",
-        "a": ("A ridge regression trained separately for each position, because "
-              "goalkeepers, defenders, midfielders and forwards earn points in different "
-              "ways. The inputs are rolling three-gameweek averages of expected goal "
-              "involvements, minutes and bonus points, plus home or away and the strength "
-              "of the opponent. Rolling averages are shifted back a gameweek so a "
-              "player's own result can never leak into the features predicting it. "
-              "<a href=\"/about\">Full detail on the about page</a>."),
+        "a": ("Two gradient-boosted models per position, because goalkeepers, defenders, "
+              "midfielders and forwards earn points in different ways — and because "
+              "\"how many will he score\" is really two questions. Just over half of all "
+              "gameweek rows are players who didn't play, so one model across that "
+              "mixture mostly learns who plays and flattens everything else. Instead: a "
+              "classifier for whether he starts, and a Poisson model for what he scores "
+              "when he does, fitted only on appearances. Inputs are FPL's own per-gameweek "
+              "columns over a three- and a six-gameweek window plus a season-to-date rate, "
+              "with home or away and opponent strength. All of them are shifted back a "
+              "gameweek so a player's own result can never leak into the features "
+              "predicting it. <a href=\"/about\">Full detail on the about page</a>."),
     },
     {
         "q": "How accurate are the predictions?",
@@ -1576,16 +1580,23 @@ def llms_txt():
     return PlainTextResponse(
         f"# {SITE_NAME}\n"
         "\n"
-        "> Free Fantasy Premier League tools: every player rated by a ridge\n"
-        "> regression trained on per-gameweek data, two AI-picked squads a week,\n"
-        "> a fixture rotation planner, and your own squad analysed from your FPL\n"
-        "> ID. Unofficial fan project, not affiliated with the Premier League.\n"
+        "> Free Fantasy Premier League tools: every player rated by a pair of\n"
+        "> gradient-boosted models trained on per-gameweek data, two AI-picked\n"
+        "> squads a week, a fixture rotation planner, and your own squad analysed\n"
+        "> from your FPL ID. Unofficial fan project, not affiliated with the\n"
+        "> Premier League.\n"
         "\n"
         "Data comes from the public Fantasy Premier League API and from ClubElo\n"
-        "for team strength. Projections are per-position ridge regressions over\n"
-        "rolling three-gameweek expected goal involvements, minutes, bonus, home\n"
-        "or away, and opponent strength. Predictions are frozen at each deadline\n"
-        "and never recalculated, so the published track record is unedited.\n"
+        "for team strength. Projections use two models per position rather than\n"
+        "one: a classifier for whether a player starts, and a Poisson regressor\n"
+        "for what he scores when he does, fitted only on appearances. Just over\n"
+        "half of all gameweek rows are players who did not play, and a single\n"
+        "model fitted across that mixture learns who plays rather than who\n"
+        "scores. Features are FPL's own per-gameweek columns over three- and\n"
+        "six-gameweek windows plus a season-to-date rate, with home or away and\n"
+        "opponent strength, all shifted back a gameweek so no row sees its own\n"
+        "result. Predictions are frozen at each deadline and never recalculated,\n"
+        "so the published track record is unedited.\n"
         "\n"
         "## Pages\n"
         "\n"
