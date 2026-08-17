@@ -10,8 +10,23 @@
 # So: keep this file identical to /root/apps/docker-compose.yml. If you change
 # one, change the other in the same sitting.
 #
-#   scp deploy/docker-compose.yml root@web-host:/root/apps/docker-compose.yml
-#   ssh root@web-host 'cd /root/apps && docker compose up -d'
+# Deployed as `mylesf`, not root. Root login over SSH is disabled, so the copy
+# is two steps rather than one: scp cannot elevate, and /root/apps is readable
+# only by root.
+#
+#   scp deploy/docker-compose.yml mylesf@web-host:/tmp/docker-compose.yml
+#   ssh mylesf@web-host 'sudo mv /tmp/docker-compose.yml /root/apps/ && \
+#                        cd /root/apps && sudo docker compose up -d'
+#
+# `sudo docker` here despite mylesf being in the docker group: the group grants
+# access to the daemon socket, not read access to the compose file and .env
+# sitting under /root.
+#
+# That awkwardness is the stack living under /root at all, which predates there
+# being a non-root user. Moving it to /srv/apps owned by mylesf would make both
+# commands plain again and would match /srv/fpl-companion, where the volumes
+# already live. Worth doing on its own, not folded into another change - the
+# .env moves with it and a half-moved stack starts with no secrets.
 #
 # Secrets live in /root/apps/.env, never here. See env.example.
 

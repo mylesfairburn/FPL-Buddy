@@ -1381,3 +1381,203 @@ def list_drafts():
     gws = [int(m.group(1)) for n in names
            for m in [re.fullmatch(r"gw(\d+)\.txt", n)] if m]
     return sorted(gws, reverse=True)
+
+
+# ---------------------------------------------------------------------------
+#  Outreach
+#
+#  The weekly email to a handful of FPL writers. Same rule as everything else
+#  in this file and for the same reason: the machine writes it, a person sends
+#  it. Sending is left manual deliberately, and not out of caution -
+#
+#    * the personal read IS the mechanism. A merge field is visible from orbit,
+#      and an obviously-generated round-robin is worth less than no email.
+#    * deliverability. This domain also sends nothing else, and it is the one
+#      serving the site; twenty near-identical messages a week from a young
+#      domain is how it ends up spam-foldered, taking anything else with it.
+#    * UK PECR treats sole traders and individuals as individuals, and most FPL
+#      creators are one or the other. Fifteen hand-sent emails is a different
+#      thing from an automated list, legally as well as practically.
+#    * the recipient list is personal data. Keeping it in a text file the
+#      author maintains, rather than in this app's database, keeps it out of
+#      scope of everything the privacy policy has to describe.
+#
+#  So there is no send() here and there should not be one.
+# ---------------------------------------------------------------------------
+
+# Two picks, because three is a newsletter and one is a tip. Two reads as
+# "here are the interesting bits", which is what it is.
+OUTREACH_PICKS = 2
+
+
+def outreach_picks(report, limit=OUTREACH_PICKS):
+    """The players worth another writer's attention this week.
+
+    Differentials first, then the armband, then form. That order is the whole
+    editorial judgement in this function: a well-rated name at 3% ownership is
+    something the recipient probably hasn't got, and the week's obvious captain
+    is something they have already written about themselves. Sending someone
+    their own headline back is how a "useful data" email reads as filler.
+
+    Deduplicated on name, because a player can legitimately be both a
+    differential and in form, and the same name twice in a three-bullet email
+    looks like the generator ran twice."""
+    out, seen = [], set()
+    for section in ("differentials", "captains", "in_form"):
+        for p in report.get(section) or []:
+            name = p.get("name")
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append({**p, "section": section})
+            if len(out) >= limit:
+                return out
+    return out
+
+
+def outreach_miss(snapshot):
+    """The frozen prediction that was most wrong last gameweek.
+
+    This is the bullet that does the work. Two picks and a link is marketing;
+    two picks and "it was badly wrong about this one, here is the number" is a
+    person showing their working, and it is the only part of this email that a
+    recipient could not have generated themselves from any other FPL site.
+
+    Reads the SNAPSHOT, never today's ratings - the whole point is the number
+    that was committed before kickoff, not what the model would say now that it
+    has seen the result.
+
+    Returns None when there is nothing honest to say: preseason, a gameweek
+    that was never snapshotted, or one whose actuals haven't been backfilled
+    yet. A missing bullet is fine; an invented one is not."""
+    if not snapshot:
+        return None
+    worst, worst_gap = None, 0.0
+    for p in snapshot.get("squad") or []:
+        # Starters only. A bench player scoring 2 against a projection of 4 is
+        # not a miss - the model never claimed he would play.
+        if not p.get("starting"):
+            continue
+        predicted, actual = p.get("predicted"), p.get("actual_points")
+        if predicted is None or actual is None:
+            continue
+        gap = float(predicted) - float(actual)
+        if gap > worst_gap:
+            worst, worst_gap = p, gap
+    if worst is None:
+        return None
+    return {
+        "gameweek": snapshot.get("gameweek"),
+        "name": worst.get("web_name"),
+        "predicted": float(worst["predicted"]),
+        "actual": float(worst["actual_points"]),
+        "gap": round(worst_gap, 1),
+    }
+
+
+def draft_outreach(report, snapshot=None):
+    """The body of the weekly email, ready to paste.
+
+    Deliberately has no greeting and no sign-off. Those are the two lines that
+    have to be written by hand for each recipient, and generating a "Hi [name],"
+    is an invitation to send it with the bracket still in it."""
+    gw = report["gameweek"]
+    url = _site_url()
+    picks = outreach_picks(report)
+    miss = outreach_miss(snapshot)
+
+    # Counted, not assumed. This said "Three things" unconditionally, which was
+    # wrong every week the miss bullet is absent - and wrong in the direction
+    # that makes a generated email obvious, since the reader can see two.
+    total = len(picks) + (1 if miss else 0)
+
+    # A week with nothing in it is a week not to send. Saying so beats emitting
+    # "0 things from this week's numbers" and leaving the sender to notice -
+    # this happens for real in preseason, when there is no form to report and
+    # the armband is deliberately withheld.
+    if total == 0:
+        return (f"[Nothing worth sending for GW{gw}. No differentials, no "
+                f"armband, no form, and no settled gameweek to report a miss "
+                f"from. This is normal in preseason. Skip this week - an email "
+                f"that says nothing costs more than no email.]")
+
+    words = {1: "One thing", 2: "Two things", 3: "Three things", 4: "Four things"}
+    lines = [f"{words.get(total, f'{total} things')} from this week's "
+             f"numbers, GW{gw}:", ""]
+
+    n = 0
+    for p in picks:
+        n += 1
+        facts = player_facts(p, include=("predicted", "owned", "cost"))
+        # `reason` is the sentence the section already wrote for the page, so
+        # the email and the site cannot disagree about why a player is listed.
+        # Capitalised here because those are sentence FRAGMENTS written to sit
+        # mid-sentence on the page ("projects above every midfielder..."), and
+        # dropped after a full stop they read as a typo.
+        why = (p.get("reason") or "").strip().rstrip(".")
+        why = f" {why[0].upper()}{why[1:]}." if why else ""
+        lines.append(f"{n}. {p['name']} ({p.get('pos', '')}, {p.get('team_name', '')})"
+                     f" — {facts}.{why}")
+
+    if miss:
+        n += 1
+        lines.append(f"{n}. Last week it was wrong about {miss['name']}: "
+                     f"projected {miss['predicted']:.1f}, returned "
+                     f"{miss['actual']:.0f}. That is the biggest miss in the "
+                     f"GW{miss['gameweek']} squad, which was committed before "
+                     f"the deadline and hasn't been edited since.")
+    else:
+        # Said out loud rather than silently dropped, so the sender notices the
+        # email is a bullet short and knows why - rather than wondering whether
+        # the generator broke.
+        lines.append("")
+        lines.append("[No miss to report yet - no settled gameweek with "
+                     "backfilled actuals. Delete this line before sending, and "
+                     "consider whether a two-bullet email is worth sending at "
+                     "all this week.]")
+
+    lines += ["", f"Full numbers: {url}", "",
+              "Use any of it, no credit needed. Reply \"stop\" and I'll take "
+              "you off this."]
+    return "\n".join(lines)
+
+
+def write_outreach_draft(report, snapshot=None):
+    """One file per gameweek, beside the social drafts.
+
+    Its own file rather than a fifth section inside gwNN.txt: that file is
+    something you open on the way to posting publicly, and this is something
+    you open on the way to emailing fifteen people. Different jobs, different
+    weeks sometimes, and a reminder about the recipient list belongs next to
+    the text it applies to."""
+    gw = report["gameweek"]
+    body = f"""FPL Buddy — Gameweek {gw} outreach email
+{'=' * 46}
+
+SEND BY HAND, to a list you maintain yourself. There is no send() in
+social.py and there should not be one - see the comment above
+draft_outreach() for the four reasons.
+
+Before sending:
+  * write the greeting and the first line per recipient, referencing
+    something they actually published. That line is the difference
+    between this and spam, and it is the one part no generator can write.
+  * check the miss bullet is present. An email with only picks in it is
+    a press release.
+  * do not send in the 72 hours before a deadline unless the content is
+    genuinely about that deadline - that is their busiest window.
+
+{'-' * 46}
+SUBJECT
+{'-' * 46}
+GW{gw} — model's picks, and last week's misses
+
+{'-' * 46}
+BODY  (paste under your own greeting)
+{'-' * 46}
+{draft_outreach(report, snapshot)}
+"""
+    path = os.path.join(social_dir(), f"outreach-gw{gw:02d}.txt")
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(body)
+    return path

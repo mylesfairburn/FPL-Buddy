@@ -469,6 +469,25 @@ def build_gameweek_report(force_gameweek=None, position_dfs=None, events=None,
     except Exception as e:
         log(f"  social drafts FAILED (edition is still published): {e}")
 
+    # The weekly outreach email, on the same job for the same reason the player
+    # write-up is: the rated pool is already built and building it is the
+    # expensive minute of this job. A separate cron line would pay that twice
+    # and be a second thing to install.
+    #
+    # The miss bullet reads the LAST settled gameweek, not this one - this one
+    # hasn't been played. get_snapshot returns None when that gameweek was
+    # never snapshotted or hasn't been backfilled, and draft_outreach handles
+    # None by saying so rather than by omitting the bullet silently.
+    try:
+        # `pages` is keyed on the season-stable code; get_snapshot wants a flat
+        # pool it can index by element id, which is what the values are.
+        previous = (ai_team.get_snapshot(gw - 1, pool=list(pages.values()))
+                    if gw > 1 else None)
+        path = social.write_outreach_draft(report, snapshot=previous)
+        log(f"  outreach email -> {path}")
+    except Exception as e:
+        log(f"  outreach draft FAILED (edition is still published): {e}")
+
     # Pushed on the TRANSITION to preview, not on being at preview. The nightly
     # rebuild keeps running right up to the deadline and the edition stays at
     # that stage the whole time, so notifying on the state rather than the
@@ -1115,11 +1134,21 @@ def _dispatch(args):
     return 0
 
 
+# Every key in ops.CHANNELS needs a line here. A channel missing from this map
+# still gets tested, but its test message reads "This channel will carry: ."
+# with nothing in it - which is exactly the message you least want in the one
+# place you go to confirm the wiring is right. `kofi` and `questions` were both
+# absent and both did that.
 WHAT_EACH_CHANNEL_CARRIES = {
     "alerts": "scheduled jobs that failed or stopped running",
     "drafts": "the nightly player write-up, the briefing, the roundup",
     "gameweek": "deadline reminders, and what the AI Manager did",
     "seo": "the weekly Search Console digest",
+    "kofi": "Ko-fi donations, relayed from the webhook Ko-fi posts to",
+    # Worth spelling out that this one is the storage, because it is the only
+    # channel where a missed message is a lost message rather than a lost copy.
+    "questions": ("questions typed into the box on /faq - nothing is stored, "
+                  "so this channel is the only record"),
 }
 
 
