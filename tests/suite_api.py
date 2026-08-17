@@ -216,18 +216,18 @@ def test_draft_roundtrip():
     """The one write path. Uses an FPL id far outside the real range so it can
     never collide with a genuine manager's stored draft.
 
-    Writes are token-gated, so every POST/DELETE below carries the token the
-    first save minted. The clean slate is made through drafts.delete_draft()
-    rather than the endpoint on purpose: the temp database outlives a single
-    run, so a claim left by the previous run would 403 the setup call and take
-    the rest of the test with it.
+    Unauthenticated in both directions since the per-device write token was
+    removed: any caller can save to an id, and the last writer wins. The
+    assertions below are written to FAIL if a lock is ever reintroduced without
+    a way for a second device to carry it, because that is the regression that
+    would silently break saving on a laptop after saving on a phone.
     """
     group("draft round-trip", "high")
     c = _client()
     test_id = 999999999
 
     import drafts
-    drafts.delete_draft(test_id)          # also releases any claim from last run
+    drafts.delete_draft(test_id)          # clean slate; the temp DB outlives a run
 
     r = c.get(f"/api/draft/{test_id}")
     body = _json(r) or {}
@@ -243,13 +243,10 @@ def test_draft_roundtrip():
     body = _json(r) or {}
     expect("save reports 15 picks stored", "POST body", 15, body.get("picks"))
 
-    token = body.get("draft_token") or ""
-    auth = {"X-Draft-Token": token}
-    check("first save mints a write token", "POST body",
-          "a non-empty draft_token", token[:8] + "..." if token else "(none)",
-          lambda _: bool(token), severity="high",
-          note="the client has nowhere else to get it - no account, no email - "
-               "so the one moment the plaintext exists is this response")
+    check("save mints no write token", "POST body",
+          "no draft_token key", repr(body.get("draft_token")),
+          lambda _: "draft_token" not in body, severity="high",
+          note="a token in this response is the device lock coming back")
 
     r = c.get(f"/api/draft/{test_id}")
     body = _json(r) or {}
@@ -265,30 +262,22 @@ def test_draft_roundtrip():
           lambda v: v == 11)
 
     # Save again: must replace, not accumulate.
-    c.post(f"/api/draft/{test_id}", json={"picks": picks, "gameweek": 2}, headers=auth)
+    c.post(f"/api/draft/{test_id}", json={"picks": picks, "gameweek": 2})
     body = _json(c.get(f"/api/draft/{test_id}")) or {}
     expect("re-saving replaces rather than appends", "POST twice, then GET",
            15, len(body.get("squad", [])), severity="high")
 
-    # The point of the token: a claimed id is not writable by a stranger.
-    # Reads stay open, which is deliberate and covered in suite_security.
+    # The whole point of removing the lock: a second client, carrying nothing
+    # from the first, can still write. This is the phone-then-laptop case.
     r = c.post(f"/api/draft/{test_id}", json={"picks": picks, "gameweek": 3})
-    expect("save without the token is refused", f"POST /api/draft/{test_id} (no token)",
-           403, r.status_code, severity="high")
-    r = c.post(f"/api/draft/{test_id}", json={"picks": picks, "gameweek": 3},
-               headers={"X-Draft-Token": "wrong-token"})
-    expect("save with the wrong token is refused", f"POST /api/draft/{test_id} (bad token)",
-           403, r.status_code, severity="high")
+    expect("a second device can save to an already-saved id",
+           f"POST /api/draft/{test_id} (no prior state)",
+           200, r.status_code, severity="high",
+           note="a 403 here is the cross-device bug the lock removal fixed")
     body = _json(c.get(f"/api/draft/{test_id}")) or {}
-    expect("a refused save left the stored draft alone", f"GET /api/draft/{test_id}",
-           2, body.get("gameweek"), severity="high",
-           note="a 403 that still wrote would be worse than no check at all")
-
-    r = c.delete(f"/api/draft/{test_id}")
-    expect("delete without the token is refused", f"DELETE /api/draft/{test_id} (no token)",
-           403, r.status_code, severity="high",
-           note="delete is the destructive one - an open delete is the whole "
-                "reason the claim table exists")
+    expect("the second save actually landed", f"GET /api/draft/{test_id}",
+           3, body.get("gameweek"), severity="high",
+           note="200 without the write would be worse than a refusal")
 
     bad_payloads = [
         ("empty picks", {"picks": []}),
@@ -299,22 +288,30 @@ def test_draft_roundtrip():
         ("two captains", {"picks": [dict(p, is_captain=True) for p in picks]}),
     ]
     for name, payload in bad_payloads:
-        r = c.post(f"/api/draft/{test_id}", json=payload, headers=auth)
+        r = c.post(f"/api/draft/{test_id}", json=payload)
         check(f"rejects {name}", f"POST /api/draft/{test_id} {name}",
               "400 Bad Request", r.status_code, lambda v: v == 400,
               severity="high",
-              note="a 500 here would mean an unvalidated payload reached the DB")
+              note="validate_picks is now the ONLY thing between an arbitrary "
+                   "body and a stored row - a 500 means it was bypassed")
 
-    r = c.delete(f"/api/draft/{test_id}", headers=auth)
+    body = _json(c.get(f"/api/draft/{test_id}")) or {}
+    expect("a rejected payload left the stored draft alone", f"GET /api/draft/{test_id}",
+           3, body.get("gameweek"), severity="high")
+
+    r = c.delete(f"/api/draft/{test_id}")
     expect("delete returns 200", f"DELETE /api/draft/{test_id}", 200, r.status_code)
     body = _json(c.get(f"/api/draft/{test_id}")) or {}
     expect("deleted draft is gone", f"GET /api/draft/{test_id}", False,
            body.get("available"))
 
-    # Deleting releases the id, so it can be claimed again - the documented way
-    # out of a lockout when the only copy of a token was in a cleared browser.
+    r = c.delete(f"/api/draft/{test_id}")
+    expect("deleting nothing is not an error", f"DELETE /api/draft/{test_id} (twice)",
+           200, r.status_code,
+           note="idempotent - a retry from a flaky connection must not 500")
+
     r = c.post(f"/api/draft/{test_id}", json={"picks": picks, "gameweek": 1})
-    expect("a released id can be claimed again", f"POST /api/draft/{test_id} (no token)",
+    expect("a deleted id can be saved again", f"POST /api/draft/{test_id}",
            200, r.status_code, severity="high")
     drafts.delete_draft(test_id)
 

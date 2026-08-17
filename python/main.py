@@ -42,7 +42,8 @@ from fixture_rotator import (get_rotation_data, rank_rotation_pairs, recommend_p
 from search import search_player
 from squad_optimiser import DEFAULT_BUDGET, OptimisationError
 from team_service import (get_team_view, get_league_standings, get_all_players, get_player_summary,
-                          get_news_feed, get_underperforming_players, team_name_map,
+                          get_news_feed, get_underperforming_players,
+                          get_overperforming_players, team_name_map,
                           _team_short_map as get_team_short_map)
 from gameweek import detect_mode
 
@@ -174,6 +175,7 @@ def tab_links():
 # of them would send anyone looking for the other past it.
 CONTENT_LINKS = [
     {"path": "/gameweek", "label": "Gameweek Tips", "short": "Gameweek"},
+    {"path": "/injuries", "label": "Injury News", "short": "Injuries"},
     {"path": "/players/a-z", "label": "Players A–Z", "short": "A–Z"},
 ]
 
@@ -186,6 +188,13 @@ CONTENT_LINKS = [
 # reports anything longer as an error - and Google truncates around the same
 # point, so the tail of a longer one is written for nobody. The check in
 # tests/suite_routes.py fails the build if one drifts back over.
+#
+# `lastmod` is the date the PROSE was last edited, and only the prose pages
+# carry one. Everything else here is rebuilt from the nightly data pull, so its
+# real modification date is that data's - see sitemap() for where that comes
+# from. Bump this by hand when you change the words on one of these pages; a
+# stale date costs a recrawl, an always-today date costs the whole file's
+# credibility (again, see sitemap()).
 PAGES = {
     "/": {
         "title": "FPL Buddy — Fantasy Premier League ratings and AI teams",
@@ -231,6 +240,23 @@ PAGES = {
         "priority": "0.9",
         "changefreq": "daily",
     },
+    # The one page here whose content genuinely turns over on its own schedule
+    # rather than the pipeline's - a flag can change at any hour of any day, and
+    # this is the page people arrive at from a search made minutes after the
+    # news broke. Priority sits with the tool pages for that reason.
+    "/injuries": {
+        # No apostrophe, deliberately. Titles are escaped on the way into the
+        # <title> tag, so "who's" renders as "who&#39;s" and stops matching the
+        # string here - which the SEO metadata suite checks and which would
+        # otherwise ship a title with an HTML entity visible in it.
+        "title": "FPL injury news — injured, suspended and doubtful players",
+        "h1": "FPL injury news",
+        "description": ("Every flagged Fantasy Premier League player: who is injured, "
+                        "suspended or doubtful, their chance of playing, and what FPL "
+                        "says about each one."),
+        "priority": "0.9",
+        "changefreq": "daily",
+    },
     "/players/a-z": {
         "title": "Every Fantasy Premier League player A-Z | FPL Buddy",
         "description": ("A complete list of every Fantasy Premier League player, grouped by "
@@ -243,6 +269,7 @@ PAGES = {
         "title": "About FPL Buddy — how the ratings and AI squads work",
         "description": ("How FPL Buddy rates players, how the two AI squads are picked, "
                         "and what the numbers on the site actually mean."),
+        "lastmod": "2026-08-14",
     },
     "/gameweek": {
         "title": "This FPL gameweek — briefing and roundup | FPL Buddy",
@@ -262,15 +289,23 @@ PAGES = {
                         "what the AI squads do."),
         "priority": "0.7",
         "changefreq": "monthly",
+        "lastmod": "2026-08-17",
     },
+    # `yearly` on both, against a default of `monthly`. Google ignores
+    # changefreq outright; Bing does read it, and a notice that changes when the
+    # law does is not a monthly page.
     "/privacy": {
         "title": "Privacy policy — FPL Buddy",
         "description": ("What FPL Buddy stores, why, how long for, and how to have it "
                         "deleted."),
+        "lastmod": "2026-08-10",
+        "changefreq": "yearly",
     },
     "/contact": {
         "title": "Contact FPL Buddy",
         "description": "How to report a bug, ask a question, or raise a rights or security issue.",
+        "lastmod": "2026-08-10",
+        "changefreq": "yearly",
     },
 }
 
@@ -374,6 +409,23 @@ FAQ_ITEMS = [
               "defenders conceding more than their expected goals conceded. It is a list "
               "of players who may be due a correction, not a list of players who "
               "definitely are."),
+    },
+    {
+        "q": "Is a particular player injured, and when is he back?",
+        "a": ("The <a href=\"/injuries\">injury news page</a> lists every player Fantasy "
+              "Premier League currently flags — injured, suspended or doubtful — with the "
+              "game's own chance-of-playing percentage where it gives one. Return dates "
+              "are not guessed at: if FPL hasn't published a number, neither does this "
+              "site. Each player's own page carries the same status alongside his form "
+              "and projections."),
+    },
+    {
+        "q": "What does \"overperforming\" mean on the players page?",
+        "a": ("The same comparison the other way round: attackers scoring more than their "
+              "expected goals, or defences conceding fewer than their expected goals "
+              "conceded. It is not a sell list. A player can stay ahead of his underlying "
+              "numbers for a long time — good finishers do it for whole seasons — so read "
+              "it as a run that may not hold rather than one that is about to end."),
     },
     {
         "q": "What is a differential, and how do I find one?",
@@ -1112,6 +1164,31 @@ def players_index(request: Request):
                          season_label=_season_label())
 
 
+@app.get("/injuries", response_class=HTMLResponse)
+def injuries(request: Request):
+    """Who is injured, suspended or doubtful, rendered on the server.
+
+    The data was already here - /api/news has served FPL's injury blurbs since
+    early on - but only ever through JavaScript, into a panel on the My Team
+    tab. That meant no crawler had ever seen a word of it, and "is <player> fit
+    this week" is one of the most-asked questions in the game. A page that only
+    exists after a fetch() cannot answer a search.
+
+    Built from player_page_index() rather than from a fresh sweep of the rated
+    pool, for two reasons: the index already carries `status`, `news` and
+    `chance_of_playing_next_round` for every player, and it carries the URL of
+    that player's own page - so every row here is also an internal link into
+    /player/*, which until now had exactly one inbound link each (from the A-Z).
+
+    No `available` flag and no empty-state special case: a week with nothing
+    flagged is a real answer to the question this page asks, and the template
+    says so in prose."""
+    rows = player_pages.injury_list(player_page_index())
+    return html_response("pages/injuries.html", request, "/injuries",
+                         rows=rows, season_label=_season_label(),
+                         updated=data_lastmod())
+
+
 @app.get("/player/{slug}", response_class=HTMLResponse)
 def player_profile(request: Request, slug: str):
     """One player's page.
@@ -1391,27 +1468,63 @@ if INDEXNOW_KEY:
             INDEXNOW_KEY, headers={"Cache-Control": "public, max-age=86400"})
 
 
+def data_lastmod(default=None):
+    """The date the player data behind most of this site last changed.
+
+    The mtime of the CSV the nightly bootstrap pull rewrites (seasons.players_path()),
+    which is where prices, form, ownership and injury news actually arrive. It
+    lives on the mounted volume, so unlike anything derived from process start
+    or from a file in the image, a redeploy does not move it.
+
+    Falls back rather than raising: a sitemap with a slightly wrong date is
+    worth far more than no sitemap at all."""
+    try:
+        mtime = os.path.getmtime(seasons.players_path())
+    except OSError:
+        return default
+    return datetime.fromtimestamp(mtime, timezone.utc).date().isoformat()
+
+
 @app.get("/sitemap.xml")
 def sitemap():
     """Every indexable URL: the landing page, the four tool pages and the prose
     pages.
 
-    `lastmod` is today for the tool pages because their content genuinely does
-    change every day - ratings, predictions and the AI squads all move. The
-    prose pages are marked monthly and given a lower priority so crawl budget
-    goes to the pages worth recrawling."""
+    Every `lastmod` here is meant to be TRUE, which is a change from how this
+    started. It used to stamp today on all ~580 URLs, every day, and that is
+    the one thing Google documents as a reason to ignore <lastmod> for an
+    entire sitemap - at which point the file stops being able to say which of
+    568 player pages is worth a recrawl, which is the only reason it has dates
+    in it. The prose pages were the clearest case: /privacy claiming a fresh
+    edit every morning is plainly false, and it was competing for crawl budget
+    against pages that had genuinely changed.
+
+    So there are now three honest sources, in the order they appear below:
+      * the nightly data pull's own mtime, for anything rebuilt from it,
+      * a hand-maintained date in PAGES, for the prose,
+      * the frozen/generated timestamps already recorded per gameweek edition.
+    """
     today = datetime.now(timezone.utc).date().isoformat()
+    # Anything driven by the pipeline shares one date, because it is one pull
+    # that rewrites all of them together. `today` only if that file can't be
+    # read at all.
+    data_mod = data_lastmod(today)
     urls = "".join(
-        f"<url><loc>{SITE_URL}{path}</loc><lastmod>{today}</lastmod>"
+        f"<url><loc>{SITE_URL}{path}</loc>"
+        f"<lastmod>{meta.get('lastmod') or data_mod}</lastmod>"
         f"<changefreq>{meta.get('changefreq', 'monthly')}</changefreq>"
         f"<priority>{meta.get('priority', '0.5')}</priority></url>"
         for path, meta in PAGES.items())
     # Plus one entry per player. Several hundred URLs, well inside the 50,000
     # limit for a single sitemap, so this doesn't need splitting into an index.
     # `xml_escape` because a name can legitimately contain an ampersand.
+    #
+    # `daily` rather than `weekly`: these pages are rebuilt by the same nightly
+    # job that sets data_mod, so weekly understated it in the one direction that
+    # matters - telling a crawler to come back less often than the numbers move.
     urls += "".join(
-        f"<url><loc>{SITE_URL}{xml_escape(rec['path'])}</loc><lastmod>{today}</lastmod>"
-        f"<changefreq>weekly</changefreq><priority>0.6</priority></url>"
+        f"<url><loc>{SITE_URL}{xml_escape(rec['path'])}</loc><lastmod>{data_mod}</lastmod>"
+        f"<changefreq>daily</changefreq><priority>0.6</priority></url>"
         for rec in player_page_index().values())
 
     # Plus one per published gameweek edition. These are the only URLs on the
@@ -1488,6 +1601,9 @@ def llms_txt():
         "  fixtures alternate, so one of the two always has a good game.\n"
         f"- [My team]({SITE_URL}/my-team): enter an FPL ID for predicted points,\n"
         "  an optimised XI, transfer suggestions and live scoring.\n"
+        f"- [Injury news]({SITE_URL}/injuries): every flagged player - injured,\n"
+        "  suspended, doubtful - with FPL's own chance-of-playing percentage where\n"
+        "  it publishes one, and no guessed return dates where it doesn't.\n"
         f"- [Players A-Z]({SITE_URL}/players/a-z): index of every player page.\n"
         f"- [This gameweek]({SITE_URL}/gameweek): the current briefing and the\n"
         "  last completed roundup. A briefing is written before a deadline and\n"
@@ -1718,6 +1834,18 @@ def underperforming(response: Response, top_n: int = 20):
     return get_underperforming_players(state["position_dfs"], top_n=top_n)
 
 
+@app.get("/api/overperforming")
+def overperforming(response: Response, top_n: int = 20):
+    """The mirror: returns running AHEAD of the underlying numbers.
+
+    Its own route rather than a `direction` parameter on the one above, because
+    the two are cached separately by the CDN and because a typo'd parameter
+    would otherwise silently serve the opposite table - a wrong answer that
+    looks exactly like a right one."""
+    response.headers["Cache-Control"] = API_CACHE
+    return get_overperforming_players(state["position_dfs"], top_n=top_n)
+
+
 @app.get("/api/player/{player_id}")
 def player(player_id: int):
     """Recent gameweek performance for a single player (player pop-up)."""
@@ -1772,28 +1900,20 @@ def get_draft(fpl_id: int):
 
 
 @app.post("/api/draft/{fpl_id}")
-def save_draft(fpl_id: int, payload: dict = Body(...),
-               x_draft_token: str = Header(default="")):
+def save_draft(fpl_id: int, payload: dict = Body(...)):
     """Save the working squad. Replaces whatever was stored for this id.
 
-    Token-gated. The FPL id is public - it is in the URL of every manager's
-    Points page - so without this any guessable integer could overwrite a
-    stranger's squad. The first save on an unclaimed id mints the token and
-    returns it as `draft_token` for the client to keep; later saves must send
-    it back in `X-Draft-Token`.
+    Unauthenticated, deliberately - see the module docstring in drafts.py for
+    why the per-device token that used to gate this was removed. The practical
+    consequence to remember when reading this: the last writer wins, and
+    anyone can be the last writer.
     """
-    # Validate BEFORE claiming. The claim is trust-on-first-use, so authorising
-    # first would let one junk payload take ownership of an id nobody had saved
-    # yet - locking out the real manager, who would then have neither the token
-    # nor a way to release it. A malformed body is a 400 whoever sends it.
+    # Structure is checked before anything is written. It is now the only check
+    # between an arbitrary POST body and a stored row.
     try:
         drafts.validate_picks(payload.get("picks") or [])
     except drafts.DraftError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    try:
-        token = drafts.authorise_write(fpl_id, x_draft_token)
-    except drafts.DraftForbidden as e:
-        raise HTTPException(status_code=403, detail=str(e))
     try:
         result = drafts.save_draft(
             fpl_id, payload.get("picks") or [],
@@ -1807,21 +1927,17 @@ def save_draft(fpl_id: int, payload: dict = Body(...),
         db.record_known_manager(fpl_id)
     except Exception:
         pass
-    return {**result, "draft_token": token}
+    return result
 
 
 @app.delete("/api/draft/{fpl_id}")
-def clear_draft(fpl_id: int, x_draft_token: str = Header(default="")):
-    """Delete the draft and release the id, so it can be claimed again.
+def clear_draft(fpl_id: int):
+    """Delete the draft for this id.
 
-    Gated like the save above, and for a stronger reason: this is the one call
-    that destroys data, and it is the documented way out of a lockout, so
-    letting anyone make it would defeat both halves of the design.
-    """
-    try:
-        drafts.authorise_write(fpl_id, x_draft_token)
-    except drafts.DraftForbidden as e:
-        raise HTTPException(status_code=403, detail=str(e))
+    Ungated like the save above. Worth being clear-eyed that this is the call
+    that destroys data rather than replacing it - but gating only this one
+    would have meant the delete token stranded on a single device, which is the
+    problem the whole change set out to remove."""
     return drafts.delete_draft(fpl_id)
 
 
@@ -2247,6 +2363,91 @@ if KOFI_TOKEN:
         # the privacy policy makes.
         sent = ops.notify("kofi", social.channel_kofi(payload))
         return {"ok": True, "notified": bool(sent)}
+
+
+# A question is one short paragraph. Long enough for a real one with a player
+# name and a bit of context; short enough that it cannot be used to push a wall
+# of text at whoever reads the channel. Well under ops.DISCORD_LIMIT, which
+# leaves room for the prefix rather than relying on that truncation.
+QUESTION_MAX_CHARS = 600
+
+# In-process, per-IP, and deliberately not a database table. The whole promise
+# of this endpoint is that asking a question stores nothing about you, and a
+# rate limiter that persisted addresses would quietly break that promise in
+# order to protect it. Lost on restart, which is fine: it exists to stop a
+# bored person holding down a button, not a determined flood - that is
+# Cloudflare's job and it is already in front of this.
+_QUESTION_HITS = {}
+QUESTION_WINDOW_S = 600
+QUESTION_MAX_PER_WINDOW = 5
+
+
+def _question_allowed(key):
+    """True if this caller may send another. Prunes as it goes, so the dict
+    cannot grow without bound on a site with no other per-IP state."""
+    now = datetime.now(timezone.utc).timestamp()
+    cutoff = now - QUESTION_WINDOW_S
+    for k, stamps in list(_QUESTION_HITS.items()):
+        fresh = [t for t in stamps if t > cutoff]
+        if fresh:
+            _QUESTION_HITS[k] = fresh
+        else:
+            del _QUESTION_HITS[k]
+    recent = _QUESTION_HITS.get(key, [])
+    if len(recent) >= QUESTION_MAX_PER_WINDOW:
+        return False
+    _QUESTION_HITS[key] = recent + [now]
+    return True
+
+
+@app.post("/api/question")
+async def ask_question(request: Request, payload: dict = Body(...)):
+    """Relay a question from the FAQ page to whoever reads the questions channel.
+
+    Stores NOTHING. No database row, no address, no log line - the webhook post
+    is the entire lifetime of the message. That is the deal the form on /faq
+    makes with the reader in as many words, and it is the reason there is no
+    reply-to field: collecting one would be collecting an email address, which
+    is exactly what this was asked not to do.
+
+    The consequence, stated on the form too: nobody can be answered directly. A
+    question that turns out to be common becomes an FAQ entry, which is where
+    the answer reaches the person who asked and everyone after them.
+    """
+    question = payload.get("question")
+    if not isinstance(question, str):
+        raise HTTPException(status_code=400, detail="Ask a question first.")
+
+    # Control characters stripped rather than escaped. The receiving end is a
+    # chat client rendering Markdown, and a newline-stuffed message can push
+    # everything before it off the screen. Ordinary newlines survive as spaces.
+    question = "".join(ch if ch.isprintable() else " " for ch in question).strip()
+    if not question:
+        raise HTTPException(status_code=400, detail="Ask a question first.")
+    if len(question) > QUESTION_MAX_CHARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Please keep it under {QUESTION_MAX_CHARS} characters.")
+
+    # CF-Connecting-IP is the real client behind the tunnel; request.client is
+    # Cloudflare. Falls back so a local run is still rate limited rather than
+    # silently unlimited.
+    caller = (request.headers.get("cf-connecting-ip")
+              or (request.client.host if request.client else "unknown"))
+    if not _question_allowed(caller):
+        raise HTTPException(
+            status_code=429,
+            detail="That's a few questions in a short time - try again shortly.")
+
+    sent = ops.notify("questions", question, prefix="FAQ question")
+    # `sent` False means no webhook is configured, which the reader cannot fix
+    # and should not be told about in those terms. Reporting success would be a
+    # lie, though - the question went nowhere - so this is honest and vague.
+    if not sent:
+        raise HTTPException(
+            status_code=503,
+            detail="Couldn't send that just now. The contact page has an address.")
+    return {"ok": True}
 
 
 @app.post("/api/refresh")

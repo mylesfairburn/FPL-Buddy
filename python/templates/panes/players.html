@@ -3,6 +3,7 @@
             <ul class="nav nav-pills mb-3" id="playersViewTabs">
                 <li class="nav-item"><button class="nav-link active" data-view="all">All players</button></li>
                 <li class="nav-item"><button class="nav-link" data-view="underperforming">Underperforming</button></li>
+                <li class="nav-item"><button class="nav-link" data-view="overperforming">Overperforming</button></li>
             </ul>
             {# Not empty any more. The ratings table is rendered here on the
                server and replaced in place by the interactive one once app.js
@@ -22,6 +23,28 @@
                             <th>Pred</th><th>Real</th><th>Diff</th><th>£m</th><th>Next 3</th>
                         </tr></thead>
                         <tbody id="underperfBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            {# The same table the other way up. The blurb deliberately does NOT
+               read as "sell these": returns ahead of the underlying play is as
+               often a finisher on a hot run as it is a warning, and promising a
+               correction in both directions would make the pair of tabs a
+               horoscope. See get_performance_gap_players. #}
+            <div id="overperformingView" class="d-none">
+                <p class="text-muted small mb-2">The reverse: returns running ahead of the underlying numbers, goals above xG for
+                    attackers, goals conceded below xGC for keepers/defenders. A run that may not hold, not a signal it won't.</p>
+                <ul class="nav nav-pills mb-2" id="overperfPosTabs">
+                    <li class="nav-item"><button class="nav-link active" data-group="attackers">Attackers</button></li>
+                    <li class="nav-item"><button class="nav-link" data-group="defenders">Defenders</button></li>
+                </ul>
+                <div class="ps-list">
+                    <table class="table table-sm underperf-table mb-0">
+                        <thead><tr>
+                            <th>Player</th><th>Pos</th><th>Team</th><th>Metric</th>
+                            <th>Pred</th><th>Real</th><th>Diff</th><th>£m</th><th>Next 3</th>
+                        </tr></thead>
+                        <tbody id="overperfBody"></tbody>
                     </table>
                 </div>
             </div>

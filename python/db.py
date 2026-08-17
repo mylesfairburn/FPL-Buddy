@@ -157,29 +157,20 @@ CREATE TABLE IF NOT EXISTS manager_draft_picks (
 );
 CREATE INDEX IF NOT EXISTS idx_draft_picks ON manager_draft_picks (draft_id);
 
--- Binds writes on an FPL id to the device that first saved one.
+-- DEAD as of the removal of the per-device draft lock. Nothing reads or writes
+-- this table any more; drafts.py no longer imports hashlib at all.
 --
--- The id itself cannot do this job: it is a public integer printed in the URL
--- of every manager's Points page, so anyone able to guess one could overwrite
--- or delete the squad stored against it. Reads are left open - that is the
--- low-harm direction and the whole no-account design rests on it - but a
--- destructive write now has to present a secret the reader never sees.
+-- It used to bind writes on an FPL id to the browser that first saved one, so
+-- that a guessable public integer could not overwrite a stranger's squad. What
+-- that cost was the feature the drafts table exists for: the token lived in one
+-- browser's localStorage and could not travel, so a manager who saved on a
+-- phone could not save from a laptop. See the drafts.py docstring.
 --
--- Trust on first use, deliberately: an id with no row here is claimed by the
--- next writer. Anything else would lock out every manager who saved a draft
--- before this table existed, and there is no account to recover through.
--- That leaves a real gap (an attacker who writes first claims the id), which
--- is the price of not having accounts; it is strictly better than the
--- everyone-can-write it replaces.
---
--- Kept in its own table rather than a column on manager_draft because
--- save_draft() replaces that row wholesale on every save, and the deadline
--- watcher replaces it again with the official picks - a token stored there
--- would be destroyed by the first write it was meant to authorise.
---
--- The token is stored as a SHA-256 hex digest, never in the clear: this file
--- is a plain SQLite database on a mounted volume, and a copy of it should not
--- hand over write access to every squad in it.
+-- Kept as a CREATE rather than dropped, and kept deliberately: existing
+-- deployments have rows in here, and a DROP in a schema file runs on every
+-- boot against every volume, which is a destructive migration disguised as a
+-- definition. It costs three unused columns. Remove it in a migration that
+-- runs once, if it is ever worth the errand.
 CREATE TABLE IF NOT EXISTS draft_claim (
     fpl_id      INTEGER PRIMARY KEY,
     token_hash  TEXT NOT NULL,

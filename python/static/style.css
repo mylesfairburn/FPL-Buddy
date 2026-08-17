@@ -1483,6 +1483,57 @@ body {
 }
 .content-page .faq-item p.faq-a { margin: 0; color: #333; }
 
+/* ---- Injury news page ---------------------------------------------------
+   Flag colours run worst-to-mildest, and they are the only colour on the page:
+   the status word is what a reader scans for, so nothing else competes with
+   it. Text stays dark on tinted backgrounds rather than white-on-colour, which
+   fails contrast at this size. */
+.injury-count { margin: 18px 0 10px; color: #555; }
+.injury-table td { vertical-align: middle; }
+.injury-name a { font-weight: 600; }
+.injury-news { color: #444; font-size: 0.9rem; }
+.injury-flag {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 0.78rem; font-weight: 600; white-space: nowrap;
+}
+.injury-flag-i { background: #ffe3e3; color: #a02020; }   /* injured */
+.injury-flag-s { background: #ffe9d6; color: #9a5410; }   /* suspended */
+.injury-flag-u { background: #ececec; color: #4a4a4a; }   /* unavailable */
+.injury-flag-n { background: #ececec; color: #4a4a4a; }   /* not in squad */
+.injury-flag-d { background: #fff6cc; color: #8a6d0b; }   /* doubtful */
+.injury-flag-a { background: #fff6cc; color: #8a6d0b; }   /* sub-100% with no status letter */
+.injury-prose-heading { margin-top: 28px; }
+.injury-prose p { margin: 0 0 8px; color: #333; }
+.injury-none {
+    border-left: 3px solid var(--accent);
+    background: #fafcfc; border-radius: 0 8px 8px 0;
+    padding: 14px 16px; margin: 20px 0;
+}
+.injury-none h2 { font-size: 1.05rem; margin: 0 0 6px; }
+.injury-none p { margin: 0; }
+/* The news panel's link through to the full page. */
+.news-more { margin-top: 8px; font-size: 0.85rem; }
+
+/* Ask-a-question box at the foot of the FAQ. Same left-rule card as an answer
+   above it, because it belongs to the same list - it is where the next entry
+   comes from. */
+.ask-form {
+    border-left: 3px solid var(--accent);
+    background: #fafcfc;
+    border-radius: 0 8px 8px 0;
+    padding: 14px 16px;
+    margin: 14px 0 8px;
+}
+.ask-form .form-label { font-weight: 600; font-size: 0.92rem; margin-bottom: 6px; }
+.ask-form textarea { resize: vertical; font-size: 0.95rem; }
+.ask-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-top: 10px;
+}
+/* Reserves its line whether or not there is a message, so sending doesn't
+   shunt the footer up the page under the reader's cursor. */
+.ask-status { min-height: 1.2em; margin: 0; }
+
 /* Landing page ID entry. Reuses .id-prompt so it's the same card the app
    shows, just given more room to breathe as the first thing on the page. */
 .home-id-prompt { margin: 22px auto 34px; background: #fbfdfd; }

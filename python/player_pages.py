@@ -421,3 +421,64 @@ def a_to_z(pages):
         letter = slugify(_short(rec))[:1].upper() or "#"
         groups.setdefault(letter, []).append(rec)
     return [{"letter": k, "players": v} for k, v in sorted(groups.items())]
+
+
+# How bad each FPL status flag is, worst first. Drives the order of the injury
+# list, because "is he playing" is asked about the players least likely to be.
+#
+# 'd' (a doubt) sits last deliberately: it is the only flag that can still turn
+# into a start, so it is the one worth reading after the settled bad news.
+_STATUS_RANK = {"i": 0, "s": 1, "u": 2, "n": 3, "d": 4}
+
+_STATUS_LABEL = {
+    "i": "Injured", "s": "Suspended", "u": "Unavailable",
+    "n": "Not in squad", "d": "Doubtful",
+}
+
+
+def injury_list(pages):
+    """Every flagged player, worst news first, then by ownership.
+
+    Ownership second because this page answers a question people ask about
+    players they own or are considering: a 40%-owned forward who is a doubt
+    matters to far more readers than a 0.1%-owned one who is out for the
+    season, and sorting purely by severity would bury him.
+
+    Who counts as flagged is the part worth getting right, and the obvious
+    rule is wrong. "status is not 'a', OR a percentage exists" pulls in every
+    player FPL has explicitly stamped 100% - Endo, Carvalho, Wataru Endo at
+    full fitness - and files them on an injury page under a label implying
+    something is wrong. FPL publishes that 100% to say "this one is FINE",
+    which is the opposite of what this page is for.
+
+    So: flagged status always counts, and an otherwise-available player counts
+    only when the published percentage is BELOW 100. That keeps the case worth
+    keeping - FPL sometimes carries a 75% against a player it has not given a
+    status letter - and drops the confirmations of fitness.
+    """
+    rows = []
+    for rec in pages.values():
+        status = (rec.get("status") or "a").lower()
+        chance = rec.get("chance_of_playing_next_round")
+        # NaN never equals itself. Left in, min(100, nan) returns 100 later and
+        # the page invents a certainty FPL never published - the same trap
+        # availability_sentence documents.
+        if chance is not None and chance != chance:
+            chance = None
+        if status == "a" and (chance is None or chance >= 100):
+            continue
+        owned = (rec.get("stats") or {}).get("selected_by_percent") or 0
+        rows.append({
+            **rec,
+            # A player who reaches here on a sub-100 percentage alone has no
+            # status letter to label him with. "Doubtful" is what that is, and
+            # it is what FPL's own site calls it - "Flagged" named the
+            # mechanism rather than the situation.
+            "status_label": _STATUS_LABEL.get(status, "Doubtful"),
+            "chance": None if chance is None else int(max(0, min(100, chance))),
+            "owned": round(float(owned), 1),
+            "sentence": availability_sentence(rec),
+        })
+    rows.sort(key=lambda r: (_STATUS_RANK.get((r.get("status") or "a").lower(), 9),
+                             -r["owned"]))
+    return rows

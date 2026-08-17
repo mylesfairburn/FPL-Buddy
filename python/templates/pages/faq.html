@@ -47,9 +47,87 @@
 
 <h2>Still stuck?</h2>
 <p>
-    The <a href="/about">about page</a> goes into how the model is trained and
-    what it deliberately leaves out. For anything else — a bug, a player whose
-    numbers look wrong, or a disagreement about the model — the
-    <a href="/contact">contact page</a> has the address.
+    Ask here. Nothing is stored — not an email, not an address, not a name —
+    so <strong>this cannot be replied to directly</strong>. What happens
+    instead is that questions worth answering end up on this page, where the
+    answer reaches you and everyone who asks it next.
 </p>
+<p>
+    If you want an actual reply — a bug, a player whose numbers look wrong, or
+    a disagreement about the model — the <a href="/contact">contact page</a>
+    has the address. The <a href="/about">about page</a> goes into how the
+    model is trained and what it deliberately leaves out.
+</p>
+
+<form id="askForm" class="ask-form" novalidate>
+    <label class="form-label" for="askBox">Your question</label>
+    <textarea id="askBox" class="form-control" rows="3" maxlength="600"
+              placeholder="e.g. why is a player I own rated lower than one with fewer points?"></textarea>
+    <div class="ask-row">
+        <button type="submit" id="askSend" class="btn btn-primary btn-sm">Send</button>
+        <span id="askCount" class="text-muted small">600 left</span>
+    </div>
+    <p id="askStatus" class="ask-status small mt-2" role="status" aria-live="polite"></p>
+</form>
+{% endblock %}
+
+{% block scripts %}
+{# Inline and nonced rather than living in app.js: this is the only page that
+   has a form on it, and app.js is loaded by every page including the four tool
+   tabs. `nonce` is required - script-src carries no 'unsafe-inline'. #}
+<script nonce="{{ csp_nonce }}">
+(function () {
+    var form = document.getElementById('askForm');
+    if (!form) return;
+    var box = document.getElementById('askBox');
+    var send = document.getElementById('askSend');
+    var status = document.getElementById('askStatus');
+    var count = document.getElementById('askCount');
+    var LIMIT = 600;
+
+    function setCount() {
+        var left = LIMIT - box.value.length;
+        count.textContent = left + ' left';
+        count.classList.toggle('text-danger', left <= 0);
+    }
+    box.addEventListener('input', setCount);
+    setCount();
+
+    form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var question = box.value.trim();
+        if (!question) { status.textContent = 'Type a question first.'; return; }
+
+        send.disabled = true;
+        var label = send.textContent;
+        send.textContent = 'Sending…';
+        status.className = 'ask-status small mt-2';
+        status.textContent = '';
+
+        fetch('/api/question', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: question })
+        })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, d: d }; }); })
+        .then(function (res) {
+            if (!res.ok) throw new Error(res.d.detail || 'That didn’t send.');
+            // Clearing the box is the only receipt there is — nothing was
+            // stored, so there is no thread to point at.
+            box.value = '';
+            setCount();
+            status.className = 'ask-status small mt-2 text-success';
+            status.textContent = 'Sent — thank you. It gets read, though it can’t be replied to.';
+        })
+        .catch(function (err) {
+            status.className = 'ask-status small mt-2 text-danger';
+            status.textContent = err.message;
+        })
+        .finally(function () {
+            send.disabled = false;
+            send.textContent = label;
+        });
+    });
+})();
+</script>
 {% endblock %}

@@ -1,0 +1,100 @@
+{% extends 'pages/_layout.html' %}
+
+{% block content %}
+<h1 class="page-title">FPL injury news</h1>
+<p class="page-lede">
+    Every Fantasy Premier League player currently flagged as injured, suspended,
+    doubtful or otherwise unavailable — with what Fantasy Premier League itself
+    says about each one, and the chance of playing where it publishes a number.
+</p>
+<p class="text-muted small">
+    Straight from Fantasy Premier League's own player data, refreshed with the
+    rest of the site{% if updated %} (last {{ updated }}){% endif %}. That means
+    it says what the game says: no return dates are guessed at here, and a
+    player with no percentage against him is one FPL hasn't given one for.
+</p>
+
+{% if not rows %}
+{# A real answer rather than an error state. Preseason and quiet weeks both
+   land here, and "nothing is loading" and "nobody is injured" should not look
+   the same to a reader. #}
+<div class="injury-none">
+    <h2>Nobody is flagged right now</h2>
+    <p>
+        Fantasy Premier League isn't carrying an injury, suspension or doubt
+        against any player at the moment. That is normal in preseason and after
+        an international break has cleared. Check the
+        <a href="/gameweek">gameweek page</a> for what else is worth knowing
+        before the deadline.
+    </p>
+</div>
+{% else %}
+
+<p class="injury-count">
+    <strong>{{ rows|length }}</strong> flagged {{ 'player' if rows|length == 1 else 'players' }},
+    worst news first, then by ownership.
+</p>
+
+<div class="ps-list">
+    <table class="table table-sm injury-table mb-0">
+        <thead><tr>
+            <th>Player</th><th>Pos</th><th>Team</th><th>Status</th>
+            <th>Chance</th><th>Own&nbsp;%</th><th>&pound;m</th><th>What FPL says</th>
+        </tr></thead>
+        <tbody>
+{% for p in rows %}
+            <tr>
+                {# Linked to the player's own page. This is the second inbound
+                   internal link those pages have ever had - the A-Z was the
+                   only one - and unlike the A-Z this list is short, changes
+                   often, and points at exactly the players being searched for
+                   this week. #}
+                <td class="injury-name"><a href="{{ p.path }}">{{ p.web_name }}</a></td>
+                <td>{{ p.pos }}</td>
+                <td>{{ p.team_short or p.team_name }}</td>
+                <td><span class="injury-flag injury-flag-{{ p.status }}">{{ p.status_label }}</span></td>
+                {# An em dash, not 0%. A missing percentage means FPL published
+                   none; printing a zero would state a certainty it never gave
+                   and would rank a doubt alongside a season-ending injury. #}
+                <td>{% if p.chance is not none %}{{ p.chance }}%{% else %}&mdash;{% endif %}</td>
+                <td>{{ p.owned }}</td>
+                <td>{% if p.cost %}{{ p.cost }}{% else %}&mdash;{% endif %}</td>
+                <td class="injury-news">{% if p.news %}{{ p.news }}{% else %}<span class="text-muted">No detail given.</span>{% endif %}</td>
+            </tr>
+{% endfor %}
+        </tbody>
+    </table>
+</div>
+
+{# The same list again as sentences. Two renderings of one dataset, which is
+   normally a smell - here it is the point. The table is for a reader scanning
+   for a name; this is what a search engine or a language model quotes when
+   somebody asks "is <player> playing this week", and a table cell reading
+   "75%" answers that question only if you can also see the column heading.
+   Both are generated from `rows`, so they cannot drift. #}
+<h2 class="injury-prose-heading">In words</h2>
+<div class="injury-prose">
+{% for p in rows %}
+    <p><a href="{{ p.path }}">{{ p.web_name }}</a> ({{ p.team_short or p.team_name }},
+        {{ p.pos }}) &mdash; {{ p.sentence }}</p>
+{% endfor %}
+</div>
+{% endif %}
+
+<h2>How to read this</h2>
+<p>
+    A percentage is Fantasy Premier League's own chance-of-playing figure for
+    the next gameweek, and it only appears when the game publishes one. A
+    flagged player with no percentage is flagged without a number attached —
+    usually a fresh injury, occasionally a suspension where the return date is
+    already known.
+</p>
+<p>
+    Predicted points across the site already account for this: a player unlikely
+    to start is projected accordingly, so a flagged player's numbers on
+    <a href="/players">the ratings table</a> are not the numbers he would carry
+    if fit. The <a href="/my-team">my team page</a> flags anyone in your own
+    squad, and the <a href="/faq">FAQ</a> covers what the projections do and
+    don't try to predict.
+</p>
+{% endblock %}

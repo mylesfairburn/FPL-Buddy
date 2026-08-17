@@ -141,6 +141,12 @@
                                     <button id="newsRefresh" class="news-refresh" title="Refresh news">&#8635;</button>
                                 </div>
                                 <div id="newsList" class="news-list"></div>
+                                {# Server-rendered, so it is in the raw HTML.
+                                   This panel is built by JavaScript and has
+                                   always been invisible to crawlers; the link
+                                   is what connects the page that ISN'T to the
+                                   rest of the site. #}
+                                <p class="news-more"><a href="/injuries">All injury news &rarr;</a></p>
                             </div>
                         </div>
                     </div>

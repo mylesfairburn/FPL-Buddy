@@ -477,22 +477,30 @@ def test_privacy_surface():
               lambda hits: hits != "none found", severity="medium",
               note="UK GDPR: the site stores an FPL id and a squad against it")
 
-    # Draft READS are unauthenticated by design; state that as a finding rather
-    # than a failure, so it stays visible. Writes are no longer part of this
-    # finding - they are token-gated, and suite_api covers the refusals.
+    # Drafts are unauthenticated in BOTH directions now. Stated as a finding
+    # rather than a failure so it stays visible in every report: this is an
+    # accepted trade, not an oversight, and it should be re-read as one every
+    # time somebody scans this file.
     import drafts
-    drafts.delete_draft(999999995)        # release any claim from a previous run
+    drafts.delete_draft(999999995)
     picks = [{"element_id": 100 + i, "position": i + 1} for i in range(15)]
-    token = (c.post("/api/draft/999999995", json={"picks": picks}).json()
-             or {}).get("draft_token", "")
+    c.post("/api/draft/999999995", json={"picks": picks})
     r = c.get("/api/draft/999999995")
     check("any caller can read any id's draft", "GET /api/draft/<someone else's id>",
           "documented as unauthenticated", r.json().get("available"),
           lambda v: v is not True, severity="medium",
-          note="deliberate and read-only - FPL id is the whole identity, so a "
-               "guessable integer still EXPOSES a stored squad. It can no "
-               "longer overwrite or delete one: that needs the write token")
-    c.delete("/api/draft/999999995", headers={"X-Draft-Token": token})
+          note="deliberate - the FPL id is the whole identity, so a guessable "
+               "integer exposes a stored squad")
+    r = c.post("/api/draft/999999995", json={"picks": picks, "gameweek": 9})
+    check("any caller can overwrite any id's draft", "POST /api/draft/<someone else's id>",
+          "documented as unauthenticated", r.status_code,
+          lambda v: v != 200, severity="medium",
+          note="ACCEPTED TRADE, not an oversight. The per-device write token "
+               "that prevented this could not travel between devices, which "
+               "broke saving from a second browser. A draft is a preview that "
+               "the deadline watcher overwrites with official picks anyway, so "
+               "the loss is one re-pick. See the drafts.py docstring")
+    c.delete("/api/draft/999999995")
 
 
 def test_http_methods():

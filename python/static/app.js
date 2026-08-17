@@ -244,17 +244,10 @@ function wireClear(input, btn, cb) {
 //  MY TEAM
 // =====================================================================
 const FPL_ID_KEY = 'fpl_team_id';
-// Write token for this FPL id's saved squad. The id is public, so the server
-// binds saves and deletes to whoever claimed it first and hands back a secret
-// on that first save; this is the only place it is kept. Reads never need it,
-// so the squad still loads on any device — it is editing that is bound to
-// this one. Per-id, because "Change ID" should not carry one id's token to
-// another.
-const DRAFT_TOKEN_KEY = id => `fpl_draft_token_${id}`;
-function getDraftToken(id) { return localStorage.getItem(DRAFT_TOKEN_KEY(id)) || ''; }
-function setDraftToken(id, token) {
-    if (token) localStorage.setItem(DRAFT_TOKEN_KEY(id), token);
-}
+// There is no write token any more. Saves used to carry a per-id secret from
+// localStorage, which meant the squad loaded anywhere but could only be EDITED
+// on the browser that first saved it — the exact opposite of the point of
+// keeping drafts on the server. See the drafts.py docstring for the trade.
 const idPrompt = document.getElementById('idPrompt');
 const idInput = document.getElementById('idInput');
 const idSave = document.getElementById('idSave');
@@ -512,8 +505,16 @@ function renderStatChips(gw) {
         return;
     }
     const tc = gw.transfers_cost ? ` (-${gw.transfers_cost})` : '';
+    // Total first, then this round's. Both are needed and they answer different
+    // questions, so showing only one was the bug: the header total is the
+    // season-to-date figure and never moved as you stepped back through the
+    // weeks, while GW points did \u2014 two numbers side by side that disagreed
+    // about which gameweek you were looking at. gw.total_points is the
+    // cumulative figure AS AT the round on screen, so the pair now agree.
+    // Falls back to the header total when FPL has not scored this round yet.
     el.innerHTML =
-          chip('GW points', gw.points ?? '\u2013')
+          chip('Total pts', gw.total_points ?? h.total_points ?? '\u2013')
+        + chip('GW points', gw.points ?? '\u2013')
         + chip('Predicted', gw.predicted_points ?? '\u2013', true)
         + bankChip(gw.bank)
         + freeTransfersChip(gw)
@@ -1172,10 +1173,7 @@ document.getElementById('saveTeamBtn').addEventListener('click', () => {
 
     fetch(`/api/draft/${id}`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-Draft-Token': getDraftToken(id),
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             bank: teamView.gw ? teamView.gw.bank : null,
             picks: snap.map(p => ({
@@ -1188,10 +1186,6 @@ document.getElementById('saveTeamBtn').addEventListener('click', () => {
     .then(r => r.json().then(d => ({ ok: r.ok, d })))
     .then(({ ok, d }) => {
         if (!ok) throw new Error(d.detail || 'save failed');
-        // First save on this id mints the token; every later one echoes back
-        // the same value, so storing it unconditionally is a no-op after the
-        // first and means a cleared token re-binds on the next successful save.
-        setDraftToken(id, d.draft_token);
         savedDraft = null;   // force a re-read next time the team loads
         // The saved state becomes the new "actual" that Reset reverts to.
         teamView.squad = snap.map(p => ({ ...p }));
@@ -1495,14 +1489,36 @@ document.addEventListener('visibilitychange', () => {
     if (gameweekIsLocked()) loadLiveScores(selectedEvent);
 });
 
-// ---- Underperforming players (actual returns vs xG/xGC) ----
-let underperfLoaded = false;
-let underperfData = [];
-let underperfGroup = 'attackers';   // 'attackers' (MID/FWD, goals vs xG) or 'defenders' (GK/DEF, conceded vs xGC)
-function renderUnderperfRows() {
-    const body = document.getElementById('underperfBody');
-    const rows = underperfData.filter(p =>
-        underperfGroup === 'attackers' ? (p.pos === 'MID' || p.pos === 'FWD') : (p.pos === 'DEF' || p.pos === 'GK'));
+// ---- Under/overperforming players (actual returns vs xG/xGC) ----
+//
+// One code path for both tables. They differ only in which endpoint they read
+// and which empty-state sentence they print — the rows, the attacker/defender
+// split and the sorting are identical, and the server has already signed `diff`
+// so that bigger always means "more of whatever this table is about".
+const PERF_VIEWS = {
+    underperforming: {
+        api: '/api/underperforming', body: 'underperfBody',
+        tabs: 'underperfPosTabs', view: 'underperformingView',
+        empty: 'No underperforming players found.',
+    },
+    overperforming: {
+        api: '/api/overperforming', body: 'overperfBody',
+        tabs: 'overperfPosTabs', view: 'overperformingView',
+        empty: 'No overperforming players found.',
+    },
+};
+// 'attackers' (MID/FWD, goals vs xG) or 'defenders' (GK/DEF, conceded vs xGC).
+// Per view, not shared: switching tabs should not silently move the other
+// table's position filter under the user.
+const perfState = {
+    underperforming: { loaded: false, data: [], group: 'attackers' },
+    overperforming: { loaded: false, data: [], group: 'attackers' },
+};
+function renderPerfRows(key) {
+    const cfg = PERF_VIEWS[key], st = perfState[key];
+    const body = document.getElementById(cfg.body);
+    const rows = st.data.filter(p =>
+        st.group === 'attackers' ? (p.pos === 'MID' || p.pos === 'FWD') : (p.pos === 'DEF' || p.pos === 'GK'));
     body.innerHTML = rows.length ? rows.map(p => `
         <tr class="ps-row">
             <td class="ps-name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${p.web_name}</span></td>
@@ -1515,38 +1531,49 @@ function renderUnderperfRows() {
             <td>£${p.cost != null ? p.cost.toFixed(1) : '–'}</td>
             <td><div class="player-gws">${miniFixtures(p)}</div></td>
         </tr>`).join('')
-        : '<tr><td colspan="9" class="text-muted small p-2">No underperforming players found.</td></tr>';
+        : `<tr><td colspan="9" class="text-muted small p-2">${cfg.empty}</td></tr>`;
 }
-function loadUnderperforming() {
-    if (underperfLoaded) { renderUnderperfRows(); return; }
-    underperfLoaded = true;
-    fetch('/api/underperforming')
+function loadPerfView(key) {
+    const cfg = PERF_VIEWS[key], st = perfState[key];
+    if (st.loaded) { renderPerfRows(key); return; }
+    st.loaded = true;
+    fetch(cfg.api)
         .then(res => res.json())
         .then(data => {
-            underperfData = data.results || [];
-            renderUnderperfRows();
+            st.data = data.results || [];
+            renderPerfRows(key);
         })
         .catch(() => {
-            document.getElementById('underperfBody').innerHTML =
+            // Reset so the next click retries rather than showing the error for
+            // the rest of the session.
+            st.loaded = false;
+            document.getElementById(cfg.body).innerHTML =
                 '<tr><td colspan="9" class="text-muted small p-2">Couldn’t load this table.</td></tr>';
         });
 }
-document.querySelectorAll('#underperfPosTabs .nav-link').forEach(btn => {
-    btn.addEventListener('click', () => {
-        document.querySelectorAll('#underperfPosTabs .nav-link').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        underperfGroup = btn.dataset.group;
-        renderUnderperfRows();
+Object.entries(PERF_VIEWS).forEach(([key, cfg]) => {
+    document.querySelectorAll(`#${cfg.tabs} .nav-link`).forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll(`#${cfg.tabs} .nav-link`).forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            perfState[key].group = btn.dataset.group;
+            renderPerfRows(key);
+        });
     });
 });
 document.querySelectorAll('#playersViewTabs .nav-link').forEach(btn => {
     btn.addEventListener('click', () => {
         document.querySelectorAll('#playersViewTabs .nav-link').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        const under = btn.dataset.view === 'underperforming';
-        document.getElementById('playersTabSearch').classList.toggle('d-none', under);
-        document.getElementById('underperformingView').classList.toggle('d-none', !under);
-        if (under) loadUnderperforming();
+        const chosen = btn.dataset.view;            // 'all' | 'underperforming' | 'overperforming'
+        // Every view is hidden and then exactly one shown, rather than toggled
+        // against a single boolean. With three views a toggle would have left
+        // two of them visible at once on the first switch between them.
+        Object.entries(PERF_VIEWS).forEach(([key, cfg]) => {
+            document.getElementById(cfg.view).classList.toggle('d-none', key !== chosen);
+        });
+        document.getElementById('playersTabSearch').classList.toggle('d-none', chosen !== 'all');
+        if (PERF_VIEWS[chosen]) loadPerfView(chosen);
     });
 });
 

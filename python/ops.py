@@ -302,6 +302,15 @@ CHANNELS = {
     # a delivery is really from them, and FPL_KOFI_HANDLE is the public name in
     # the site's donate button. Three Ko-fi variables doing three jobs.
     "kofi": "FPL_KOFI_WEBHOOK",
+    # Questions typed into the box on /faq. This channel IS the storage: the
+    # endpoint writes nothing to the database and records no address, so a
+    # message that fails to send is a question nobody ever sees. Point it
+    # somewhere you read.
+    #
+    # Like the Ko-fi relay, the text here is written by a stranger, which is
+    # why _payload_for disables mentions for every Discord post rather than
+    # per call site.
+    "questions": "FPL_QUESTIONS_WEBHOOK",
 }
 
 # Discord rejects a message over 2000 characters outright. The payload builder

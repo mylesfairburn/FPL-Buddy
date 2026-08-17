@@ -175,6 +175,27 @@ def _estimate_free_transfers(history):
     return max(1, min(5, ft + 1))
 
 
+def _total_points_at(history, event):
+    """Cumulative points AS AT `event`, not the season total.
+
+    `entry.summary_overall_points` - what the page header carries - is today's
+    running total and nothing else. Shown above a squad the user has navigated
+    back to, it states a number that was not true in that gameweek: step back to
+    GW3 and the total sat there is still the one from GW38.
+
+    FPL already publishes the honest figure per round in the history the caller
+    has fetched anyway, so this is a lookup rather than a sum - which matters,
+    because adding up `points` would quietly diverge from FPL's own total by the
+    transfer hits it already has deducted.
+
+    None when the round isn't in the history: a squad can be viewed before its
+    round has been scored, and no number is better than last week's."""
+    for row in (history or {}).get("current") or []:
+        if row.get("event") == event:
+            return row.get("total_points")
+    return None
+
+
 def _chips_state(history):
     used = []
     if history and history.get("chips"):
@@ -358,19 +379,32 @@ def _prev_season_stats_by_code():
     return _PREV_SEASON_UNDERPERF_STATS
 
 
-def get_underperforming_players(position_dfs, top_n=20, min_minutes=180, min_minutes_prev=900):
-    """Players whose underlying numbers say they should be doing better than
-    their actual returns show:
-      - Midfielders/forwards: goals scored well below expected goals (xG) -
+def get_performance_gap_players(position_dfs, direction="under", top_n=20,
+                                min_minutes=180, min_minutes_prev=900):
+    """Players whose actual returns and underlying numbers disagree.
+
+    `direction="under"` - doing worse than the underlying play deserves:
+      - Midfielders/forwards: goals scored below expected goals (xG) -
         finishing worse than the chances they're getting deserve.
-      - Goalkeepers/defenders: goals conceded well above expected goals
-        conceded (xGC) - the defence/keeper shipping more than the underlying
-        play suggests they should.
-    Both are FPL's own per-90 underlying-stat fields, straight from
-    bootstrap-static. Falls back to last season's full totals (keyed by the
-    season-stable 'code', not 'id') for anyone short of min_minutes so far
-    this season - otherwise the table is empty for the whole preseason and
-    the first few gameweeks.
+      - Goalkeepers/defenders: goals conceded above expected goals conceded
+        (xGC) - the defence/keeper shipping more than the play suggests.
+
+    `direction="over"` - the mirror image, and the reason this function took a
+    parameter rather than being copied: goals ABOVE xG, and goals conceded
+    BELOW xGC. Every other decision here applies unchanged to both, so the only
+    thing that actually flips is the sign of `diff`.
+
+    Read them differently, though, and the UI says so. An underperformer is a
+    player who may be due a correction upward. An overperformer is NOT the
+    same claim in reverse with a buy signal attached - it is a player whose
+    returns are ahead of the play underneath them, which is as often a finisher
+    on a hot run as it is a signal to sell. The honest framing is "this may not
+    hold", not "this will revert".
+
+    Both are FPL's own underlying-stat fields, straight from bootstrap-static.
+    Falls back to last season's full totals (keyed by the season-stable 'code',
+    not 'id') for anyone short of min_minutes so far this season - otherwise
+    the table is empty for the whole preseason and the first few gameweeks.
 
     top_n is applied PER group (attackers, defenders) rather than to a single
     combined-then-sorted list - otherwise one group's generally larger diffs
@@ -378,6 +412,7 @@ def get_underperforming_players(position_dfs, top_n=20, min_minutes=180, min_min
     gaps) could crowd the other group out of the top_n entirely."""
     if position_dfs is None:
         return {"results": []}
+    over = direction == "over"
     short = _team_short_map()
     prev_stats = _prev_season_stats_by_code()
     attacking_rows, defensive_rows = [], []
@@ -404,9 +439,15 @@ def get_underperforming_players(position_dfs, top_n=20, min_minutes=180, min_min
                 metric = "Conceded vs xGC"
             if expected is None or actual is None:
                 continue
+            # Signed so that a POSITIVE diff always means "more of the thing
+            # this table is about", whichever table it is. Under: goals missing
+            # against xG, or goals shipped above xGC. Over: the same two
+            # subtractions the other way round.
             diff = (expected - actual) if attacking else (actual - expected)
+            if over:
+                diff = -diff
             if diff <= 0:
-                continue  # performing at or above expectation on this metric
+                continue  # on the other side of expectation - the other table's row
             next_gws = r.get("next_gameweeks")
             rows.append({
                 "id": int(r["id"]), "web_name": r.get("web_name", ""),
@@ -424,7 +465,20 @@ def get_underperforming_players(position_dfs, top_n=20, min_minutes=180, min_min
             })
     attacking_rows.sort(key=lambda x: -x["diff"])
     defensive_rows.sort(key=lambda x: -x["diff"])
-    return {"results": attacking_rows[:top_n] + defensive_rows[:top_n]}
+    return {"results": attacking_rows[:top_n] + defensive_rows[:top_n],
+            "direction": "over" if over else "under"}
+
+
+def get_underperforming_players(position_dfs, **kwargs):
+    """Kept as its own name because it is what the rest of the app asks for,
+    and because "underperforming" is the word on the page."""
+    return get_performance_gap_players(position_dfs, direction="under", **kwargs)
+
+
+def get_overperforming_players(position_dfs, **kwargs):
+    """Returns ahead of the underlying play - see get_performance_gap_players
+    for why this is not simply a buy signal inverted."""
+    return get_performance_gap_players(position_dfs, direction="over", **kwargs)
 
 
 def get_player_summary(player_id, n=6):
@@ -517,6 +571,9 @@ def get_team_view(team_id, event, position_dfs):
         "gw": {
             "event": event,
             "points": eh.get("points"),
+            # Cumulative as at THIS round, so stepping back through the season
+            # shows what the total actually was then. See _total_points_at.
+            "total_points": _total_points_at(history, event),
             "predicted_points": round(predicted_gw, 1),
             "bank": bank,
             "value": round((eh.get("value") or 0) / 10, 1),
