@@ -19,6 +19,10 @@ import os
 import re
 
 import db
+# Chip display names live in chip_model - the planner, the team view and these
+# posts all have to call a chip the same thing, and three copies of the map is
+# how they stop doing that.
+from chip_model import CHIP_NAMES, chip_name
 
 # One X post. The real limit is 280; the margin is for the edit you make before
 # posting, so a word added by hand doesn't silently push it over.
@@ -1112,24 +1116,6 @@ def channel_deadline_reminder(kind, gameweek, deadline_label, hours_left,
             flagged = ", ".join(p["name"] for p in report["news"][:5])
             lines += ["", f"🚑 Carrying a flag: {flagged}"]
     return "\n".join(lines)
-
-
-# FPL's own chip codes, as the names a reader recognises. The codes are what
-# the API uses and what ai_manager works in; "Chip played: bboost" is a line
-# only somebody who has read this code can parse.
-CHIP_NAMES = {
-    "bboost": "Bench Boost",
-    "3xc": "Triple Captain",
-    "freehit": "Free Hit",
-    "wildcard": "Wildcard",
-}
-
-
-def chip_name(chip):
-    """A chip's display name, falling back to whatever FPL called it. A new
-    chip - they have added them before - reads as its code rather than
-    disappearing."""
-    return CHIP_NAMES.get(chip, chip)
 
 
 def channel_ai_squad(gameweek, manager=None, best_xi=None):

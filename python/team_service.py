@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 import pandas as pd
 import requests
 
+import chip_model
+import fixture_structure
 import seasons
 from fetch_data import get_bootstrap_data
 from squad_optimiser import SELECTABLE_STATUS, team_rating
@@ -30,11 +32,10 @@ POS_SHORT = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 MIN_OUTFIELD = {"DEF": 3, "MID": 2, "FWD": 1}
 MAX_OUTFIELD = {"DEF": 5, "MID": 5, "FWD": 3}
 
-# A single standard set of chips; "available" = this set minus what's been used.
-# Kept deliberately simple - the exact yearly allocation (e.g. two of each per
-# season split into halves) changes, so this is an approximation.
-ALL_CHIPS = {"wildcard": "Wildcard", "freehit": "Free Hit",
-             "bboost": "Bench Boost", "3xc": "Triple Captain"}
+# One standard set of chips per half of the season - FPL hands the whole set
+# back after GW19, so "used" is always a question about one half. Names come
+# from chip_model so there is a single definition of what a chip is called.
+ALL_CHIPS = dict(chip_model.CHIP_NAMES)
 
 
 def _get(url):
@@ -196,13 +197,105 @@ def _total_points_at(history, event):
     return None
 
 
-def _chips_state(history):
-    used = []
-    if history and history.get("chips"):
-        used = [c["name"] for c in history["chips"]]
+def _chips_state(history, event=None):
+    """Which chips this manager has spent, and which are still in hand.
+
+    Scoped to the half of the season `event` falls in. FPL returns the whole set
+    after GW19, so a wildcard played in GW6 is spent for the first half and back
+    in hand for the second; reading the history flat says the manager has no
+    wildcard for the rest of the year, which is wrong from GW20 onwards. Each
+    entry in history["chips"] carries the event it was played in, so the split
+    is available rather than assumed.
+    """
+    played = [(c.get("event"), c.get("name")) for c in
+              ((history or {}).get("chips") or []) if c.get("name")]
+    if event is None:
+        used = [name for _gw, name in played]
+    else:
+        start, end = fixture_structure.chip_half(event)
+        used = [name for gw, name in played
+                if gw is not None and start <= int(gw) <= end]
     available = [label for key, label in ALL_CHIPS.items() if key not in used]
     used_labels = [ALL_CHIPS.get(name, name) for name in used]
     return used_labels, available
+
+
+def _chip_advice(squad, event, chips_available, outlook=None):
+    """What each chip the manager still holds is worth to THIS squad, now.
+
+    The same measurements the AI Manager's planner uses, minus the solver. Free
+    Hit and Wildcard need an integer program each, and this runs on a page load
+    rather than once a week in a cron job - a My Team request is not the place
+    to spend two seconds in CBC. So those two are described by the things that
+    actually drive them (how much of the squad blanks, how much of it is
+    injured or contributing nothing) rather than by a rebuilt squad, and the
+    bot remains the only one that gets the full treatment.
+
+    Every figure is stated against what the same chip returned in the 2025-26
+    simulation, because a bench projecting 14 points means nothing on its own.
+    """
+    priors = chip_model.load_priors()
+    starters = [p for p in squad if p.get("starting")]
+    bench = [p for p in squad if not p.get("starting")]
+    captain = next((p for p in starters if p.get("is_captain")), None)
+    lineup = {"squad": squad}
+    context = fixture_structure.context((outlook or {}).get(event))
+    blanking = [p for p in squad if not any(
+        e.get("event") == event for e in (p.get("next_gameweeks") or []))]
+
+    codes = {label: code for code, label in ALL_CHIPS.items()}
+    available = {codes.get(label, label) for label in (chips_available or [])}
+
+    out = []
+    for chip in chip_model.CHIP_CODES:
+        if chip not in available:
+            continue
+        factors, detail = {}, ""
+        if chip == "bboost":
+            gain = chip_model.bench_boost_gain(lineup, event)
+            detail = f"Your bench projects {round(gain, 1)} pts"
+        elif chip == "3xc":
+            gain = chip_model.triple_captain_gain(lineup, event)
+            who = (captain or {}).get("web_name", "your captain")
+            detail = f"{who} projects {round(gain, 1)} extra pts on top of the double"
+        elif chip == "freehit":
+            gain = sum(p.get("predicted") or 0.0 for p in blanking)
+            detail = (f"{len(blanking)} of your 15 have no fixture this gameweek"
+                      if blanking else "Every one of your 15 has a fixture")
+        else:
+            factors = chip_model.wildcard_factors(squad, event)
+            gain = float(factors["injured"] + factors["deadweight"])
+            detail = (f"{factors['injured']} injured, {factors['deadweight']} "
+                      f"contributing nothing over the next 4 gameweeks")
+
+        entry = {
+            "chip": chip,
+            "name": chip_model.chip_name(chip),
+            "gain": round(float(gain), 1),
+            "context": context,
+            "detail": detail,
+            "factors": factors,
+        }
+        # Only Bench Boost and Triple Captain are measured here in the units
+        # the floors are in, so only they get a verdict against one. The other
+        # two are described rather than thresholded - and neither gets a "last
+        # season returned N" line, because their simulated figure is a
+        # squad-over-eight-gameweeks delta, not points on a Saturday. Printing
+        # it beside a bench total would invite exactly the wrong comparison.
+        if chip in ("bboost", "3xc"):
+            floor = chip_model.floor(chip, priors)
+            entry.update({
+                "floor": round(floor, 1),
+                "percentile": chip_model.percentile_of(chip, gain, priors),
+                "realised_median": chip_model.realised_median(chip, priors),
+                "verdict": "play" if gain >= floor else "hold",
+            })
+        else:
+            entry.update({"floor": None, "percentile": None,
+                          "realised_median": None,
+                          "verdict": "consider" if gain else "hold"})
+        out.append(entry)
+    return out
 
 
 def _optimise(squad):
@@ -536,7 +629,7 @@ def get_team_view(team_id, event, position_dfs):
 
     history = _get(f"{BASE}/entry/{team_id}/history/")
     free_transfers = _estimate_free_transfers(history)
-    chips_used, chips_available = _chips_state(history)
+    chips_used, chips_available = _chips_state(history, event)
 
     eh = picks_data.get("entry_history", {})
     bank = round((eh.get("bank") or 0) / 10, 1)
@@ -583,6 +676,10 @@ def get_team_view(team_id, event, position_dfs):
             "active_chip": picks_data.get("active_chip"),
             "chips_used": chips_used,
             "chips_available": chips_available,
+            # What each held chip is worth to this squad this week, measured
+            # against what the same chip returned in the 2025-26 simulation.
+            "chip_advice": _chip_advice(squad, event, chips_available,
+                                        fixture_structure.season_outlook()),
             # Mean rating of the eleven that start. Only stated for the round
             # being picked and the one in play: ratings are rebuilt nightly, so
             # scoring someone's GW3 side with today's numbers would rate a team

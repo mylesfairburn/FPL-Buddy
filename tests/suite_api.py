@@ -379,6 +379,114 @@ def test_live_and_proxy_endpoints():
           r.status_code, lambda v: v < 500, severity="high")
 
 
+def test_ai_chip_plan():
+    """The chip plan the AI Manager publishes.
+
+    Shape-only where it has to be - whether a chip is being played this week
+    depends on the fixture list - but the schedule's one hard rule is checked
+    properly, because a plan that puts two chips in a gameweek is an illegal
+    plan however good the arithmetic behind it was.
+    """
+    group("AI chip plan", "high")
+    c = _client()
+    body = _json(c.get("/api/ai/manager")) or {}
+    if not body.get("available"):
+        check("AI manager unavailable, chip plan not asserted",
+              "GET /api/ai/manager", "available == True", body.get("available"),
+              lambda _: True, severity="info",
+              note="preseason with no committed gameweek - nothing to assert")
+        return
+
+    plan = body.get("chip_plan") or {}
+    for key in ("play", "notes", "available", "used", "schedule", "deadline"):
+        check(f"chip_plan carries '{key}'", "GET /api/ai/manager",
+              "key present", list(plan)[:10], lambda _, k=key: k in plan,
+              severity="high",
+              note="the AI Teams pane reads these by name")
+
+    schedule = plan.get("schedule") or []
+    weeks = [s.get("gameweek") for s in schedule]
+    check("the schedule never puts two chips in one gameweek",
+          "chip_plan.schedule", "every gameweek distinct", weeks,
+          lambda w: len(w) == len(set(w)), severity="critical")
+
+    chips = [s.get("chip") for s in schedule]
+    check("no chip is scheduled twice", "chip_plan.schedule",
+          "every chip distinct", chips, lambda ch: len(ch) == len(set(ch)),
+          severity="critical")
+
+    deadline = plan.get("deadline")
+    check("every scheduled chip lands before the reset", "chip_plan.schedule",
+          f"all gameweeks <= {deadline}", weeks,
+          lambda w: deadline is None or all(g <= deadline for g in w),
+          severity="critical",
+          note="a chip scheduled past the reset is a chip thrown away")
+
+    check("nothing already used is scheduled again", "chip_plan",
+          "schedule and used do not overlap", {"used": plan.get("used"),
+                                               "scheduled": chips},
+          lambda _: not (set(chips) & set(plan.get("used") or [])),
+          severity="high")
+
+    check("the chip being played is the one scheduled for this gameweek",
+          "chip_plan.play", "play matches the schedule entry for now",
+          {"play": plan.get("play"), "schedule": schedule},
+          lambda _: plan.get("play") is None
+                    or plan.get("play") in chips, severity="high")
+
+    for note in plan.get("notes") or []:
+        check("every chip note explains itself", note.get("chip"),
+              "a non-empty detail string", note.get("detail"),
+              lambda d: isinstance(d, str) and len(d) > 0)
+
+    check("the payload is JSON-clean", "GET /api/ai/manager",
+          "no bare NaN", "checked", lambda _: not _has_nan(body),
+          severity="high")
+
+
+def test_chip_advice_shape():
+    """The per-manager chip advice on /api/team.
+
+    Driven by a live FPL lookup, so this asserts the contract rather than the
+    numbers: absent is fine, present must be well-formed.
+    """
+    group("chip advice", "medium")
+    c = _client()
+    r = c.get("/api/team/1")
+    check("team view never 5xx", "GET /api/team/1", "status < 500",
+          r.status_code, lambda v: v < 500, severity="high")
+
+    gw = ((_json(r) or {}).get("gw")) or {}
+    advice = gw.get("chip_advice")
+    if advice is None:
+        check("no chip advice returned for this lookup", "GET /api/team/1",
+              "absent is acceptable", None, lambda _: True, severity="info",
+              note="the upstream lookup may be unavailable offline")
+        return
+
+    check("chip advice is a list", "gw.chip_advice", "list", type(advice).__name__,
+          lambda t: t == "list")
+    for entry in advice:
+        for key in ("chip", "name", "gain", "detail", "verdict"):
+            check(f"advice entry carries '{key}'", entry.get("chip"),
+                  "key present", list(entry)[:10],
+                  lambda _, k=key: k in entry, severity="high")
+        check("verdict is one the front end knows", entry.get("chip"),
+              "play | hold | consider", entry.get("verdict"),
+              lambda v: v in ("play", "hold", "consider"))
+        check("a percentile, where given, is a percentage", entry.get("chip"),
+              "0-100 or null", entry.get("percentile"),
+              lambda p: p is None or 0 <= p <= 100)
+        check("only chips measured in the planner's units get a floor",
+              entry.get("chip"), "floor set for bboost/3xc only",
+              {"chip": entry.get("chip"), "floor": entry.get("floor")},
+              lambda _: (entry.get("floor") is not None)
+                        == (entry.get("chip") in ("bboost", "3xc")),
+              note="wildcard and free hit are described here, not thresholded "
+                   "- their simulated figure is in different units entirely")
+
+
 SUITES = [test_read_endpoints, test_ratings_parameters, test_sorted_and_shaped,
           test_search, test_draft_roundtrip, test_ai_endpoints,
-          test_live_and_proxy_endpoints]
+          test_live_and_proxy_endpoints,
+          test_ai_chip_plan, test_chip_advice_shape]

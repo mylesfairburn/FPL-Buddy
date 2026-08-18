@@ -1118,32 +1118,65 @@ function renderChips(gw) {
     const info = document.getElementById('chipInfo');
     chipTips.forEach(t => t.remove()); chipTips = [];
     info.classList.add('d-none'); info.textContent = ''; delete info.dataset.openFor;
+    // chips_available carries display NAMES ('Bench Boost'), not codes, so a
+    // card is matched on either. chip_advice is keyed on the code and only
+    // contains chips still in hand, which makes it the better signal when the
+    // server sent one.
     const avail = (gw && gw.chips_available) || [];
+    const advice = {};
+    ((gw && gw.chip_advice) || []).forEach(a => { advice[a.chip] = a; });
 
     const bench = (workingSquad || []).filter(p => !p.starting);
     const benchPts = +bench.reduce((s, p) => s + (p.predicted || 0), 0).toFixed(1);
     const cap = (workingSquad || []).find(p => p.id === captainId);
     const capPts = cap ? +(cap.predicted || 0).toFixed(1) : 0;
-    const bigGains = (teamView.transfer_recs || []).filter(r => r.rating_gain >= 5).length;
 
     const CHIPS = [
-        { key: 'bboost', name: 'Bench Boost', note: `Bench Boost: your bench also scores. Bench projected ${benchPts} pts this gameweek.` },
-        { key: '3xc', name: 'Triple Captain', note: cap ? `Triple Captain: captain scores x3. ${cap.web_name} projected ${capPts} pts (x3 = ${(capPts * 3).toFixed(1)}).` : `Triple Captain: captain scores x3 \u2014 pick a strong captain first.` },
-        { key: 'wildcard', name: 'Wildcard', note: `Wildcard: unlimited free transfers, this chip refreshes on gameweek 19.` },
-        { key: 'freehit', name: 'Free Hit', note: `Free Hit: change your whole team for one gameweek, this chip refreshes on gameweek 19. Best for blank/double gameweeks.` }
+        { key: 'bboost', name: 'Bench Boost', what: 'your bench also scores',
+          fallback: `Bench projected ${benchPts} pts this gameweek.` },
+        { key: '3xc', name: 'Triple Captain', what: 'your captain scores x3',
+          fallback: cap ? `${cap.web_name} projected ${capPts} pts (x3 = ${(capPts * 3).toFixed(1)}).`
+                        : 'Pick a strong captain first.' },
+        { key: 'wildcard', name: 'Wildcard', what: 'unlimited free transfers',
+          fallback: 'Best when the squad has drifted - injuries, bad runs, or players not contributing.' },
+        { key: 'freehit', name: 'Free Hit', what: 'a different team for one gameweek',
+          fallback: 'Best for a blank gameweek your squad cannot cover.' }
     ];
 
+    // A note that says what the chip is worth, and against what. A projection
+    // on its own is not information - "14 points" only means something next to
+    // what the same chip returned in weeks gone by.
+    function noteFor(c) {
+        const a = advice[c.key];
+        if (!a) return `${c.name}: ${c.what}. ${c.fallback} Refreshes at gameweek 19.`;
+        let note = `${c.name}: ${c.what}. ${a.detail}.`;
+        if (a.realised_median != null) {
+            note += ` The median ${c.name} in our 2025-26 simulation returned ${a.realised_median} pts.`;
+        }
+        if (a.percentile != null) {
+            note += ` That is better than about ${a.percentile}% of simulated weeks.`;
+        }
+        if (a.verdict === 'play') note += ' Worth playing this week.';
+        else if (a.verdict === 'hold') note += ' Worth holding for a better week.';
+        if (a.context === 'double') note += ' This is a double gameweek.';
+        if (a.context === 'blank') note += ' This is a blank gameweek.';
+        return note + ' Refreshes at gameweek 19.';
+    }
+
     bar.innerHTML = CHIPS.map(c => {
-        const available = avail.includes(c.key);
-        return `<div class="chip-card ${available ? 'chip-avail' : 'chip-unavail'}" tabindex="0" data-i="${c.key}">
+        const a = advice[c.key];
+        const available = a ? true : (avail.includes(c.key) || avail.includes(c.name));
+        const ready = a && a.verdict === 'play';
+        const status = !available ? 'Used' : (ready ? 'Play it' : 'Available');
+        return `<div class="chip-card ${available ? 'chip-avail' : 'chip-unavail'}${ready ? ' chip-playing' : ''}" tabindex="0" data-i="${c.key}">
             <img class="chip-img" src="/static/${c.key}.svg" alt="${c.name}" data-onerror="invisible">
             <div class="chip-card-name">${c.name}</div>
-            <div class="chip-status">${available ? 'Available' : 'Unavailable'}</div>
+            <div class="chip-status">${status}</div>
         </div>`;
     }).join('');
     bar.querySelectorAll('.chip-card').forEach(card => {
         const c = CHIPS.find(x => x.key === card.dataset.i);
-        chipTips.push(attachTip(card, c ? c.note : '', info));
+        chipTips.push(attachTip(card, c ? noteFor(c) : '', info));
     });
 }
 
@@ -2478,6 +2511,17 @@ function renderMgrChipPlan(d) {
             <span class="mgr-chip-name">${CHIP_NAMES[n.chip] || n.chip}</span>
             <span class="mgr-chip-detail">${n.detail}</span>
         </div>`).join('');
+
+    // The plan for the chips it is NOT playing. Every one has to be spent
+    // before the gameweek they all reset on, so where the rest are going is
+    // the more interesting half of the decision.
+    const sched = (plan.schedule || []).filter(s => s.chip !== d.chip);
+    if (sched.length) {
+        html += '<div class="mgr-chip-schedule">Planned: '
+            + sched.map(s => `${CHIP_NAMES[s.chip] || s.chip} in GW${s.gameweek}`).join(', ')
+            + (plan.deadline ? ` — all of them reset after GW${plan.deadline}.` : '')
+            + '</div>';
+    }
     const up = plan.upcoming || [];
     if (up.length) {
         html += '<div class="mgr-upcoming">Watching: '

@@ -1245,6 +1245,12 @@ body {
     flex: 0 0 auto; white-space: nowrap;
 }
 .mgr-chip-detail { color: #666; min-width: 0; }
+/* Where the chips it is NOT playing are going. Sits above "watching" because a
+   plan with gameweeks on it says more than a list of weeks to keep an eye on. */
+.mgr-chip-schedule {
+    font-size: 0.72rem; color: #666; margin-top: 8px;
+    border-top: 1px dashed #eee; padding-top: 6px;
+}
 .mgr-upcoming { font-size: 0.72rem; color: #888; margin-top: 6px; }
 
 /* ============================================================

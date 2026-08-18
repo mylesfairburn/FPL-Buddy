@@ -109,6 +109,25 @@ CREATE TABLE IF NOT EXISTS ai_transfer_log (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_transfer_gw ON ai_transfer_log (gameweek);
 
+-- What the AI Manager INTENDED to do with its remaining chips, as at each
+-- gameweek. ai_transfer_log records the chip it played; this records the ones
+-- it didn't, and which week it was saving them for.
+--
+-- Frozen at write time and never recomputed, for the same reason
+-- ai_team_snapshot.predicted_points is: a forecast that gets quietly rewritten
+-- every night is not a forecast, and "in GW4 it said it would boost in GW9"
+-- only means something if the GW4 row still says GW9.
+CREATE TABLE IF NOT EXISTS ai_chip_plan (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    gameweek      INTEGER NOT NULL,             -- the GW this plan was made in
+    chip          TEXT NOT NULL,
+    target_gw     INTEGER NOT NULL,             -- when it intends to play it
+    expected_gain REAL NOT NULL,
+    created_at    TEXT NOT NULL,
+    UNIQUE (gameweek, chip)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_chip_plan_gw ON ai_chip_plan (gameweek);
+
 -- Idempotency ledger for the hourly deadline watcher. Without this, a job that
 -- runs every hour would redo the same gameweek's snapshotting 168 times a week.
 CREATE TABLE IF NOT EXISTS processed_deadline (

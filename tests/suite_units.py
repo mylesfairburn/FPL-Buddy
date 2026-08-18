@@ -16,12 +16,15 @@ import joblib
 import numpy
 import pandas as pd
 
+import ai_manager
+import chip_model
 import drafts
 import gw_report as gwr
 import gw_roundup as gwru
 import kits
 import player_pages as pp
 import player_spotlight as ps
+import fixture_structure
 import rating_model
 import seasons
 import social
@@ -2049,6 +2052,286 @@ def test_dispersion_calibration():
                "single number")
 
 
+# ---- Chip scheduling ------------------------------------------------------
+
+def _matrix(spec):
+    """{chip: {gw: gain}} -> the (effective, computed, factors) shape."""
+    return {c: {gw: (v, v, {}) for gw, v in row.items()} for c, row in spec.items()}
+
+
+def _flat(chips, gameweeks, value):
+    return _matrix({c: {gw: value for gw in gameweeks} for c in chips})
+
+
+def test_chip_halves():
+    group("chip halves", "high")
+
+    for gw, expected in ((1, (1, 19)), (19, (1, 19)), (20, (20, 38)), (38, (20, 38))):
+        expect(f"GW{gw} falls in the right half", gw, expected,
+               fixture_structure.chip_half(gw),
+               note="FPL returns every chip after GW19, so which half a "
+                    "gameweek is in decides which chips are still in hand")
+
+    expect("a gameweek past the season still resolves", 44, (20, 38),
+           fixture_structure.chip_half(44), severity="medium",
+           note="a fixture-list oddity must not raise at a deadline")
+
+    expect("the deadline for a first-half gameweek is GW19", 4, 19,
+           fixture_structure.half_deadline(4))
+    expect("the deadline for a second-half gameweek is GW38", 25, 38,
+           fixture_structure.half_deadline(25))
+
+    played = [(6, "wildcard"), (22, "bboost")]
+    expect("a chip played this half counts as used", "GW10, wildcard in GW6",
+           ["wildcard"], ai_manager.chips_used_in_half(played, 10))
+    expect("a chip played LAST half is back in hand", "GW25, wildcard in GW6",
+           ["bboost"], ai_manager.chips_used_in_half(played, 25),
+           severity="high",
+           note="reading the log flat is what left the second chip set "
+                "permanently unused")
+
+
+def test_chip_schedule_rules():
+    group("chip schedule", "high")
+    priors = chip_model.DEFAULT_PRIORS
+    chips = list(chip_model.CHIP_CODES)
+
+    # Every chip wants the same gameweek. Only one can have it.
+    m = _matrix({c: {10: 50.0, 11: 1.0, 12: 1.0, 13: 1.0, 14: 1.0} for c in chips})
+    s = chip_model.schedule_chips(chips, 10, 14, m, priors)
+    check("never two chips in one gameweek", "4 chips all peaking on GW10",
+          "at most one chip per gameweek", s,
+          lambda out: len(out) == len(set(out)), severity="critical",
+          note="the one rule the feature is not allowed to break")
+
+    # A standout week is taken over a poor one.
+    m = _matrix({"bboost": {5: 13.0, 6: 30.0, 7: 13.0}})
+    s = chip_model.schedule_chips(["bboost"], 5, 7, m, priors)
+    expect("the best week wins", "bboost peaking on GW6", "bboost", s.get(6))
+
+    # Slack plus nothing worth playing: hold everything.
+    s = chip_model.schedule_chips(chips, 5, 19, _flat(chips, range(5, 20), 0.5),
+                                  priors)
+    expect("nothing is scheduled below its floor while there is time", "GW5",
+           {}, s, note="spending a chip on a poor week in September is how a "
+                       "season's chips get wasted")
+
+    # Weeks run out: play them anyway. A chip unplayed scores nothing.
+    s = chip_model.schedule_chips(chips, 16, 19, _flat(chips, range(16, 20), 0.5),
+                                  priors)
+    check("the deadline forces every chip out", "GW16, 4 chips, 4 weeks left",
+          "all four scheduled despite being below the floor", s,
+          lambda out: len(out) == 4 and set(out) == {16, 17, 18, 19},
+          severity="critical",
+          note="the GW18-with-four-chips case this feature exists to prevent")
+
+    check("a chip is played in the forced week, not just planned", "GW16",
+          "something lands on GW16", s, lambda out: out.get(16) in chips)
+
+    # Fewer weeks than chips: fill what there is rather than failing.
+    s = chip_model.schedule_chips(chips, 18, 19, _flat(chips, (18, 19), 10.0),
+                                  priors)
+    check("fewer weeks than chips still returns a legal plan",
+          "4 chips, 2 gameweeks", "2 scheduled, no gameweek doubled", s,
+          lambda out: len(out) == 2 and len(set(out)) == 2, severity="high")
+
+    # One below-floor chip must not block the others.
+    m = _matrix({"bboost": {5: 30.0, 6: 30.0}, "wildcard": {5: 0.1, 6: 0.1}})
+    s = chip_model.schedule_chips(["bboost", "wildcard"], 5, 6, m, priors)
+    check("a worthless chip does not stop a good one", "bboost 30, wildcard 0.1",
+          "bboost scheduled", s, lambda out: "bboost" in out.values())
+
+    expect("no chips available is not an error", "[]", {},
+           chip_model.schedule_chips([], 5, 19, {}, priors))
+
+
+def test_chip_schedule_fallback():
+    group("chip schedule fallback", "high")
+    priors = chip_model.DEFAULT_PRIORS
+    chips = list(chip_model.CHIP_CODES)
+
+    m = _matrix({c: {10: 50.0, 11: 1.0, 12: 1.0, 13: 1.0, 14: 1.0} for c in chips})
+    s = chip_model._greedy_schedule(chips, [10, 11, 12, 13, 14], m, priors, 1)
+    check("the greedy fallback still allows one chip a gameweek",
+          "solver unavailable", "no gameweek doubled", s,
+          lambda out: len(out) == len(set(out)), severity="critical",
+          note="a deadline job must not fail because CBC did, but it must not "
+               "produce an illegal plan either")
+
+    forced = chip_model._greedy_schedule(
+        chips, [16, 17, 18, 19], _flat(chips, range(16, 20), 0.5), priors, 0)
+    expect("the fallback also ignores the floor once weeks run out", "slack 0",
+           4, len(forced))
+
+
+def test_chip_priors():
+    group("chip priors", "high")
+
+    priors = chip_model.load_priors()
+    for chip in chip_model.CHIP_CODES:
+        check(f"{chip} has a floor", "chip_priors.json", "a number, not negative",
+              priors.get("floor", {}).get(chip),
+              lambda v: isinstance(v, (int, float)) and v >= 0)
+
+    check("a priors file with no floors falls back rather than raising",
+          "floor missing", "0.0", safe(chip_model.floor, "bboost", {"floor": {}}),
+          lambda v: v == 0.0, severity="medium",
+          note="a bad file must not take a deadline down with it")
+
+    # The order-statistic quantile is what makes the bot patient early and
+    # decisive late. If it stops falling as the weeks run out, it never plays.
+    q_many = chip_model.hold_quantile(15)
+    q_few = chip_model.hold_quantile(2)
+    q_one = chip_model.hold_quantile(1)
+    check("holding is worth less as the weeks run out", "15 vs 2 vs 1 weeks",
+          "the quantile falls monotonically", (q_many, q_few, q_one),
+          lambda qs: qs[0] > qs[1] > qs[2], severity="high")
+    check("the hold quantile is capped", "15 weeks", "at most 0.90", q_many,
+          lambda q: q <= chip_model.MAX_HOLD_QUANTILE)
+
+    check("confidence decays with lead time", "leads 0, 1, 4",
+          "1.0 then falling",
+          [chip_model.confidence(n) for n in (0, 1, 4)],
+          lambda c: c[0] == 1.0 and c[0] > c[1] > c[2])
+
+    check("an older scalar-per-context priors file still reads",
+          "conditional.bboost.double = 19.0", "a number, not a crash",
+          safe(chip_model.context_quantile, "bboost", "double", 0.5,
+               {"quantiles": {"bboost": {"p50": 12.0}},
+                "conditional": {"bboost": {"double": 19.0}}}),
+          lambda v: isinstance(v, float), severity="medium")
+
+    expect("an unknown context falls back to the pooled spread",
+           "context 'mystery'", chip_model.prior_quantile("bboost", 0.5),
+           chip_model.context_quantile("bboost", "mystery", 0.5))
+
+    expect("quantile_of interpolates", "[0, 10], q=0.5", 5.0,
+           chip_model.quantile_of([0, 10], 0.5))
+    expect("quantile_of survives a single sample", "[7]", 7.0,
+           chip_model.quantile_of([7], 0.9))
+    expect("quantile_of survives none", "[]", None,
+           chip_model.quantile_of([], 0.5))
+
+
+def test_chip_gain_shapes():
+    group("chip gain", "high")
+
+    def player(pid, points, gw=5, **extra):
+        return {"id": pid, "web_name": f"P{pid}", "pos": "MID", "cost": 5.0,
+                "status": "a", "predicted": points,
+                "next_gameweeks": [{"event": gw, "points": points}], **extra}
+
+    bench = [dict(player(i, 4.0), starting=False) for i in range(1, 5)]
+    starters = [dict(player(i, 6.0), starting=True) for i in range(5, 16)]
+    starters[0]["is_captain"] = True
+    lineup = {"squad": starters + bench, "predicted_points": 72.0}
+
+    expect("bench boost is the bench's points", "4 bench players on 4.0 each",
+           16.0, chip_model.bench_boost_gain(lineup, 5))
+    expect("triple captain is one more multiple, not three",
+           "captain projecting 6.0", 6.0,
+           chip_model.triple_captain_gain(lineup, 5))
+
+    # A double gameweek needs no special case: two entries under one event.
+    doubled = dict(player(99, 5.0), starting=False)
+    doubled["next_gameweeks"] = [{"event": 5, "points": 5.0},
+                                 {"event": 5, "points": 4.0}]
+    expect("a double gameweek is summed, not replaced", "two GW5 fixtures",
+           9.0, chip_model._points_in(doubled, 5), severity="high")
+
+    blanking = dict(player(98, 5.0), starting=False)
+    blanking["next_gameweeks"] = [{"event": 6, "points": 5.0}]
+    expect("a player with no fixture scores nothing that week",
+           "fixture in GW6 only", 0.0, chip_model._points_in(blanking, 5),
+           severity="high",
+           note="falling back to his season projection here would value a "
+                "bench boost on a blank week as if everyone played")
+
+    # Free Hit and Wildcard cannot be evaluated against a squad that does not
+    # exist yet, so they must never claim to be computable for a future week.
+    squad = starters + bench
+    expect("free hit is only computable for the gameweek being planned",
+           "gw 6, now 5", False, chip_model.computable("freehit", 6, 5, squad))
+    expect("wildcard likewise", "gw 6, now 5", False,
+           chip_model.computable("wildcard", 6, 5, squad))
+    expect("bench boost is computable while the pool reaches that gameweek",
+           "gw 5, now 5", True, chip_model.computable("bboost", 5, 5, squad))
+    expect("and not beyond it", "gw 12, now 5", False,
+           chip_model.computable("bboost", 12, 5, squad))
+
+    factors = chip_model.wildcard_factors(
+        [dict(player(1, 5.0), status="i"), dict(player(2, 5.0)),
+         dict(player(3, 0.1))], 5)
+    check("wildcard factors count the injured", "one injured player",
+          "injured >= 1", factors, lambda f: f["injured"] >= 1)
+    check("wildcard factors count players contributing nothing",
+          "one player projecting 0.1", "deadweight >= 1", factors,
+          lambda f: f["deadweight"] >= 1,
+          note="the reason the tab shows is built from these")
+
+
+def test_bench_build_weight():
+    group("bench boost build-up", "high")
+
+    plan = {"schedule": [{"gameweek": 9, "chip": "bboost", "expected_gain": 21.0},
+                         {"gameweek": 14, "chip": "3xc", "expected_gain": 11.0}]}
+    check("the solver is told to value the bench just before a bench boost",
+          "bboost scheduled for GW9, planning GW8", "a weight above zero",
+          ai_manager.bench_build_weight(plan, 8), lambda w: w and w > 0,
+          note="without this the planner schedules a bench boost and then "
+               "fields a cheap bench into it")
+    expect("and not months earlier", "planning GW3", None,
+           ai_manager.bench_build_weight(plan, 3))
+    expect("no bench boost scheduled means no change", "3xc only", None,
+           ai_manager.bench_build_weight(
+               {"schedule": [{"gameweek": 9, "chip": "3xc", "expected_gain": 1.0}]}, 8))
+    expect("an empty plan is safe", "{}", None, ai_manager.bench_build_weight({}, 8))
+
+
+def test_season_fixture_structure():
+    group("season fixture structure", "high")
+
+    fixtures = pd.DataFrame([
+        # GW1 ordinary: 4 teams, 2 matches.
+        {"event": 1, "team_h": 1, "team_a": 2},
+        {"event": 1, "team_h": 3, "team_a": 4},
+        # GW2: teams 1-4 all play twice.
+        {"event": 2, "team_h": 1, "team_a": 2},
+        {"event": 2, "team_h": 2, "team_a": 1},
+        {"event": 2, "team_h": 3, "team_a": 4},
+        {"event": 2, "team_h": 4, "team_a": 3},
+        # An unscheduled fixture: no event yet.
+        {"event": None, "team_h": 1, "team_a": 3},
+    ])
+    out = fixture_structure.season_outlook(fixtures=fixtures)
+
+    expect("a gameweek where four teams play twice is a double", "GW2", True,
+           out[2]["is_double"])
+    expect("an ordinary gameweek is not", "GW1", False, out[1]["is_double"])
+    expect("a short gameweek is a blank", "GW1, 4 teams playing", True,
+           out[1]["is_blank"])
+    expect("the doubling teams are named", "GW2", [1, 2, 3, 4],
+           out[2]["doubling_teams"])
+
+    check("an unscheduled fixture is not counted",
+          "one row with event = None", "no gameweek beyond GW2", out,
+          lambda o: max(o) == 2, severity="high",
+          note="guessing which gameweek it belongs to would invent a double "
+               "that does not exist - which is exactly how real ones appear")
+
+    expect("context names the week type", "GW2", "double",
+           fixture_structure.context(out[2]))
+    expect("a missing gameweek reads as ordinary", "None", "normal",
+           fixture_structure.context(None))
+
+    expect("no fixture list returns None, not an empty plan", "empty frame",
+           None, fixture_structure.season_outlook(
+               fixtures=pd.DataFrame(columns=["event", "team_h", "team_a"])),
+           severity="high",
+           note="an empty dict would read as 'no doubles all season' rather "
+                "than 'no data'")
+
+
 SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_a_to_z_grouping, test_draft_validation, test_storage_kind,
           test_horizon_points, test_gw_report_predicted_for,
@@ -2068,4 +2351,8 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_declared_dependencies,
           test_model_leakage_and_scale, test_team_strength_ranks_are_scale_free,
           test_model_bundle_version_guard, test_two_stage_predictions,
-          test_kit_colours]
+          test_kit_colours,
+          test_chip_halves, test_chip_schedule_rules,
+          test_chip_schedule_fallback, test_chip_priors,
+          test_chip_gain_shapes, test_bench_build_weight,
+          test_season_fixture_structure]

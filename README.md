@@ -31,6 +31,14 @@ useful numbers where there was one blurred one.
 - *AI Manager* — a bot that plays the actual game. It carries a bank, takes
   transfers, eats hits when they're worth it, and plays chips. Its squad is
   frozen at each deadline and scored against reality afterwards.
+- *Chip timing as a schedule, not a threshold.* Every chip comes back after
+  GW19, so one left unplayed is not saved but wasted. The bot therefore assigns
+  all four to the gameweeks of the half at once — an integer program, one chip
+  per week — and plays only whatever lands on this one. Early on there are far
+  more weeks than chips and it holds; as the weeks run down the assignment is
+  forced, so it can never arrive at GW18 still holding four. What a chip is
+  worth in a week it cannot yet see comes from replaying 2025-26 against squads
+  rebuilt from FPL's own ownership figures (`train_chip_model.py`).
 - *Best XI* — the highest-scoring legal squad for the upcoming gameweek, solved
   as an integer linear program under the £100m budget and the three-per-club
   rule.

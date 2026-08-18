@@ -25,30 +25,16 @@ simulation whose picks are recorded so its record can be compared against the
 Best XI and against real managers.
 """
 
+import chip_model
+import fixture_structure
 from db import AI_MANAGER_FPL_ID, connect, utcnow
+from fixture_structure import chip_half, half_deadline
 from squad_optimiser import (DEFAULT_BUDGET, MAX_PER_CLUB, OptimisationError,
                              SQUAD_QUOTA, availability, optimise_squad,
                              team_rating, verify)
-
-# How far ahead a transfer decision looks, and how quickly later gameweeks stop
-# mattering. 0.75 means gameweek n+2 counts for about half of the next one -
-# far enough to avoid chasing a single fixture, short enough that the model's
-# accuracy (which decays fast) still means something.
-HORIZON = 4
-HORIZON_DECAY = 0.75
-
-# Buying a player is a season-long commitment, so the SQUAD is chosen over a
-# longer view than a transfer is judged on, with a slower decay. This is what
-# separates the AI Manager from Best XI: pick the same 15 on next-gameweek
-# points and you get Best XI's team, which is the right answer only if you
-# intend to rebuild from scratch every week.
-SQUAD_HORIZON = 8
-SQUAD_DECAY = 0.9
-# How hard the long view pulls against this week's XI when choosing who to own.
-SQUAD_WEIGHT = 1.0
-# Owned players who must have a fixture in each gameweek of the horizon, so a
-# blank week can't leave the squad unable to field eleven.
-MIN_COVERAGE = 11
+from valuation import (HORIZON, SQUAD_HORIZON, SQUAD_WEIGHT,
+                       coverage_requirement, horizon_value,
+                       squad_selection_values)
 
 # A transfer beyond the free allowance costs 4 points. Only make one if the
 # horizon gain clears the hit with room to spare - marginal hits are how FPL
@@ -59,87 +45,45 @@ HIT_MARGIN = 2.0
 MIN_FREE_TRANSFER_GAIN = 0.8
 MAX_TRANSFERS_PER_WEEK = 2
 
-# Chip thresholds, all in predicted points.
-BENCH_BOOST_MIN = 18.0      # bench must be genuinely worth playing
-TRIPLE_CAPTAIN_MIN = 9.0    # captain's own projection before tripling
-WILDCARD_MIN_GAIN = 12.0    # squad overhaul must beat the current squad by this
-FREE_HIT_MIN_GAIN = 15.0    # one-week rental must be worth burning the chip
+# How much the solver is told to care about bench points in the gameweeks
+# leading up to a scheduled Bench Boost. Normally it is told not to care at all
+# (squad_optimiser.BENCH_WEIGHT is 0.0), which is right all season except for
+# the two weeks before the chip: a squad built to ignore its bench will field a
+# £17m bench into the one week the bench scores.
+BENCH_BOOST_BUILD_WEIGHT = 0.6
+BENCH_BOOST_BUILD_LEAD = 2
 
 
-def horizon_value(player, from_gameweek, horizon=HORIZON, decay=HORIZON_DECAY):
-    """Decayed sum of a player's predicted points over the next few gameweeks.
-
-    This is the number transfers are judged on. A double gameweek shows up
-    naturally: two fixtures in the same event both contribute, so a player with
-    a DGW outscores an equivalent one without ever needing a special case.
-    Risk-adjusted, so a doubtful player isn't valued as if he's certain to play.
-    """
-    avail = availability(player)
-    total, weight = 0.0, 1.0
-    for gw in range(from_gameweek, from_gameweek + horizon):
-        pts = 0.0
-        for entry in player.get("next_gameweeks") or []:
-            if entry.get("event") == gw and entry.get("points") is not None:
-                pts += float(entry["points"])          # += covers double gameweeks
-        total += pts * weight
-        weight *= decay
-    return total * avail
-
-
-def squad_selection_values(pool, gameweek):
-    """{player_id: season-long value} for the ownership decision."""
-    return {p["id"]: horizon_value(p, gameweek, horizon=SQUAD_HORIZON, decay=SQUAD_DECAY)
-            for p in pool}
-
-
-def coverage_requirement(gameweek, horizon=SQUAD_HORIZON, minimum=MIN_COVERAGE):
-    """Minimum players with a fixture, per gameweek across the horizon."""
-    return {gw: minimum for gw in range(gameweek, gameweek + horizon)}
-
-
-def build_squad(pool, gameweek, budget):
+def build_squad(pool, gameweek, budget, bench_weight=None):
     """Draft a squad to KEEP - long-horizon value, fixture coverage enforced.
 
     Same solver as Best XI, different objective. Best XI asks "who scores most
     this Saturday"; this asks "who is worth owning for the next couple of
     months", which is the question a manager with two transfers a week actually
-    faces."""
+    faces.
+
+    `bench_weight` is normally left alone - see BENCH_BOOST_BUILD_WEIGHT for the
+    one case where the squad is deliberately built to have a bench worth
+    playing."""
+    kwargs = {} if bench_weight is None else {"bench_weight": bench_weight}
     return optimise_squad(
         pool, gameweek, budget=budget,
         squad_values=squad_selection_values(pool, gameweek),
         squad_weight=SQUAD_WEIGHT,
-        coverage=coverage_requirement(gameweek))
+        coverage=coverage_requirement(gameweek), **kwargs)
 
 
-def fixture_outlook(pool, gameweeks):
+def fixture_outlook(pool, gameweeks=None, season=None):
     """Per-gameweek shape of the fixture list: how many teams play, and how many
     play twice.
 
-    Derived from the players' own next_gameweeks rather than a separate fixture
-    pull, so it always agrees with the numbers the optimiser is using. A team
-    appearing twice in one event is a double gameweek; a team missing entirely
-    from an event everyone else appears in is a blank.
+    Read from the season's fixture list rather than the rated pool, because the
+    pool's next_gameweeks only run eight deep and a chip planner working to a
+    GW19 deadline has to see past that. A team appearing twice in one event is a
+    double gameweek; a team missing entirely from an event everyone else appears
+    in is a blank. See fixture_structure for why the pool is only a fallback.
     """
-    outlook = {}
-    for gw in gameweeks:
-        teams_playing, teams_doubling = set(), set()
-        for p in pool:
-            team = p.get("team")
-            if team is None:
-                continue
-            n = sum(1 for e in (p.get("next_gameweeks") or []) if e.get("event") == gw)
-            if n >= 1:
-                teams_playing.add(team)
-            if n >= 2:
-                teams_doubling.add(team)
-        outlook[gw] = {
-            "gameweek": gw,
-            "teams_playing": len(teams_playing),
-            "teams_doubling": len(teams_doubling),
-            "is_double": len(teams_doubling) >= 4,
-            "is_blank": 0 < len(teams_playing) <= 14,
-        }
-    return outlook
+    return fixture_structure.combined_outlook(pool, gameweeks, season=season)
 
 
 def _squad_from_rows(rows, pool_by_id):
@@ -166,20 +110,45 @@ def load_state(pool):
                ORDER BY gameweek DESC LIMIT 1""", (AI_MANAGER_FPL_ID,)).fetchone()
         if head is None:
             return None
+        # The squad comes from the last week that WASN'T a free hit. A free hit
+        # is a one-week rental: those picks are what played and what gets
+        # scored, so they belong in manager_team_picks, but the squad carried
+        # into next week is the one the rental was borrowed instead of. Reading
+        # the latest row flat would hand the bot a team it never bought.
+        owned = conn.execute(
+            """SELECT * FROM manager_team
+               WHERE fpl_id = ? AND COALESCE(active_chip, '') != 'freehit'
+               ORDER BY gameweek DESC LIMIT 1""", (AI_MANAGER_FPL_ID,)).fetchone()
         picks = conn.execute(
             "SELECT * FROM manager_team_picks WHERE manager_team_id = ? ORDER BY position",
-            (head["id"],)).fetchall()
-        used = [r["chip"] for r in conn.execute(
-            "SELECT chip FROM ai_transfer_log WHERE kind = 'chip' AND chip IS NOT NULL",
-            ).fetchall()]
+            ((owned or head)["id"],)).fetchall()
+        # Every chip ever played, with the gameweek it was played in. The
+        # gameweek matters: FPL hands the whole set back after GW19, so a
+        # wildcard played in GW6 must stop counting as used once GW20 arrives.
+        # Filtering here would lose that, so the filtering is left to the
+        # caller, which knows which gameweek it is planning for.
+        played = [(r["gameweek"], r["chip"]) for r in conn.execute(
+            """SELECT gameweek, chip FROM ai_transfer_log
+               WHERE kind = 'chip' AND chip IS NOT NULL ORDER BY gameweek""").fetchall()]
     squad = _squad_from_rows(picks, pool_by_id)
     return {
         "gameweek": head["gameweek"],
         "bank": head["bank"] if head["bank"] is not None else 0.0,
         "squad": squad,
-        "chips_used": used,
+        "chips_played": played,
         "incomplete": len(squad) != 15,   # a player left the league between runs
     }
+
+
+def chips_used_in_half(played, gameweek):
+    """Which chips are already spent from the set `gameweek` can draw on.
+
+    FPL returns every chip after GW19, so "used" is only ever a question about
+    one half of the season. Without this the bot plays four chips all year
+    instead of eight, and the second set is never touched.
+    """
+    start, end = chip_half(gameweek)
+    return [chip for gw, chip in played if chip and start <= int(gw) <= end]
 
 
 def free_transfers(previous_free, transfers_made, wildcard_or_freehit=False):
@@ -307,78 +276,152 @@ def evaluate_transfers(squad, pool, bank, gameweek, free, max_transfers=MAX_TRAN
     return {"squad": working, "moves": moves, "bank": round(budget, 1)}
 
 
-def plan_chips(squad, pool, gameweek, chips_used, outlook, lineup):
-    """Decide whether to play a chip this week, and flag what's coming.
+def _chip_detail(chip, gameweek, target, gain, computed, factors, lineup, priors):
+    """One line explaining what the planner thinks of a chip, for the tab.
+
+    Says what the chip is worth and, if it isn't being played, which gameweek it
+    is being kept for - "waiting" with no destination is the thing the old
+    version couldn't tell you.
+    """
+    bar = chip_model.floor(chip, priors)
+    if chip == "bboost":
+        head = f"Bench projects {round(gain, 1)} pts"
+    elif chip == "3xc":
+        captain = next((p for p in (lineup or {}).get("squad", [])
+                        if p.get("is_captain")), None)
+        who = (captain or {}).get("web_name", "the captain")
+        head = f"{who} projects {round(gain, 1)} extra pts"
+    elif chip == "freehit":
+        one_week = factors.get("one_week_gain")
+        head = (f"A one-week rental projects {one_week} more pts"
+                if one_week is not None else
+                f"A one-week rental projects {round(gain, 1)} more pts")
+    else:
+        head = f"A rebuilt squad projects {round(gain, 1)} more pts over {SQUAD_HORIZON} GWs"
+        reasons = []
+        if factors.get("injured"):
+            reasons.append(f"{factors['injured']} injured")
+        if factors.get("deadweight"):
+            reasons.append(f"{factors['deadweight']} not contributing")
+        if factors.get("blanking"):
+            reasons.append(f"{factors['blanking']} without a fixture")
+        if reasons:
+            head += " - " + ", ".join(reasons)
+
+    if target == gameweek:
+        return head + " - playing it"
+    if target:
+        return head + f" (worth {round(bar, 1)}+) - held for GW{target}"
+    if computed is not None and computed < bar:
+        return head + f" - below the {round(bar, 1)} pts a chip is worth burning"
+    return head + " - held"
+
+
+def plan_chips(squad, pool, gameweek, chips_used, outlook, lineup, bank=0.0):
+    """Decide whether to play a chip this week, and say what the rest are for.
 
     Re-run every gameweek rather than fixed at the start of the season: fixture
     lists move, doubles get created by postponements, and a plan made in August
-    is worthless by March. Returns the chip to play now (or None) plus the
-    reasoning for each, so the tab can show what it's waiting for.
+    is worthless by March.
+
+    The decision itself is an assignment of the remaining chips to the remaining
+    gameweeks of this half - see chip_model. Only the chip that lands on THIS
+    gameweek is played; the rest of the schedule is a forecast, which is what
+    lets the tab say "holding the Bench Boost for GW14" rather than "not yet".
     """
-    available = [c for c in ("wildcard", "freehit", "bboost", "3xc") if c not in chips_used]
-    notes, play = [], None
+    priors = chip_model.load_priors()
+    available = [c for c in chip_model.CHIP_CODES if c not in chips_used]
+    deadline = half_deadline(gameweek)
+    gameweeks = [gw for gw in sorted(outlook) if gameweek <= gw <= deadline]
+    if not gameweeks:
+        gameweeks = [gameweek]
 
-    here = outlook.get(gameweek, {})
-    bench = [p for p in (lineup or {}).get("squad", []) if not p["starting"]]
-    bench_pts = round(sum(p.get("predicted") or 0 for p in bench), 1)
-    captain = next((p for p in (lineup or {}).get("squad", []) if p.get("is_captain")), None)
-    captain_pts = round((captain or {}).get("predicted") or 0, 1)
+    matrix = chip_model.gain_matrix(available, gameweek, gameweeks, squad, pool,
+                                    outlook, bank=bank, lineup=lineup, priors=priors)
+    schedule = chip_model.schedule_chips(available, gameweek, deadline, matrix, priors)
+    targets = {chip: gw for gw, chip in schedule.items()}
+    play = schedule.get(gameweek)
 
-    if "bboost" in available:
-        ok = bench_pts >= BENCH_BOOST_MIN
+    notes = []
+    for chip in available:
+        effective, computed, factors = matrix[chip][gameweek]
         notes.append({
-            "chip": "bboost", "ready": ok,
-            "detail": f"Bench projects {bench_pts} pts (needs {BENCH_BOOST_MIN})"
-                      + (" - double gameweek" if here.get("is_double") else "")})
-        if ok and play is None:
-            play = "bboost"
-
-    if "3xc" in available and captain:
-        ok = captain_pts >= TRIPLE_CAPTAIN_MIN
-        notes.append({
-            "chip": "3xc", "ready": ok,
-            "detail": f"{captain['web_name']} projects {captain_pts} pts "
-                      f"(needs {TRIPLE_CAPTAIN_MIN})"
-                      + (" - double gameweek" if here.get("is_double") else "")})
-        if ok and play is None:
-            play = "3xc"
-
-    # Free Hit earns its place in a BLANK week - when a chunk of your squad
-    # simply isn't playing, a one-week rental of players who are beats
-    # transferring in people you don't want to keep.
-    if "freehit" in available:
-        blanking = sum(1 for p in squad
-                       if not any(e.get("event") == gameweek
-                                  for e in (p.get("next_gameweeks") or [])))
-        ok = here.get("is_blank") and blanking >= 5
-        notes.append({
-            "chip": "freehit", "ready": bool(ok),
-            "detail": f"{blanking} of 15 players blank this gameweek"
-                      + (" - blank gameweek" if here.get("is_blank") else "")})
-        if ok and play is None:
-            play = "freehit"
-
-    # Wildcard is the fallback when the squad is simply far from optimal -
-    # measured against what an unconstrained rebuild would score, so it fires on
-    # genuine drift rather than on a bad week.
-    if "wildcard" in available and play is None:
-        try:
-            ideal = optimise_squad(pool, gameweek, budget=DEFAULT_BUDGET)
-            current = (lineup or {}).get("predicted_points") or 0
-            gain = round(ideal["predicted_points"] - current, 1)
-            ok = gain >= WILDCARD_MIN_GAIN
-            notes.append({"chip": "wildcard", "ready": ok,
-                          "detail": f"A rebuilt squad projects {gain} more pts "
-                                    f"(needs {WILDCARD_MIN_GAIN})"})
-            if ok:
-                play = "wildcard"
-        except OptimisationError as e:
-            notes.append({"chip": "wildcard", "ready": False, "detail": str(e)})
+            "chip": chip,
+            "ready": chip == play,
+            "target": targets.get(chip),
+            "gain": round(computed if computed is not None else effective, 1),
+            "floor": round(chip_model.floor(chip, priors), 1),
+            "factors": factors,
+            "detail": _chip_detail(chip, gameweek, targets.get(chip),
+                                   computed if computed is not None else effective,
+                                   computed, factors, lineup, priors),
+        })
 
     upcoming = [o for gw, o in sorted(outlook.items())
                 if gw > gameweek and (o["is_double"] or o["is_blank"])]
-    return {"play": play, "notes": notes, "upcoming": upcoming[:4],
-            "available": available, "used": chips_used}
+    return {
+        "play": play, "notes": notes, "upcoming": upcoming[:4],
+        "available": available, "used": chips_used,
+        # The forecast, oldest first, so the tab can show the whole plan and the
+        # stored version can later be scored against what actually happened.
+        "schedule": [{"gameweek": gw, "chip": chip,
+                      "expected_gain": round(matrix[chip][gw][0], 1)}
+                     for gw, chip in sorted(schedule.items())],
+        "deadline": deadline,
+    }
+
+
+def bench_build_weight(chips, gameweek):
+    """How much the solver should care about the bench when rebuilding.
+
+    Normally nothing: squad_optimiser deliberately buys the cheapest legal bench
+    because bench players don't score, and every pound spent there is a pound
+    missing from the eleven that do. The exception is the run-up to a Bench
+    Boost, which is the one week they do score. Without this the planner
+    schedules a Bench Boost and then fields a £17.0m bench into it - the chip
+    policy and the squad policy quietly working against each other.
+    """
+    for entry in (chips or {}).get("schedule") or []:
+        if entry["chip"] == "bboost" and 0 <= entry["gameweek"] - gameweek <= BENCH_BOOST_BUILD_LEAD:
+            return BENCH_BOOST_BUILD_WEIGHT
+    return None
+
+
+def free_hit_squad(pool, gameweek, budget):
+    """The best team money can buy for one gameweek, ignoring who's owned.
+
+    No squad_values and no coverage requirement, unlike build_squad: a Free Hit
+    lasts one week, so there is no next month to stay balanced for and no blank
+    to keep bodies back for.
+    """
+    try:
+        return optimise_squad(pool, gameweek, budget=budget)
+    except OptimisationError:
+        return None
+
+
+def save_chip_plan(gameweek, chips):
+    """Freeze this gameweek's chip forecast so it can be scored later."""
+    rows = [(int(gameweek), e["chip"], int(e["gameweek"]), float(e["expected_gain"]),
+             utcnow()) for e in (chips or {}).get("schedule") or []]
+    with connect() as conn:
+        conn.execute("DELETE FROM ai_chip_plan WHERE gameweek = ?", (int(gameweek),))
+        conn.executemany(
+            """INSERT INTO ai_chip_plan (gameweek, chip, target_gw, expected_gain, created_at)
+               VALUES (?, ?, ?, ?, ?)""", rows)
+    return len(rows)
+
+
+def chip_plan_history(gameweek=None):
+    """What the bot said it would do with its chips, as it said it at the time."""
+    sql = ("SELECT gameweek, chip, target_gw, expected_gain FROM ai_chip_plan "
+           "{where} ORDER BY gameweek, target_gw")
+    args = []
+    where = ""
+    if gameweek is not None:
+        where, args = "WHERE gameweek = ?", [int(gameweek)]
+    with connect() as conn:
+        return [dict(r) for r in conn.execute(sql.format(where=where), args)]
 
 
 def _persist(gameweek, squad, bank, lineup, chip, moves, predicted):
@@ -430,36 +473,53 @@ def run_gameweek(pool, gameweek, budget=DEFAULT_BUDGET, persist=True):
     the same optimiser the Best XI uses - which is why that had to exist first.
     """
     state = load_state(pool)
-    gameweeks = sorted({e.get("event") for p in pool
-                        for e in (p.get("next_gameweeks") or []) if e.get("event")})
-    outlook = fixture_outlook(pool, gameweeks)
+    # Runs to the end of the season, not to the end of the rated pool's eight
+    # gameweeks: the chip scheduler has to count the weeks left before the
+    # GW19 reset, and it cannot do that from a horizon shorter than the
+    # deadline it is working to.
+    outlook = fixture_outlook(pool)
 
     if state is None or state.get("incomplete") or not state["squad"]:
         initial = build_squad(pool, gameweek, budget)
         squad = [{**p, "id": p["element_id"]} for p in initial["squad"]]
         bank = round(budget - initial["squad_cost"], 1)
-        moves, chips_used = [], []
+        moves, chips_played = [], []
         first_run = True
     else:
-        squad, bank, chips_used, first_run = (
-            state["squad"], state["bank"], state["chips_used"], False)
+        squad, bank, chips_played, first_run = (
+            state["squad"], state["bank"], state["chips_played"], False)
 
     prev_free = 1 if first_run else free_transfers_for(gameweek)
     lineup = best_lineup(squad, gameweek)
-    chips = plan_chips(squad, pool, gameweek, chips_used, outlook, lineup)
+    chips_used = chips_used_in_half(chips_played, gameweek)
+    chips = plan_chips(squad, pool, gameweek, chips_used, outlook, lineup, bank=bank)
     chip = chips["play"]
 
     moves = []
+    fielded = squad                       # what actually plays, which a free hit changes
     if not first_run:
         # A wildcard means the squad is rebuilt outright rather than nudged.
         if chip == "wildcard":
-            rebuilt = build_squad(pool, gameweek, budget + bank)
+            rebuilt = build_squad(pool, gameweek, budget + bank,
+                                  bench_weight=bench_build_weight(chips, gameweek))
             squad = [{**p, "id": p["element_id"]} for p in rebuilt["squad"]]
             bank = round(budget + bank - rebuilt["squad_cost"], 1)
+        elif chip == "freehit":
+            # A Free Hit is a rental: the best team money can buy for one week,
+            # reverting to the real squad afterwards. So the squad carried
+            # forward is deliberately NOT updated - only what gets fielded is.
+            pass
         else:
             result = evaluate_transfers(squad, pool, bank, gameweek, prev_free)
             squad, moves, bank = result["squad"], result["moves"], result["bank"]
         lineup = best_lineup(squad, gameweek)
+        fielded = squad
+
+    if chip == "freehit":
+        rental = free_hit_squad(pool, gameweek, budget + bank)
+        if rental is not None:
+            lineup, fielded = rental, [{**p, "id": p["element_id"]}
+                                       for p in rental["squad"]]
 
     predicted = (lineup or {}).get("predicted_points", 0.0)
     if chip == "bboost" and lineup:
@@ -471,7 +531,11 @@ def run_gameweek(pool, gameweek, budget=DEFAULT_BUDGET, persist=True):
     predicted = round(predicted - sum(m["hit"] for m in moves), 2)
 
     if persist:
-        _persist(gameweek, squad, bank, lineup, chip, moves, predicted)
+        # `fielded` is what played and is what gets scored; `squad` is what the
+        # bot still owns going into next week. They differ only on a Free Hit,
+        # which is exactly the week the distinction matters.
+        _persist(gameweek, fielded, bank, lineup, chip, moves, predicted)
+        save_chip_plan(gameweek, chips)
 
     return {
         "gameweek": gameweek, "first_run": first_run, "bank": bank,
