@@ -27,12 +27,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 _ctx = TestClient(main.app, raise_server_exceptions=False)
 client = _ctx.__enter__()
 
-# Startup no longer loads the ratings - it kicks off a background thread and
-# returns, so the container answers requests within seconds of a deploy instead
-# of being unreachable for a minute (see main.READY). That means the app is
-# LISTENING here but not yet READY, and every route that needs projections
-# answers 503 until it is. Waiting is what the suite used to get for free from
-# a blocking startup.
+# Startup does not load the ratings - it kicks off a background thread and
+# returns, so the container answers within seconds of a deploy instead of being
+# unreachable for a minute (see main.READY). So the app is LISTENING here but
+# not yet READY, and every route needing projections answers 503 until it is.
+# A blocking startup would have given the suite this wait for free.
 #
 # Failing loudly on a timeout rather than carrying on: a run that proceeded
 # would report several hundred spurious 503s, which reads as "the app is

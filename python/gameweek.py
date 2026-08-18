@@ -253,7 +253,7 @@ def latest_finished_gameweek(events=None):
 
 def detect_mode(fixtures_path=None, events=None):
     """'inseason' once the first gameweek's deadline has passed, 'preseason'
-    before it. Replaces the manual toggle that used to live in the navbar.
+    before it.
 
     Primary signal is the events list. If the API can't be reached, falls back
     to the cached fixtures CSV - any kickoff in the past means the season is

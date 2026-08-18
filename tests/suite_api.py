@@ -5,7 +5,6 @@ asserts the contract the front end depends on - a JSON object, the right keys,
 no 5xx - rather than specific values, which are whatever FPL says today.
 """
 
-import json
 import math
 
 import main
@@ -198,7 +197,7 @@ def test_search():
           note="tolerant: the pool depends on the season's data")
 
     # A broad query is the one most likely to sweep up a player with no
-    # prediction, which is what used to make this endpoint 500.
+    # prediction, which is what would make this endpoint 500.
     r = c.get("/api/search", params={"q": "a"})
     body = _json(r) or {}
     expect("a broad query still returns 200", "GET /api/search?q=a", 200,

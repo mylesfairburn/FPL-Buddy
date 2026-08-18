@@ -6,7 +6,6 @@ reader sees, so they're worth pinning down precisely.
 """
 
 import json
-import math
 import os
 import re
 import tempfile

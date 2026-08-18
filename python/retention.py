@@ -1,43 +1,40 @@
 """Deleting the things that have stopped being useful.
 
-Three kinds of generated content accumulate on the data volume, at three
-different rates, and none of them was ever removed:
+Three kinds of generated content accumulate on the data volume at three
+different rates:
 
     state/social/gwNN.txt           one per gameweek     ~38 a season
     state/social/roundup_gwNN.txt   one per gameweek     ~38 a season
     state/social/players/*.txt      one per NIGHT        ~250 a season
     player_post rows                one per night        ~250 a season
 
-The last two are the reason this module exists. A directory that gains a file
-a night is one nobody ever reads twice, and a table that gains a row a night
-is one whose "what did I post recently" query gets slower every day for no
-benefit.
+The last two are why this module exists. A directory that gains a file a night
+is one nobody reads twice, and a table that gains a row a night is one whose
+"what did I post recently" query gets slower every day for no benefit.
 
 What is deleted, and what deliberately is not
 ---------------------------------------------
 Only the DRAFTS and the nightly posts. The `gw_report` and `gw_roundup` rows -
-the published pages themselves - are never touched by anything in here. Those
-are the archive, they are indexed, and they are the fallback if a draft is ever
-needed again: a draft can be regenerated from a stored payload, but nothing can
-regenerate a payload.
+the published pages - are never touched. Those are the archive, they are
+indexed, and they are the fallback if a draft is needed again: a draft can be
+regenerated from a stored payload, but nothing regenerates a payload.
 
 When, and why then
 ------------------
-Each rule fires at a moment that has already happened for another reason,
+Each rule fires on a moment that has already happened for another reason,
 rather than on an age in days:
 
     a briefing is frozen      -> the PREVIOUS gameweek's briefing drafts go
     a roundup is saved        -> the previous roundup's drafts go
     a roundup is saved        -> every player post for that gameweek goes
 
-Tying deletion to those events rather than to a timer means the thing being
-deleted is always provably superseded. "Delete drafts older than 21 days" would
-be a rule about the calendar; "delete last week's drafts once this week's are
-final" is a rule about the drafts.
+Tying deletion to those events means the thing deleted is always provably
+superseded. "Delete drafts older than 21 days" is a rule about the calendar;
+"delete last week's drafts once this week's are final" is a rule about drafts.
 
-Everything here is safe to call repeatedly and safe to call when there is
-nothing to delete, because all three triggers fire on jobs that run every night
-for the rest of the season.
+Everything here is safe to call repeatedly and safe to call with nothing to
+delete - all three triggers fire on jobs that run nightly for the rest of the
+season.
 """
 
 import os

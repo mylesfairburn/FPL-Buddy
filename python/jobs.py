@@ -9,7 +9,7 @@ Two jobs rather than one, because they answer to different clocks:
   times and days (midweek rounds, 11:00 Saturday starts, blank/double weeks),
   so there's no daily slot that reliably lands just after one. Hourly polling of
   `deadline_time` catches them all, and the work is cheap enough to do 24x/day.
-  It carries three phases now, all keyed off the same poll: publish the postable
+  It carries three phases, all keyed off the same poll: publish the postable
   briefing about a day out, commit and freeze just before the deadline, capture
   real teams just after.
 
@@ -330,10 +330,8 @@ def refresh_season_stats():
     gameweek_stats.csv.
 
     This is what flips the app from preseason ratings (last season's averages)
-    to inseason ones. Nothing used to call it, and the writer/reader disagreed
-    about the path, so 'inseason' was unreachable however deep into the season
-    you got. Slow - roughly one API call per player - which is why it lives in
-    the nightly job.
+    to inseason ones. Slow - roughly one API call per player - which is why it
+    lives in the nightly job.
     """
     from pipeline import run_pipeline as _run
     data = _run()
@@ -624,10 +622,9 @@ def build_player_spotlight(force_date=None, position_dfs=None, events=None,
         # publishing the least uninteresting player in the game.
         log(f"{day}: no player clears the bar tonight - nothing written.")
 
-        # ...but say it somewhere a person will see. This used to end here, and
-        # the resulting silence was indistinguishable from the job not running
-        # at all - which is exactly how it was eventually found. Keyed on the
-        # date, so a manual re-run never sends a second one.
+        # ...but say it somewhere a person will see: silence here is
+        # indistinguishable from the job not running at all. Keyed on the date,
+        # so a manual re-run never sends a second one.
         # The exception text stays in the log and out of the message: it is a
         # path inside the container, which tells a phone nothing and is not
         # something to be posting into a chat channel.
@@ -902,8 +899,8 @@ def daily_maintenance():
     because each wants to happen once a day and a separate entry is another
     thing that can silently not be installed.
 
-    The staleness check used to be here too and is not any more - see the note
-    at the bottom of this function for why that was the wrong place for it.
+    The staleness check is deliberately NOT here - it has its own 05:00 cron
+    line, after every nightly job has run. See `check_staleness`.
 
     Every step is independently guarded. This is housekeeping attached to the
     end of the job that does the real work, and none of it is allowed to change
@@ -933,19 +930,6 @@ def daily_maintenance():
                 f"{', '.join(result['seasons'])}")
     except Exception as e:
         log(f"  pruning old caches FAILED: {e}")
-
-    # The staleness check used to run here, and it was in the wrong place.
-    #
-    # This job is the 03:00 line. It judged five jobs, three of which are
-    # scheduled AFTER it - gameweek-report at 03:15, indexnow at 03:30,
-    # seo-report at 04:00 - so on any night where the heartbeat table was
-    # young, it read three jobs that had simply not had their turn yet and
-    # reported all three as having never completed successfully. Which is
-    # exactly what it did on the first night after the table existed: one alert
-    # naming those three, all five green by 04:00.
-    #
-    # It now has its own 05:00 cron line calling `jobs.py status --alert`, after
-    # every nightly job has run. See deploy/fpl-buddy.cron.
 
 
 def check_staleness():
@@ -1188,7 +1172,7 @@ def send_test_alert():
         # The URL is a credential - anyone holding it can post to the channel -
         # so only the tail is printed. The tail rather than the head, because
         # every Discord webhook begins with the same 33 characters: showing the
-        # start distinguishes nothing, which is the mistake this used to make.
+        # start distinguishes nothing.
         shown = "…" + url[-12:] if len(url) > 12 else url
         ok, detail = ops.send(channel,
                               f"✅ **Test message — `{channel}`**\n"

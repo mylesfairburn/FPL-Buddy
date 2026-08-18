@@ -1,20 +1,12 @@
-"""Club colours, read out of static/kits.js so there is only one copy.
+"""Club colours, parsed out of static/kits.js so there is only one copy.
 
-The gameweek report is server-rendered - that's the point of it, since crawlers
-and language models don't run JavaScript - so it needs club colours in Python.
-kits.js already holds them, and the alternative to parsing that file is a
-second table in Python that silently disagrees with the first the next time a
-club is promoted.
+The gameweek report is server-rendered - crawlers and language models don't run
+JavaScript - so it needs club colours in Python. Duplicating the table here is
+how the two quietly disagree the next time a club is promoted.
 
-Only the colours are read, not the shirt geometry. A newspaper card wants a
-club chip rather than an 18px jersey, and porting the SVG path maths into
-Python would be duplicating the fiddly half of that file for no gain - the
-part that changes when a club goes up is one row of colours, which is exactly
-the part this reads.
-
-Colours are facts about a club rather than protected expression, which is why
-kits.js draws its own shirt in the first place. Nothing here touches club
-badges: those are trademarks, and unlike a hex code they are not ours to use.
+Only the colours are read, not the shirt geometry: a report card wants a club
+chip, not an 18px jersey. Nothing here touches club badges - those are
+trademarks, which is why kits.js draws its own shirt in the first place.
 """
 
 import os
@@ -41,11 +33,10 @@ def _kits_path():
 def team_colours():
     """team_code -> {name, primary, secondary}.
 
-    Parsed once and cached. An unreadable or restructured kits.js gives an
-    empty map rather than an exception: the report page then renders its chips
-    in the neutral fallback colour, which is a cosmetic loss, and taking the
-    whole page down over a stylesheet detail would not be a trade worth
-    making."""
+    Parsed once and cached. An unreadable kits.js gives an empty map rather
+    than an exception - chips fall back to neutral grey, which beats taking the
+    page down over a stylesheet detail.
+    """
     if not _CACHE:
         try:
             with open(_kits_path(), encoding="utf-8") as fh:
@@ -69,9 +60,9 @@ def team_colours():
 def colours_for(team_code):
     """One club's colours, or the neutral fallback for an unknown code.
 
-    A code with no entry is normal rather than exceptional - a club promoted
-    since the last edit of kits.js has one - and a grey chip is a better answer
-    than a missing element."""
+    A code with no entry is normal - a club promoted since kits.js was last
+    edited has one - and a grey chip beats a missing element.
+    """
     if team_code is None:
         return FALLBACK
     try:

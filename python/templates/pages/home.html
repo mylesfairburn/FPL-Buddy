@@ -10,9 +10,9 @@
        a crawler always gets the page itself. #}
     <script nonce="{{ csp_nonce }}">
         (function () {
-            // The tabs used to be '#pane-players' and friends on this URL. A
-            // fragment never reaches the server, so an old bookmark can only be
-            // rescued here, in the browser that still has it.
+            // Legacy '#pane-*' bookmarks. A fragment never reaches the
+            // server, so they can only be rescued here, in the browser that
+            // still has one.
             var legacy = {
                 '#pane-team': '/my-team', '#pane-ai-teams': '/ai-teams',
                 '#pane-players': '/players', '#pane-rotator': '/fixture-rotator'

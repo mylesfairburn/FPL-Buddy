@@ -1,29 +1,20 @@
 """Season-wide fixture shape: which gameweeks double, which blank, and when.
 
-The AI Manager used to derive this from the player pool's `next_gameweeks`
-lists, which is correct but short-sighted in the literal sense: those lists are
-built eight gameweeks deep (`rating_model.attach_per_gameweek_points`), so in
-GW1 the planner could not see that GW19 existed - let alone that it was a
-deadline. A chip planner that has to spend four chips before a reset needs to
-know how many gameweeks are left, and that number is only in the fixture list.
+Read from `fixtures.csv` rather than the player pool's `next_gameweeks`, which
+is only built eight gameweeks deep - in GW1 that leaves the chip planner unable
+to see GW19, let alone that it is a deadline. Two consequences:
 
-So this reads `fixtures.csv` directly, which covers the whole season. Two
-things follow from that which are worth knowing before trusting the output:
+  * A fixture with no `event` is one FPL has not scheduled yet, and is excluded
+    rather than guessed at. An unscheduled fixture is exactly how a double
+    gameweek is born, so assigning it now would invent doubles that don't exist.
 
-  * A fixture with no `event` is one FPL has not scheduled yet. Those are
-    excluded rather than guessed at - an unscheduled fixture is exactly how a
-    double gameweek is born, and pretending it belongs to a gameweek now would
-    invent doubles that do not exist.
+  * The structure is only as good as today's fixture list. Doubles and blanks
+    appear mid-season as postponements are rearranged - in 2025-26 every one
+    landed after GW26 - so the planner re-reads this each gameweek rather than
+    deciding in August.
 
-  * Consequently the structure is only as good as today's fixture list. Real
-    doubles and blanks appear mid-season as postponements are rearranged, which
-    is why the planner re-reads this every gameweek rather than deciding in
-    August. In 2025-26 the first half had no doubles and no blanks at all; every
-    one of them landed after GW26.
-
-The pool-derived version is kept as `outlook_from_pool` and used as a fallback,
-so a missing or unreadable fixtures file degrades to the old behaviour instead
-of leaving the planner with nothing.
+`outlook_from_pool` keeps the pool-derived version as a fallback, so an
+unreadable fixtures file degrades rather than leaving the planner with nothing.
 """
 
 import os
@@ -33,9 +24,8 @@ import pandas as pd
 import seasons
 
 # A team playing twice is a double gameweek only if enough of them do it that
-# the fixture list is meaningfully different - two teams doubling is a quirk,
-# six is a chip week. Likewise a blank. Both thresholds are carried over from
-# the pool-derived version so behaviour is unchanged where that already worked.
+# the fixture list is meaningfully different: two teams doubling is a quirk,
+# six is a chip week. Likewise a blank.
 DOUBLE_MIN_TEAMS = 4
 BLANK_MAX_TEAMS = 14
 

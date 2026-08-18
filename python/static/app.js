@@ -11,8 +11,7 @@
 // ---- Broken-image fallbacks ----
 // Images that should quietly disappear rather than show a broken-image icon
 // carry data-onerror="hide" (removes the space too) or "invisible" (keeps the
-// layout). One delegated listener replaces what used to be four inline
-// onerror="" attributes across the navbar, the footer and two chip templates.
+// layout). One delegated listener rather than inline onerror="" attributes.
 //
 // Inline handlers had to go before a Content-Security-Policy could be added:
 // script-src blocks an on* attribute whatever its content, and it blocks it
@@ -244,10 +243,9 @@ function wireClear(input, btn, cb) {
 //  MY TEAM
 // =====================================================================
 const FPL_ID_KEY = 'fpl_team_id';
-// There is no write token any more. Saves used to carry a per-id secret from
-// localStorage, which meant the squad loaded anywhere but could only be EDITED
-// on the browser that first saved it — the exact opposite of the point of
-// keeping drafts on the server. See the drafts.py docstring for the trade.
+// Saves carry no write token. A per-id secret in localStorage would load the
+// squad anywhere but let it be EDITED only on the browser that first saved it,
+// which defeats keeping drafts on the server. See the drafts.py docstring.
 const idPrompt = document.getElementById('idPrompt');
 const idInput = document.getElementById('idInput');
 const idSave = document.getElementById('idSave');
@@ -1635,9 +1633,8 @@ function ensurePlayers() {
     if (allPlayers) return Promise.resolve(allPlayers);
     return fetch('/api/all_players').then(r => r.json()).then(d => { allPlayers = d.players || []; return allPlayers; });
 }
-// Empty starting squad (4-4-2, GK/DEF/MID/FWD bench) used to show the
-// normal pitch view with "Add player" slots when there's nothing to load
-// yet — replaces the old separate team-builder page.
+// Empty starting squad (4-4-2, GK/DEF/MID/FWD bench) so the normal pitch view
+// shows "Add player" slots when there is nothing to load yet.
 function emptySquad() {
     const rows = [
         { pos: 'GK', starting: true }, { pos: 'GK', starting: false },

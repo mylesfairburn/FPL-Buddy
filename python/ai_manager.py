@@ -30,8 +30,7 @@ import fixture_structure
 from db import AI_MANAGER_FPL_ID, connect, utcnow
 from fixture_structure import chip_half, half_deadline
 from squad_optimiser import (DEFAULT_BUDGET, MAX_PER_CLUB, OptimisationError,
-                             SQUAD_QUOTA, availability, optimise_squad,
-                             team_rating, verify)
+                             availability, optimise_squad, team_rating)
 from valuation import (HORIZON, SQUAD_HORIZON, SQUAD_WEIGHT,
                        coverage_requirement, horizon_value,
                        squad_selection_values)
@@ -411,17 +410,6 @@ def save_chip_plan(gameweek, chips):
                VALUES (?, ?, ?, ?, ?)""", rows)
     return len(rows)
 
-
-def chip_plan_history(gameweek=None):
-    """What the bot said it would do with its chips, as it said it at the time."""
-    sql = ("SELECT gameweek, chip, target_gw, expected_gain FROM ai_chip_plan "
-           "{where} ORDER BY gameweek, target_gw")
-    args = []
-    where = ""
-    if gameweek is not None:
-        where, args = "WHERE gameweek = ?", [int(gameweek)]
-    with connect() as conn:
-        return [dict(r) for r in conn.execute(sql.format(where=where), args)]
 
 
 def _persist(gameweek, squad, bank, lineup, chip, moves, predicted):

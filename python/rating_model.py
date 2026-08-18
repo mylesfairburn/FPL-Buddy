@@ -166,9 +166,9 @@ def build_per_gameweek_fixture_features(fixtures_df, n_fixtures=3):
 
     if not rows:
         return pd.DataFrame()
-    # `fpl_difficulty` is carried through untouched for the UI - it is what
-    # colours each fixture cell, and the front end uses the same 1-5 key as the
-    # rotator page. It is no longer a model input.
+    # `fpl_difficulty` is carried through untouched for the UI only - it
+    # colours each fixture cell on the same 1-5 key as the rotator page. Not a
+    # model input.
     return _opponent_rank_columns(pd.concat(rows, ignore_index=True),
                                   _current_strength_ranks())
 
@@ -436,14 +436,12 @@ def zero_unavailable_points(position_dfs, fixtures_df, now=None):
                 blocked_now = back is None or back > now
             new_gameweeks.append(out)
             new_points.append(0.0 if blocked_now else predicted)
-            # The rating goes with it. It used to be left alone, which was
-            # survivable while it was a percentile of predicted_points and the
-            # two at least moved together - but it still meant a torn hamstring
-            # showed "0.0 predicted, rating 94". Ranking on points_if_starts
-            # makes that worse rather than better, because ability is exactly
-            # what an injury doesn't touch: the best unavailable players would
-            # sit at the top of a table sorted by rating. A player who cannot
-            # play this round is not a 94.
+            # The rating goes with it, or a torn hamstring shows "0.0
+            # predicted, rating 94". Ranking on points_if_starts makes leaving
+            # it alone worse, not better: ability is exactly what an injury
+            # doesn't touch, so the best unavailable players would sit at the
+            # top of a table sorted by rating. A player who cannot play this
+            # round is not a 94.
             new_ratings.append(0.0 if blocked_now else rating)
 
         df["next_gameweeks"] = pd.Series(new_gameweeks, index=df.index, dtype=object)
@@ -663,15 +661,13 @@ def _attach_price(df):
 # How much rotation risk the preseason rating carries, as the exponent on
 # start probability in `rating_basis`.
 #
-# Ranking on ability alone (0.0) fixed the original complaint - the table had
-# been sorted by who was nailed on rather than who was good - but overshot:
-# it put Diop top of the defenders on a 26% chance of starting and 1.6
-# projected points. Ranking on predicted_points (effectively 1.0) is the other
-# end, where Saka sits 12th of the midfielders. Both questions are real, so
-# the exponent picks a point between them.
+# The two ends are both wrong. Ranking on ability alone (0.0) puts Diop top of
+# the defenders on a 26% chance of starting and 1.6 projected points; ranking on
+# predicted_points (1.0) drops Saka to 12th of the midfielders. Both questions
+# are real, so the exponent picks a point between them.
 #
-# Measured on the current pool, as share of the ordering's variance coming
-# from ability rather than from minutes, with two players as landmarks:
+# Measured on the current pool, as the share of the ordering's variance coming
+# from ability rather than minutes, with two players as landmarks:
 #
 #     w     ability   Diop (DEF)   Saka (MID)
 #   0.00      100%        1/105        3/141
@@ -681,25 +677,21 @@ def _attach_price(df):
 #   0.40       16%       61/105        5/141
 #   1.00        3%       89/105       12/141
 #
-# Note what those numbers do NOT say: at 0.25 minutes still carry 70% of the
-# ordering. A quarter-power sounds like a light touch and isn't, because the
-# two inputs have wildly different spreads - start probability runs 0.03-0.98
-# while points_if_starts is squeezed into sd 0.40 by the preseason fallback,
-# so even a quarter of the wide one outweighs all of the narrow one. The
-# 50/50 crossover is near 0.15, not 0.5. Chosen on the ordering it produces
-# rather than on that split: 0.25 is the point where the clearly-wrong cases
-# at both ends (Diop first, Saka twelfth) are both gone.
+# A quarter-power sounds like a light touch and isn't: at 0.25 minutes still
+# carry 70% of the ordering, because the inputs have wildly different spreads.
+# Start probability runs 0.03-0.98 while points_if_starts is squeezed to sd 0.40
+# by the preseason fallback, so the 50/50 crossover is near 0.15, not 0.5. 0.25
+# is where the clearly-wrong cases at both ends are both gone.
 #
-# Retune by moving this one number; nothing else needs to change. It stops
-# mattering entirely once three gameweeks exist, because the fallback lifts
-# and predicted_points becomes the basis again.
+# Retune by moving this one number. It stops mattering once three gameweeks
+# exist, when the fallback lifts and predicted_points becomes the basis again.
 PRESEASON_START_WEIGHT = 0.25
 
 
 # ---------------------------------------------------------------------------
 #  Dispersion calibration
 # ---------------------------------------------------------------------------
-# The preseason model is right in the middle and far too narrow at the edges.
+# The preseason model is centred correctly and far too narrow at the edges.
 # Measured against last season's realised points per start:
 #
 #                        model    real
@@ -708,20 +700,17 @@ PRESEASON_START_WEIGHT = 0.25
 #     p90                 4.34    4.94
 #     share >= 5.0        1.8%    9.7%     <- five times too few
 #
-# That is a calibration fault, not the model honestly declining to guess. A
-# forecast whose marginal distribution does not match the outcomes it predicts
-# is mis-calibrated in a way that has a standard correction, and this is it:
-# map each player's points-per-start onto the quantile of last season's
-# realised distribution that sits at the same rank.
+# That is a calibration fault, not the model honestly declining to guess, and it
+# has a standard correction: map each player's points-per-start onto the
+# quantile of last season's realised distribution at the same rank.
 #
-# What that does and does not claim matters. The map is monotone, so the
-# ORDER is untouched - it adds no information about who is better than whom,
-# and cannot, because there is none to add. It only fixes the shape. A player
-# the model cannot distinguish from his neighbour still can't be; he is just
-# no longer reported as a 3.7 when a player at his rank scored 4.9.
+# The map is monotone, so the ORDER is untouched - it adds no information about
+# who is better than whom, because there is none to add. It only fixes the
+# shape. A player the model cannot separate from his neighbour still isn't
+# separated; he is just no longer reported as a 3.7 when his rank scored 4.9.
 #
-# Preseason only. In season the rolling windows carry real signal, the model's
-# own dispersion recovers, and applying this on top would over-correct.
+# Preseason only. In season the rolling windows carry real signal and the
+# model's own dispersion recovers, so applying this on top would over-correct.
 
 # Cut-offs for the target distribution: enough starts that a per-start average
 # means something, and 60 minutes as the definition of a start (matching the
@@ -922,14 +911,13 @@ def predict_ratings(position_dfs, model_bundles, form_features, fixture_features
     entirely. See PRESEASON_START_WEIGHT for why the preseason value sits
     where it does.
 
-    The knob exists because on the preseason fallback predicted_points is the
-    wrong basis. `points_if_starts` collapses to near-constant when every
-    player's "form" is a whole-season average - measured at sd 0.40 for
-    defenders and 0.18 for goalkeepers, against last season's realised 0.96 -
-    and a product with one near-constant factor is just the other factor. 96%
-    of the variance in the resulting order came from start_probability, so the
-    table ranked by who was nailed on rather than who was good, and pushed
-    Saka and Cherki below squad players who happened to be first choice.
+    The knob exists because predicted_points is the wrong basis on the
+    preseason fallback. `points_if_starts` collapses to near-constant when
+    every player's "form" is a whole-season average - sd 0.40 for defenders and
+    0.18 for keepers, against last season's realised 0.96 - and a product with
+    one near-constant factor is just the other factor. That left 96% of the
+    order's variance coming from start_probability, ranking the table by who
+    was nailed on rather than who was good.
 
     None of this pretends the model can separate players it cannot: the spread
     stays as narrow as it honestly is. It only decides what sorts the page.

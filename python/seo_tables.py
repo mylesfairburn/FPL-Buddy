@@ -2,35 +2,31 @@
 
 Why this exists
 ---------------
-`/players`, `/ai-teams` and `/fixture-rotator` build every table in the browser
-from `/api/*`. That is the right architecture for a person - the tables sort,
-filter and refresh without a page load - and it is invisible to everything else.
-Crawlers largely do not run JavaScript, and `robots.txt` disallows `/api/`
-anyway, so the endpoints holding the data are the ones nothing is allowed to
-fetch. The result was that the best content on the site - several hundred rated
-players, two solved squads a week, twenty clubs' fixture difficulty - existed
-only as an empty <tbody> as far as a search engine or a language model was
-concerned.
+`/players`, `/ai-teams` and `/fixture-rotator` build their tables in the browser
+from `/api/*`. That is right for a person - they sort, filter and refresh
+without a page load - and invisible to everything else: crawlers largely do not
+run JavaScript, and `robots.txt` disallows `/api/` anyway. So the best content
+on the site - several hundred rated players, two solved squads a week, twenty
+clubs' fixture difficulty - existed only as an empty <tbody> to a search engine.
 
-So the same rows are also rendered on the server, into the very containers the
-scripts later fill. Not a second copy of the page behind a `noscript`, and not a
-crawler-only variant: one set of markup that a browser upgrades in place. That
-matters beyond tidiness - serving a crawler different content from a reader is
-cloaking, and the way to be obviously not doing it is to have only one version.
+The same rows are therefore also rendered on the server, into the very
+containers the scripts later fill. Not a `noscript` copy and not a crawler-only
+variant: one set of markup a browser upgrades in place. Serving a crawler
+different content from a reader is cloaking, and the way to be obviously not
+doing it is to have only one version.
 
 What it is not
 --------------
-This is a snapshot, not the tool. It carries the top of each table with no
-controls: no sorting, no filtering, no gameweek arrows. Anyone with JavaScript
-gets the real thing a moment later, and anyone without gets something worth
-reading rather than an empty box.
+A snapshot, not the tool. The top of each table, no controls - no sorting, no
+filtering, no gameweek arrows. Anyone with JavaScript gets the real thing a
+moment later; anyone without gets something worth reading.
 
 Cost
 ----
 Everything here is derived once per data load and cached by the caller (see
-`seo_tables()` in main.py), the same way the per-player pages are. Nothing is
-computed inside a request: these pages are the ones crawlers hit hardest, and
-re-deriving several hundred rows per hit is how a crawl turns into an outage.
+`seo_tables()` in main.py). Nothing is computed inside a request: these are the
+pages crawlers hit hardest, and re-deriving several hundred rows per hit is how
+a crawl turns into an outage.
 """
 
 # How much of each table to serve. Enough to be substantial and to cover every

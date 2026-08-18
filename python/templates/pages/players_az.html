@@ -85,13 +85,11 @@
     // keystroke: 570 normalize() calls per character typed is the difference
     // between instant and laggy on a phone.
     //
-    // The source is `data-name`, which holds the display name and the full name
-    // and nothing else. It used to be li.textContent - the whole rendered row -
-    // which quietly made the club, the position and the price searchable too.
-    // That reads like a feature and isn't one: "mid" matched every midfielder,
-    // "for" every forward, "9" everyone priced in the nines, and a search for a
-    // player whose surname happens to be a club name returned the club instead.
-    // This page is an index of names; /players is where filtering lives.
+    // The source is `data-name` - display name and full name, nothing else.
+    // Searching li.textContent instead would make club, position and price
+    // searchable too, which reads like a feature and isn't: "mid" matches every
+    // midfielder, "for" every forward, "9" everyone priced in the nines. This
+    // page is an index of names; /players is where filtering lives.
     //
     // Falls back to textContent if the attribute is somehow missing, so a
     // template change can't leave the box matching nothing at all.

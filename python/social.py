@@ -22,7 +22,7 @@ import db
 # Chip display names live in chip_model - the planner, the team view and these
 # posts all have to call a chip the same thing, and three copies of the map is
 # how they stop doing that.
-from chip_model import CHIP_NAMES, chip_name
+from chip_model import chip_name
 
 # One X post. The real limit is 280; the margin is for the edit you make before
 # posting, so a word added by hand doesn't silently push it over.
@@ -84,12 +84,11 @@ def _deadline_line(report, stage):
 # ---------------------------------------------------------------------------
 #  Facts
 #
-#  The drafts used to be a list of names: "In form: Semenyo, Saka, Wood". That
-#  is the shape of a post nobody engages with, because it asserts a ranking and
-#  shows none of the reasoning - a reader has no way to tell whether it came
-#  from a model or from a coin. Everything below exists to put the number next
-#  to the name, which is the only thing that makes a generated post worth
-#  reading and is also the site's whole argument for itself.
+#  A draft that is just a list of names - "In form: Semenyo, Saka, Wood" -
+#  asserts a ranking and shows none of the reasoning, so a reader cannot tell
+#  whether it came from a model or a coin. Everything below exists to put the
+#  number next to the name, which is what makes a generated post worth reading
+#  and is the site's whole argument for itself.
 # ---------------------------------------------------------------------------
 
 def _n(value, dp=1):
@@ -1372,21 +1371,19 @@ def list_drafts():
 # ---------------------------------------------------------------------------
 #  Outreach
 #
-#  The weekly email to a handful of FPL writers. Same rule as everything else
-#  in this file and for the same reason: the machine writes it, a person sends
-#  it. Sending is left manual deliberately, and not out of caution -
+#  The weekly email to a handful of FPL writers. Same rule as the rest of this
+#  file: the machine writes it, a person sends it. Manual on purpose -
 #
 #    * the personal read IS the mechanism. A merge field is visible from orbit,
 #      and an obviously-generated round-robin is worth less than no email.
-#    * deliverability. This domain also sends nothing else, and it is the one
-#      serving the site; twenty near-identical messages a week from a young
-#      domain is how it ends up spam-foldered, taking anything else with it.
+#    * deliverability. This domain serves the site and sends nothing else;
+#      twenty near-identical messages a week from a young domain is how it gets
+#      spam-foldered, taking everything else with it.
 #    * UK PECR treats sole traders and individuals as individuals, and most FPL
-#      creators are one or the other. Fifteen hand-sent emails is a different
-#      thing from an automated list, legally as well as practically.
-#    * the recipient list is personal data. Keeping it in a text file the
-#      author maintains, rather than in this app's database, keeps it out of
-#      scope of everything the privacy policy has to describe.
+#      creators are one or the other. Fifteen hand-sent emails is legally a
+#      different thing from an automated list.
+#    * the recipient list is personal data. Keeping it in a text file rather
+#      than this app's database keeps it out of the privacy policy's scope.
 #
 #  So there is no send() here and there should not be one.
 # ---------------------------------------------------------------------------

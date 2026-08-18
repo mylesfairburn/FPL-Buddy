@@ -1,37 +1,32 @@
 """The squad a manager is working on in this app, stored server-side.
 
-Keyed on FPL id alone, so the same team follows you between devices. This
-replaces the old per-device localStorage draft.
+Keyed on FPL id alone, so the same team follows you between devices.
 
 The lifecycle mirrors the real game:
 
   * Before a deadline you edit the draft freely. It's yours, it's provisional,
     and it lives for the gameweek named in `gameweek`.
   * When that deadline passes the hourly watcher overwrites it with the picks
-    you actually made in the official FPL game and re-points it at the next
-    gameweek. Whatever you'd been experimenting with here is gone, because from
-    that moment your real team is the only thing that counts.
+    you actually made in the official game and re-points it at the next
+    gameweek. Whatever you were experimenting with is gone, because from that
+    moment your real team is the only thing that counts.
 
-`source` records which of the two a stored row is ('user' or 'official'), so
-the UI can tell you whether you're looking at your own draft or your locked-in
-team rather than silently blurring them.
+`source` records which of the two a row is ('user' or 'official'), so the UI can
+say whether you are looking at your draft or your locked-in team.
 
-Nothing here is authenticated, reads or writes. Anyone who knows an FPL id can
+Nothing here is authenticated, reads or writes: anyone who knows an FPL id can
 read, overwrite or delete that id's draft.
 
-That was a deliberate reversal. Writes used to be gated by a trust-on-first-use
-token, held in one browser's localStorage, so that a guessable integer couldn't
-overwrite a stranger's squad. The token had no way to travel: saving on a phone
-and then opening a laptop produced "claimed by another device", which is
-precisely the cross-device promise this module was written to make in the first
-place. The lock was defeating the feature it was attached to, and the thing it
-protected is a PREVIEW - `replace_with_official` overwrites it with the
-manager's real picks at every deadline anyway. Losing a draft to a stranger
-costs one re-pick of a provisional squad; being unable to save from your own
-second device cost the feature.
+That is a deliberate trade, not an oversight. Gating writes behind a
+trust-on-first-use token in localStorage meant the token could not travel -
+saving on a phone then opening a laptop gave "claimed by another device", which
+is exactly the cross-device promise this module exists to make. What it
+protected is a PREVIEW that `replace_with_official` overwrites at every deadline
+anyway. Losing a draft to a stranger costs one re-pick; being unable to save
+from your own second device cost the feature.
 
-So the trade is stated rather than hidden: an FPL id is public, and a draft
-stored against one is public too, in both directions.
+So it is stated rather than hidden: an FPL id is public, and a draft stored
+against one is public too, in both directions.
 """
 
 from db import connect, utcnow
@@ -183,16 +178,3 @@ def replace_with_official(fpl_id, squad, gameweek, bank=None, next_gameweek=None
     return save_draft(fpl_id, picks,
                       gameweek=next_gameweek if next_gameweek is not None else gameweek,
                       bank=bank, source="official")
-
-
-def drafts_for(fpl_ids):
-    """Which of these managers have a stored draft - lets the watcher skip
-    anyone who has never used the app."""
-    ids = [int(i) for i in fpl_ids]
-    if not ids:
-        return set()
-    marks = ",".join("?" * len(ids))
-    with connect() as conn:
-        rows = conn.execute(
-            f"SELECT fpl_id FROM manager_draft WHERE fpl_id IN ({marks})", ids).fetchall()
-    return {r["fpl_id"] for r in rows}

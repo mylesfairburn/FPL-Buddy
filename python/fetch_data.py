@@ -14,11 +14,10 @@ def get_bootstrap_data(cache_path=None, season=None):
     """All players, teams, positions and season totals in one call.
 
     ALWAYS returns a dict shaped like the API response ('elements', 'teams',
-    'element_types', 'events'). It used to return a DataFrame on the fallback
-    path, which meant every caller doing `data['elements']` died with a
-    KeyError the moment the FPL API was unreachable - taking down app startup
-    and any scheduled job with it, precisely when you'd want them to degrade
-    quietly instead.
+    'element_types', 'events') - including on the cache fallback path, so a
+    caller doing `data['elements']` cannot die with a KeyError the moment the
+    FPL API is unreachable, which would take down app startup and every
+    scheduled job precisely when they should degrade quietly.
 
     Three tiers: live API, then the whole cached JSON payload, then a dict
     rebuilt from the individual CSVs (which is all older caches have).
@@ -99,29 +98,6 @@ def get_fixtures(cache_path=None, season=None):
             print("No cached fixtures either - returning empty.")
             return pd.DataFrame()
 
-
-def get_my_team(team_id, event_id, cache_path=None):
-    """Pulls a manager's picks for a given gameweek by their FPL team ID -
-    found in the URL when viewing your team on the FPL site
-    (fantasy.premierleague.com/entry/{team_id}/event/{gw}).
-    Public data, no login needed, unless the manager has set their team to
-    private. Picks for a gameweek only exist once that gameweek has started -
-    there's nothing to fetch before the season's first deadline."""
-    cache_path = cache_path or seasons.season_file(
-        f"my_team_gw{event_id}.csv", create_dir=True)
-    try:
-        url = f"{BASE}/entry/{team_id}/event/{event_id}/picks/"
-        response = requests.get(url, timeout=20)
-        response.raise_for_status()
-        picks = pd.DataFrame(response.json()["picks"])
-        picks.to_csv(cache_path, index=False)
-        return picks
-    except (requests.exceptions.RequestException, ValueError, KeyError):
-        print("API unavailable, falling back to cached team")
-        try:
-            return pd.read_csv(cache_path)
-        except (FileNotFoundError, OSError):
-            return pd.DataFrame()
 
 
 def get_previous_season_fixture_strength(fixtures_path=None, teams_path=None, season=None):

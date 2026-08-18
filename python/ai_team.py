@@ -104,12 +104,10 @@ def get_snapshot(gameweek, pool=None):
         "generated_at": head["generated_at"],
         "squad": _enrich(picks, pool_by_id),
         "stored": True,
-        # Deliberately absent on a stored snapshot. A team rating is the mean of
-        # its players' ratings, and ratings are recomputed nightly - so deriving
-        # one here would describe how good these players are TODAY and print it
-        # against a squad picked weeks ago. Cost and predicted points are frozen
-        # in the snapshot and can be shown honestly; a rating isn't stored, so
-        # the only honest answer is not to state one.
+        # Deliberately absent. Ratings are recomputed nightly, so deriving one
+        # here would describe these players TODAY against a squad picked weeks
+        # ago. Unlike cost and predicted points, it isn't frozen in the
+        # snapshot, so there is no honest figure to state.
         "team_rating": None,
     }
 

@@ -19,9 +19,8 @@ so adding a season is creating one directory - no code edit, no renaming a
       models/                    trained model bundles
 
 A completed season's directory is READ-ONLY to the app. Only the current
-season's files are ever written, so last season's training data can't be
-clobbered by a live fetch - which is exactly what used to happen when the
-element-summary cache and the current-season pull shared one folder.
+season's files are ever written, so a live fetch cannot clobber last season's
+training data.
 """
 
 import os

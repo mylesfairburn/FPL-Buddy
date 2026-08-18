@@ -1,10 +1,5 @@
-"""
-Phase 3 pipeline: pulls fresh FPL data and builds the position-split DataFrames
-used by the rest of the project.
-
-NOTE: rating generation isn't wired in yet - that slots in here once
-train_model.py produces a trained model to score players with. For now this
-just gets you clean, fetched data ready to work with.
+"""Pulls fresh FPL data and builds the position-split DataFrames the rest of
+the project works from.
 """
 
 import pandas as pd
@@ -22,13 +17,11 @@ def build_position_dfs(players_df, positions_df):
 
 
 def run_pipeline(pull_gameweek_history=False):
-    """Runs the full data pull. Set pull_gameweek_history=True to also refresh
-    this season's per-gameweek stats (slow - one API call per player, so the
-    nightly job does it, not app startup).
+    """Runs the full data pull.
 
-    get_bootstrap_data() now always returns a dict, including when the API is
-    unreachable, so the subscripts below can't blow up mid-outage."""
-
+    pull_gameweek_history also refreshes this season's per-gameweek stats: one
+    API call per player, so the nightly job does it, not app startup.
+    """
     all_data = get_bootstrap_data()
 
     players_df = pd.DataFrame(all_data.get('elements') or [])
@@ -60,4 +53,5 @@ def run_pipeline(pull_gameweek_history=False):
 
 if __name__ == '__main__':
     result = run_pipeline()
-    print(f"Pulled {len(result['players_df'])} players across "f"{len(result['position_dfs'])} positions.")
+    print(f"Pulled {len(result['players_df'])} players across "
+          f"{len(result['position_dfs'])} positions.")

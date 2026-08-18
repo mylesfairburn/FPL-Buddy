@@ -135,25 +135,21 @@ def team_rating(squad):
     and says nothing about the total they will return on Saturday. The
     Predicted chip beside it is the number that answers that.
 
-    Two further reasons the two can move apart: this reads `rating` from the
-    pool as it stands today, not as it stood for any particular gameweek, and
-    it takes no account of captaincy, of that week's fixtures, or of a starter
-    who is a doubt to play at all.
+    It also takes no account of captaincy, of that week's fixtures, or of a
+    starter who is a doubt to play at all.
 
-    Starters only, and deliberately. Averaging all fifteen would drag every team
-    towards the middle through the two cheap bench fillers nobody intends to
-    play - and it would rate a £100m squad and a £83m squad about the same,
-    because the difference between them is mostly in the eleven. Comparing
-    elevens is the comparison a manager is actually making.
+    Starters only, deliberately. Averaging all fifteen drags every team toward
+    the middle through the two cheap bench fillers nobody intends to play, and
+    rates a £100m squad and an £83m one about the same - the difference between
+    them is mostly in the eleven, which is the comparison a manager is making.
 
-    Returns None rather than a number for a partial squad, since an average
-    over seven players isn't the same measurement and shouldn't be printed as
-    though it were.
+    Returns None for a partial squad: an average over seven players is not the
+    same measurement and shouldn't be printed as though it were.
 
-    Note this reads `rating` from the pool the squad was built from, so it is
-    always a statement about the players as rated TODAY. Callers holding a
-    stored squad from an earlier gameweek should not present it as that
-    gameweek's rating - see ai_team.get_snapshot.
+    Reads `rating` from the pool the squad was built from, so it is always a
+    statement about the players as rated TODAY. Callers holding a stored squad
+    from an earlier gameweek must not present it as that gameweek's rating -
+    see ai_team.get_snapshot.
     """
     starters = [p for p in squad or [] if p.get("starting")]
     if len(starters) != XI_SIZE:

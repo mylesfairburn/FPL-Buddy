@@ -482,17 +482,15 @@ def get_performance_gap_players(position_dfs, direction="under", top_n=20,
       - Goalkeepers/defenders: goals conceded above expected goals conceded
         (xGC) - the defence/keeper shipping more than the play suggests.
 
-    `direction="over"` - the mirror image, and the reason this function took a
-    parameter rather than being copied: goals ABOVE xG, and goals conceded
-    BELOW xGC. Every other decision here applies unchanged to both, so the only
-    thing that actually flips is the sign of `diff`.
+    `direction="over"` - the mirror image: goals ABOVE xG, goals conceded BELOW
+    xGC. Only the sign of `diff` flips, which is why this takes a parameter
+    rather than being copied.
 
-    Read them differently, though, and the UI says so. An underperformer is a
-    player who may be due a correction upward. An overperformer is NOT the
-    same claim in reverse with a buy signal attached - it is a player whose
-    returns are ahead of the play underneath them, which is as often a finisher
-    on a hot run as it is a signal to sell. The honest framing is "this may not
-    hold", not "this will revert".
+    They are read differently, though, and the UI says so. An underperformer may
+    be due a correction upward. An overperformer is NOT that claim in reverse
+    with a buy signal attached - it is as often a finisher on a hot run as a
+    sell signal, so the honest framing is "this may not hold", not "this will
+    revert".
 
     Both are FPL's own underlying-stat fields, straight from bootstrap-static.
     Falls back to last season's full totals (keyed by the season-stable 'code',

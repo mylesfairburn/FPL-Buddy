@@ -1,47 +1,45 @@
 """When to play a chip, treated as a scheduling problem rather than a threshold.
 
-The old rule asked one question per chip - "is this week good enough?" - against
-a hard-coded number. That question has no right answer, because the value of
-playing a chip this week is not a property of this week. It is the difference
-between this week and the best week left, and a rule that never looks at the
-weeks left cannot see it. In practice it failed in both directions: a bench
-projecting 18 points fires the Bench Boost in GW3 whether or not GW9 is a
-double, and a captain threshold set in actual-points intuition (9.0) against a
-model that shrinks its top midfielders to 5-6.5 never fires at all.
+Asking one question per chip - "is this week good enough?" - against a
+hard-coded number has no right answer, because the value of playing a chip this
+week is not a property of this week. It is the difference between this week and
+the best week left. A rule that never looks at the weeks left fails in both
+directions: a bench projecting 18 points fires the Bench Boost in GW3 whether or
+not GW9 is a double, and a captain threshold set in actual-points intuition
+(9.0) never fires against a model that shrinks its top midfielders to 5-6.5.
 
 What actually constrains the problem:
 
-  * Four chips, at most one a gameweek, and every one of them is returned after
-    GW19. A chip not played by then is not saved, it is wasted.
-  * So the real question is an assignment: which gameweek does each chip go in?
+  * Four chips, at most one a gameweek, all returned after GW19. A chip not
+    played by then is not saved, it is wasted.
+  * So the real question is an assignment - which gameweek does each chip go in?
     That is an integer program, and PuLP is already here solving the same shape
     for squad selection.
 
-Framing it that way makes the deadline behaviour fall out instead of needing a
+Framing it that way makes the deadline behaviour fall out rather than needing a
 countdown special case. Early in a half there are far more gameweeks than chips,
-the solver has slack, and it parks each chip on the best week it can see -
-which is usually not this one, so the bot holds. As the weeks run down the slack
-disappears, and when there are exactly as many gameweeks left as chips the
-assignment is forced. Nothing has to notice that GW18 is approaching.
+so the solver has slack and parks each chip on the best week it can see - not
+usually this one, so the bot holds. As the weeks run down the slack disappears,
+and when there are as many gameweeks left as chips the assignment is forced.
+Nothing has to notice that GW18 is approaching.
 
-The other half of the problem is that a gameweek eight weeks out has no squad to
-evaluate - transfers between now and then will change it. So a far gameweek is
-scored by what a chip is *typically* worth in a week of its kind (double, blank,
-ordinary), measured by simulating last season in train_chip_model.py. Those
-priors are read from data/reference/chip_priors.json.
+The other half of the problem: a gameweek eight weeks out has no squad to
+evaluate, since transfers will change it. So a far gameweek is scored by what a
+chip is *typically* worth in a week of its kind (double, blank, ordinary),
+measured by simulating last season in train_chip_model.py and read from
+data/reference/chip_priors.json.
 
-One subtlety in how the priors are used. The value of holding a chip for eleven
-more weeks is not the value of a typical week - it is the value of the best of
-eleven weeks, because you get to choose. Scoring far weeks at the median would
-systematically undervalue waiting and make the bot spend early. So far weeks are
-scored at an order-statistic quantile of the prior, q = 1 - 1/(n+1) for n
-remaining opportunities, which is the expected maximum of n draws. As n falls
-that quantile falls with it, near weeks start winning on merit, and the bot
-becomes decisive on its own.
+One subtlety in how those priors are used. The value of holding a chip for
+eleven more weeks is not the value of a typical week - it is the value of the
+best of eleven, because you get to choose. Scoring far weeks at the median would
+undervalue waiting and make the bot spend early, so they are scored at an
+order-statistic quantile, q = 1 - 1/(n+1) for n remaining opportunities, which
+is the expected maximum of n draws. As n falls that quantile falls with it, near
+weeks start winning on merit, and the bot becomes decisive on its own.
 
 Everything here is a pure function of the rated pool and the fixture list. No
 database, no persistence - the AI Manager owns those, and the user-facing chip
-advice on My Team calls the same functions against the user's own squad.
+advice on My Team calls these same functions against the user's own squad.
 """
 
 import json
@@ -236,10 +234,6 @@ def context_quantile(chip, context, quantile, priors=None):
     value = _interpolate(qs, quantile)
     return value if value is not None else prior_quantile(chip, quantile, priors)
 
-
-def conditional_prior(chip, context, priors=None):
-    """What a chip is typically worth in a week of this kind."""
-    return context_quantile(chip, context, 0.5, priors)
 
 
 def percentile_of(chip, value, priors=None):

@@ -176,20 +176,13 @@ CREATE TABLE IF NOT EXISTS manager_draft_picks (
 );
 CREATE INDEX IF NOT EXISTS idx_draft_picks ON manager_draft_picks (draft_id);
 
--- DEAD as of the removal of the per-device draft lock. Nothing reads or writes
--- this table any more; drafts.py no longer imports hashlib at all.
+-- DEAD: nothing reads or writes this. It bound draft writes to the browser
+-- that first saved one, at the cost of the cross-device saving the drafts
+-- table exists for - see the drafts.py docstring.
 --
--- It used to bind writes on an FPL id to the browser that first saved one, so
--- that a guessable public integer could not overwrite a stranger's squad. What
--- that cost was the feature the drafts table exists for: the token lived in one
--- browser's localStorage and could not travel, so a manager who saved on a
--- phone could not save from a laptop. See the drafts.py docstring.
---
--- Kept as a CREATE rather than dropped, and kept deliberately: existing
--- deployments have rows in here, and a DROP in a schema file runs on every
--- boot against every volume, which is a destructive migration disguised as a
--- definition. It costs three unused columns. Remove it in a migration that
--- runs once, if it is ever worth the errand.
+-- Kept as a CREATE rather than dropped on purpose. A DROP in a schema file
+-- runs on every boot against every volume, which is a destructive migration
+-- disguised as a definition. Three unused columns is the cheaper price.
 CREATE TABLE IF NOT EXISTS draft_claim (
     fpl_id      INTEGER PRIMARY KEY,
     token_hash  TEXT NOT NULL,
@@ -395,11 +388,10 @@ def storage_kind(path=None):
 # One table whose presence stands in for "the schema is applied". Checked per
 # connection rather than latched per process - see connect().
 # Every table SCHEMA creates, read out of SCHEMA itself rather than listed by
-# hand. This used to be a single sentinel table, which worked exactly once: the
-# check passed as soon as that one table existed, so a schema that grew a NEW
-# table never applied it to a database created before the change. The symptom
-# is "no such table" on a deployment that has been running fine for months and
-# has just been updated - the one case where it is most expensive to debug.
+# hand. Checking a single sentinel table passes as soon as that one table
+# exists, so a schema that grows a NEW table never applies it to a database
+# created before the change - surfacing as "no such table" on a deployment
+# that has run fine for months and just been updated.
 #
 # Every statement is CREATE TABLE IF NOT EXISTS, so re-running the whole script
 # on an existing file is free and idempotent. That makes adding a table a
@@ -453,7 +445,7 @@ def connect():
 
     The schema is verified on EVERY connection, not remembered from the first
     one. A per-process flag looks like an obvious optimisation and is a trap:
-    it makes the app assume a file it may no longer be talking to. Anything
+    it makes the app assume a file it may not be talking to any more. Anything
     that swaps the database out underneath a running process - a redeploy that
     recreates the volume, a restore from backup, someone deleting the file -
     then produces "no such table" on every request until a human restarts it.
@@ -816,12 +808,6 @@ def clear_notification(kind, ref):
             "DELETE FROM notification WHERE kind = ? AND ref = ?",
             (str(kind), str(ref))).rowcount > 0
 
-
-def recent_notifications(limit=40):
-    with connect() as conn:
-        return [dict(r) for r in conn.execute(
-            """SELECT kind, ref, sent_at FROM notification
-                ORDER BY id DESC LIMIT ?""", (int(limit),))]
 
 
 # ---- retention ------------------------------------------------------------

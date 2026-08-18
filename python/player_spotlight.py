@@ -2,52 +2,47 @@
 
 The gameweek briefing covers four sections at three players each and gives none
 of them more than a sentence. This is the opposite: one player, five or six
-paragraphs, and the actual case for or against picking him. It exists so there
-is something new to post on the days between briefings - which is most days.
+paragraphs, and the actual case for or against picking him. It fills the days
+between briefings, which is most days.
 
 How a subject is chosen
 -----------------------
 Nine detectors run over the whole pool, each looking for a different reason a
-player is worth writing about tonight. Every candidate they return carries a
-score, the evidence behind it, and the angle it was found by; the highest score
-across all of them wins the night.
+player is worth writing about tonight. Every candidate carries a score, the
+evidence behind it, and the angle it was found by; the highest score wins.
 
-Scores are comparable ACROSS detectors on purpose, and that is the one genuinely
-delicate thing in this module. Each detector weights its own finding onto a
-shared scale - roughly 3 to 9 for a normal candidate - by how much a reader
-should care, so a player returning from six weeks out beats a mild
-expected-goals overperformance, and both lose to nothing at all if the pool is
-quiet. Getting this wrong doesn't break anything; it just picks a duller player.
+Scores are comparable ACROSS detectors on purpose, and that is the one delicate
+thing here. Each detector weights its finding onto a shared scale - roughly 3 to
+9 - by how much a reader should care, so a player returning from six weeks out
+beats a mild expected-goals overperformance, and both lose to a quiet pool.
+Getting it wrong doesn't break anything; it picks a duller player.
 
 Six of the nine, and three of the nine
 --------------------------------------
-The first six detectors all read this season's per-gameweek history, and until
-that history exists none of them can fire. That is not a rare edge: it is every
-night of preseason and the first fortnight of the season, and it used to mean
-`choose` returned None for weeks at a stretch while the job reported success -
-a silence indistinguishable from a broken cron.
+The first six detectors read this season's per-gameweek history and cannot fire
+until it exists. That covers all of preseason and the first fortnight - long
+enough that `choose` returning None would look exactly like a broken cron.
 
-So there are three more, gated on `ctx["early"]`, built only from data that
-exists before a ball is kicked: last season's totals, the price FPL published,
-and the fixture list. They retire on their own once EARLY_ROUNDS_MAX rounds
-have been played, which is roughly when the six real ones start finding things.
-Nothing else about them is special - same shape, same scale, same ledger.
+So three more are gated on `ctx["early"]` and built only from what exists before
+a ball is kicked: last season's totals, the published price, and the fixture
+list. They retire once EARLY_ROUNDS_MAX rounds have been played, roughly when
+the six real ones start finding things. Otherwise identical - same shape, same
+scale, same ledger.
 
 Why there is no language model in here
 --------------------------------------
 The prose is templated from thresholds, exactly like `gw_report`. Every sentence
-restates a number printed beside it, which means this cannot say something the
-data doesn't support - and it publishes itself at 03:15 with nobody reading it
-first. The cost of that choice is that a template repeats itself, so:
+restates a number printed beside it, so it cannot say something the data doesn't
+support - and it publishes itself at 03:15 with nobody reading it first. The
+cost is that templates repeat, so:
 
-  * nine angles, and the ledger stops the same angle running two nights running
+  * nine angles, and the ledger stops one running two nights running
   * three or four phrasings of each clause, chosen by a hash of (code, date),
     so the wording is reproducible but not identical week to week
   * the ledger also blocks the same player inside a fortnight
 
-That gets a season's worth of posts out of it without the same paragraph
-appearing twice in a row. It does not make it read like a person, and it isn't
-meant to.
+That gets a season of posts out of it without the same paragraph twice in a row.
+It does not read like a person, and it isn't meant to.
 """
 
 import hashlib
@@ -301,29 +296,6 @@ def _per_90(value, minutes):
 # ---------------------------------------------------------------------------
 #  Team-level tables, built from fixtures
 # ---------------------------------------------------------------------------
-
-def team_results(fixtures_df):
-    """{team_id: {event: (goals_for, goals_against)}} for finished fixtures.
-
-    The injury section's before-and-after needs this: "the defence conceded 1.2
-    a game while he played and 2.1 while he was out" is the sentence the whole
-    angle is built around, and there is nowhere else in the data to get it.
-    """
-    if fixtures_df is None or not len(fixtures_df):
-        return {}
-    out = {}
-    for fx in fixtures_df.to_dict("records"):
-        if not bool(fx.get("finished")):
-            continue
-        event = _num(fx.get("event"))
-        home, away = _num(fx.get("team_h")), _num(fx.get("team_a"))
-        hs, as_ = _num(fx.get("team_h_score")), _num(fx.get("team_a_score"))
-        if None in (event, home, away, hs, as_):
-            continue
-        event = int(event)
-        out.setdefault(int(home), {})[event] = (int(hs), int(as_))
-        out.setdefault(int(away), {})[event] = (int(as_), int(hs))
-    return out
 
 
 def team_difficulty(fixtures_df, team_id, gameweek, back=FORM_WINDOW,
@@ -849,21 +821,17 @@ def detect_price_watch(ctx):
     return out
 
 
-# There is deliberately no "new signing" angle here, and it is worth writing
-# down why so it isn't added back.
+# There is deliberately no "new signing" angle, written down so it isn't added
+# back. Spotting one is trivial - no `prev_season` row means no Premier League
+# minutes last season, which in 2026-27 matches 88 players at £5.0m or more -
+# but there is nothing to say about any of them. The ratings run on last
+# season's numbers, so a player without one has no projection: six of those 88
+# carried a projection at all, and every one was 0.00. The post would be a
+# name, a price and an admission that the site has no opinion.
 #
-# Spotting one is trivial - a player with no `prev_season` row recorded no
-# Premier League minutes last season - and in 2026-27 that matches 88 players
-# priced at £5.0m or more. The problem is that there is nothing to say about
-# any of them. The ratings this window runs on are built from last season's
-# numbers, so a player with no last season has no projection: of those 88, six
-# carried a projection at all and every one of those was 0.00. The post would
-# be a name, a price, and an admission that this site has no opinion - which is
-# the exact post the module docstring says not to publish.
-#
-# It would need the rating model to price a newcomer from something other than
-# his own history - transfer fee, or the league he came from - and that is a
-# change to the model, not a detector.
+# Fixing it means pricing a newcomer from something other than his own history
+# - transfer fee, or the league he came from - which is a change to the model,
+# not a detector.
 
 
 def detect_opening_fixtures(ctx):

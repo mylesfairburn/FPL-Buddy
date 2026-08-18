@@ -1,60 +1,49 @@
 """What each chip was actually worth last season, by replaying it.
 
-The chip planner needs two numbers it cannot get from the live game: the least a
+The chip planner needs two numbers the live game cannot give it: the least a
 chip is worth spending (a floor), and what a chip typically returns in a week of
-a given kind (a prior for gameweeks too far out to evaluate directly). Neither
-is available from FPL's API. The public endpoints expose a manager's own chip
-history, but there is no way to ask "what did the top ten thousand get out of
-their Bench Boosts last season" - the leaderboard only reaches back to the
-current season, so that question can only be answered going forwards. This
-answers it backwards instead, by simulating.
+a given kind (a prior for gameweeks too far out to evaluate directly). FPL's API
+exposes a manager's own chip history but nothing aggregate, and the leaderboard
+only reaches back to the current season - so the question can only be answered
+backwards, by simulating.
 
-The trick is that FPL publishes `selected` - how many managers owned each player
-in each gameweek - inside the per-gameweek stats. That means the popular squad
-of any past gameweek can be reconstructed, and a Bench Boost played into it can
-be scored against what those players really did. It is not the top 10k, but it
-is a real squad that real managers really held, which is a great deal closer
-than a squad drawn at random.
+What makes that possible is `selected`, the per-gameweek ownership count. The
+popular squad of any past gameweek can be reconstructed from it, and a chip
+played into that squad scored against what those players really did. Not the top
+10k, but a real squad real managers held.
 
 Two populations are simulated for every gameweek of 2025-26:
 
   template   the most-owned legal 15. One squad per gameweek.
-  plausible  ownership-weighted random legal 15s, to get a spread rather than a
-             single point. A distribution built from one squad a week would
-             describe that squad, not the decision.
+  plausible  ownership-weighted random legal 15s. A distribution built from one
+             squad a week would describe that squad, not the decision.
 
-There is deliberately no hindsight-optimal population. A floor set at what
+There is deliberately no hindsight-optimal population: a floor set at what
 perfect foresight returns is a floor no chip ever clears.
 
 Two measurements come out of this, and keeping them apart is the whole design.
 
-REALISED value answers "what was a Bench Boost worth last season" - four bench
-players' actual points, over all 38 gameweeks. It needs no forecast, so it can
-use every gameweek, and it is the number worth showing a reader.
+REALISED value is what a chip was worth last season - four bench players' actual
+points, over all 38 gameweeks. It needs no forecast, so it uses every gameweek,
+and it is the number worth showing a reader.
 
-PLANNED value answers "what does the planner's own arithmetic say a chip is
-worth" - the identical calculation chip_model runs live, replayed on the model's
-holdout rounds. This is what the floors are built from, because a floor is only
-meaningful in the units of the thing compared against it, and the planner
-compares predicted points. The model shrinks - its best midfielders sit at
-5-6.5 against a real 6.71 per start - so a floor set in actual points sits too
-high and the chip never clears it.
+PLANNED value is what the planner's own arithmetic says a chip is worth: the
+calculation chip_model runs live, replayed on the model's holdout rounds. The
+floors are built from this, because a floor is only meaningful in the units of
+what it is compared against, and the planner compares predicted points. The
+model shrinks, so a floor set in actual points sits too high to ever clear.
 
-The distinction matters most for Free Hit and Wildcard. It is tempting to score
-a Free Hit as "the best possible team that week minus what you had", but that
-is worth about 90 points a week, because it is measuring hindsight rather than a
-chip. No chip lets you pick a team knowing the results. Both are therefore
-measured only where a genuine forecast exists: the last 8 rounds, which
-train_model.py holds out and the saved bundles were never fitted on. The
-alternative squad is chosen on predictions and scored on what happened, which is
-what a manager playing the chip actually experiences.
+The distinction matters most for Free Hit and Wildcard. Scoring a Free Hit as
+"the best possible team that week minus what you had" measures hindsight, not a
+chip - it comes out around 90 points a week. Both are measured only where a
+genuine forecast exists: the last 8 rounds, which train_model.py holds out and
+the saved bundles were never fitted on. The alternative squad is chosen on
+predictions and scored on what happened, which is what playing the chip is.
 
-Returns are also split by what kind of week it was - double, blank, ordinary -
-because they are not the same distribution, and pooling them is actively
-misleading for a planner working to the GW19 reset. Every double and blank
-gameweek in 2025-26 landed after GW26. A planner that valued waiting at the
-pooled 90th percentile would be holding out, all through the first half, for a
-week the fixture list did not contain.
+Returns are split by week kind - double, blank, ordinary - because they are not
+the same distribution. Every double and blank in 2025-26 landed after GW26, so a
+planner valuing patience at the pooled 90th percentile would hold out all
+through the first half for a week the fixture list did not contain.
 
 Run it directly. Writes data/reference/chip_priors.json; prints the report.
 """

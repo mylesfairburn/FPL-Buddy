@@ -42,11 +42,10 @@ UNDERPERFORMER_MAX_POINTS = 2
 # that, "8th beat 5th" is a sentence about nothing.
 SHOCK_MIN_POSITION_GAP = 6
 
-# And the table has to mean something before it can be used to judge one. Four
-# rounds in, a single win still moves a club ten places, so a "shock" computed
-# against it is noise given a headline. Before this many completed rounds the
-# section returns nothing, which is the honest answer to "was that a shock" in
-# August rather than a made-up one.
+# The table has to mean something before it can judge one. Four rounds in, a
+# single win still moves a club ten places, so a "shock" computed against it is
+# noise given a headline. Below this many completed rounds the section returns
+# nothing - the honest answer to "was that a shock" in August.
 MIN_ROUNDS_FOR_TABLE = 5
 
 # A run is three. Two of anything is a coincidence.

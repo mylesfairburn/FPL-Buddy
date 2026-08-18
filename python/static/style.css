@@ -102,7 +102,6 @@ table th { color: var(--accent-dark); }
     border-color: var(--accent);
     box-shadow: 0 0 0 0.25rem rgba(0, 172, 174, 0.25);
 }
-.section-heading { color: var(--accent-dark); font-weight: 600; }
 .rotation-table td, .rotation-table th {
     text-align: center;
     font-size: 0.82rem;
@@ -329,7 +328,6 @@ table th { color: var(--accent-dark); }
     flex-direction: column;
     gap: 10px;
 }
-.pitch-row { display: flex; justify-content: center; gap: 4px; flex-wrap: nowrap; }
 
 .player { width: 76px; flex: 0 1 76px; min-width: 0; text-align: center; }
 .player-kit { position: relative; display: inline-block; }
@@ -380,7 +378,6 @@ table th { color: var(--accent-dark); }
 /* Transfer recommendations */
 .transfer-rec { border: 1px solid #eee; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
 .transfer-line { display: flex; align-items: center; gap: 6px; font-size: 0.85rem; font-weight: 500; }
-.tr-out, .tr-in { display: inline-flex; align-items: center; gap: 4px; }
 .tr-arrow { color: var(--accent); font-weight: 700; }
 .transfer-meta { display: flex; align-items: center; gap: 10px; font-size: 0.72rem; color: #777; margin-top: 4px; }
 .ft-tag { border-radius: 4px; padding: 0 6px; font-weight: 600; color: #fff; }
@@ -517,7 +514,6 @@ table th { color: var(--accent-dark); }
 
 /* Clickable players + next-3 fixtures under each card */
 .player { cursor: pointer; }
-.player-gws { display: flex; gap: 2px; justify-content: center; margin-top: 3px; }
 .mini-gw {
     font-size: 0.6rem; font-weight: 600; color: #1a1a1a;
     min-width: 15px; text-align: center; border-radius: 3px; padding: 0 2px; line-height: 1.4;
@@ -593,25 +589,6 @@ table th { color: var(--accent-dark); }
 
 /* Dual price slider */
 .price-range { margin-top: 2px; }
-.price-label { font-size: 0.75rem; color: #555; margin-bottom: 2px; }
-.range-wrap { position: relative; height: 26px; }
-.range-wrap input[type=range] {
-    position: absolute; left: 0; top: 6px; width: 100%; height: 0; margin: 0;
-    -webkit-appearance: none; appearance: none; background: transparent; pointer-events: none;
-}
-.range-wrap::before {
-    content: ''; position: absolute; left: 0; right: 0; top: 10px; height: 4px;
-    background: #ddd; border-radius: 2px;
-}
-.range-wrap input[type=range]::-webkit-slider-thumb {
-    -webkit-appearance: none; pointer-events: auto; height: 16px; width: 16px;
-    border-radius: 50%; background: var(--accent); cursor: pointer; border: 2px solid #fff;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-}
-.range-wrap input[type=range]::-moz-range-thumb {
-    pointer-events: auto; height: 16px; width: 16px; border: 2px solid #fff;
-    border-radius: 50%; background: var(--accent); cursor: pointer;
-}
 
 /* Reset-filters button sizing */
 #pickerReset, #builderReset { flex: 0 0 auto; }
@@ -719,8 +696,6 @@ table th { color: var(--accent-dark); }
 .ps-name span { overflow: hidden; text-overflow: ellipsis; }
 
 /* Recommended-transfers cards fit a narrow column */
-.transfer-rec { font-size: 0.82rem; }
-.transfer-line { flex-wrap: wrap; }
 .transfer-meta { flex-wrap: wrap; gap: 4px 8px; }
 .make-tr { padding: 2px 8px; font-size: 0.72rem; }
 
@@ -728,7 +703,6 @@ table th { color: var(--accent-dark); }
    MY TEAM — v7 (contained cards, roomier pitch, pending-out)
    ============================================================ */
 
-.pitch-wrap { max-width: 100%; }
 .pitch-row { display: flex; justify-content: space-evenly; gap: 4px; margin-bottom: 10px; flex-wrap: nowrap; }
 .bench-row { justify-content: space-evenly; gap: 4px; flex-wrap: nowrap; }
 
@@ -744,13 +718,10 @@ table th { color: var(--accent-dark); }
 .mini-gw { min-width: 24px; }
 
 /* Players marked for transfer out: greyed with a + to fill */
-.player.pending-out { opacity: 0.4; filter: grayscale(1); }
 .player.pending-out .out-plus {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     font-size: 1.5rem; font-weight: 800; color: #e03131;
 }
-.player.pending-active { opacity: 0.85; filter: none; outline: 2px solid #e03131; outline-offset: 2px; border-radius: 10px; }
-.player.pending-active .out-plus { color: #e03131; }
 
 /* Empty squad slot — tap to search for a player to fill it */
 .player.empty-slot {
@@ -770,7 +741,6 @@ table th { color: var(--accent-dark); }
 
 /* More transparent player cards */
 .player { background: rgba(255,255,255,0.45); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
-.player.pending-active { background: rgba(255,255,255,0.6); }
 
 /* Taller search table (extends down toward the news feed) */
 .ps-list { max-height: 70vh; }
@@ -854,9 +824,6 @@ table th { color: var(--accent-dark); }
    ============================================================ */
 
 /* Robust name cell — always shows the name (truncated if needed) */
-.ps-name { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
-.ps-name img.shirt-sm { display: inline; vertical-align: middle; margin-right: 4px; }
-.ps-name span { display: inline; }
 
 /* Column widths live in the v9 block above, keyed on .col-* rather than on
    position - there were four overlapping sets of nth-child widths here, each
@@ -986,7 +953,6 @@ table th { color: var(--accent-dark); }
 .squad-list td, .squad-list th { padding: 6px 8px; }
 
 /* Chips strip above the pitch */
-.chips-bar { display: flex; flex-wrap: wrap; gap: 8px; }
 .chips-bar:empty { display: none; }
 .chip-pill {
     display: inline-flex; align-items: center; gap: 4px;
@@ -1000,7 +966,6 @@ table th { color: var(--accent-dark); }
 /* ============================================================
    MY TEAM — v16 (chip cards, debt)
    ============================================================ */
-.chips-bar { gap: 10px; }
 .chip-card {
     width: 96px; text-align: center; padding: 8px 6px; border-radius: 12px;
     background: #fff; border: 1px solid #eee; cursor: pointer;
@@ -1038,7 +1003,6 @@ table th { color: var(--accent-dark); }
     padding: 6px 4px; box-sizing: border-box;
 }
 .chip-img { width: 40px; height: 40px; }
-.chip-card-name { font-size: 0.66rem; }
 .chip-status { font-size: 0.55rem; }
 
 @media (max-width: 575.98px) {
@@ -1296,7 +1260,6 @@ body {
     border-radius: 4px; padding: 1px 3px; line-height: 1.15;
     min-width: 40px; color: #1a1a1a; white-space: nowrap;
 }
-.ai-mini b { font-size: 0.72rem; font-weight: 700; }
 .ai-mini span { font-size: 0.5rem; font-weight: 600; letter-spacing: -0.2px; }
 .ai-mini b.ai-actual { color: var(--accent-dark); }
 

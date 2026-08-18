@@ -276,8 +276,8 @@ def display_rotation_table(rotation_df, difficulty_col, title):
 
 
 def team_fixture_map(rotation_df, difficulty_col):
-    """Returns {team_name: {event: {opponent, difficulty}}} - used to show
-    the actual opponent per gameweek, not just a raw difficulty number."""
+    """{team_name: {event: {opponent, difficulty}}} - so the table can show the
+    actual opponent per gameweek, not just a raw difficulty number."""
     result = {}
     for team, group in rotation_df.groupby('team_name'):
         result[team] = {

@@ -1,67 +1,53 @@
 """Train the per-position points models.
 
-Trains on EVERY season present from 2025-26 onwards (see seasons.py), not just
-the most recent one. Each extra season is more evidence for the thing the model
-is really estimating - how underlying stats convert into FPL points - so
-rerunning this next August with 2026-27 on disk sharpens the weights without any
-code change.
+Trains on EVERY season present from 2025-26 onwards (see seasons.py). Each
+extra season is more evidence for what the model actually estimates - how
+underlying stats convert into FPL points - so rerunning next August with
+another season on disk sharpens the weights with no code change.
 
-Two things make multi-season training different from just concatenating files:
+Two things make that different from concatenating the files:
 
   * Rolling features must never span a season boundary. Grouping by player_id
-    alone would let a player's last three gameweeks of 2025-26 become the
-    "recent form" for his 2026-27 opener, which is leakage across a summer of
-    transfers and pre-season.
-  * player_id is reassigned by FPL every season. `code` is the stable
-    per-person identifier, so rows are keyed on that where it's available.
+    alone would make a player's last gameweeks of one season the "recent form"
+    for his next opener - leakage across a summer of transfers and pre-season.
+  * FPL reassigns player_id every season. `code` is the stable per-person
+    identifier, so rows are keyed on that where it's available.
 
 Run from python/:  python train_model.py
 
 
-Why the model has the shape it does
------------------------------------
-This used to be one Ridge regression per position over five features, fitted to
-`total_points` across every row. It was badly and systematically conservative -
-a premium midfielder topped out around 5.2 predicted points - and defenders
-crowded the top of the rankings. Three reasons, all structural:
+Why the model has this shape
+----------------------------
+One regression per position fitted to `total_points` over all rows is
+systematically conservative, for three structural reasons:
 
   * **Half the rows are not appearances.** 52% of gameweek rows have zero
-    minutes. Least squares over that mixture learns "will he play" and drags
-    every projection toward the position mean: the overall mean is 1.57 points,
-    but a player who actually starts averages 3.64. The single number the site
-    printed was an average over a world in which the player is often not on the
-    pitch.
-  * **Nothing distinguished an elite player from an average one.** The features
-    were three-gameweek rolling averages, which are mostly noise at that window.
-    A player's established level - his season-to-date rate - was not a feature
-    at all, so the model had to re-derive "this is Bruno Fernandes" from three
-    games, every week, and never could.
-  * **Defenders' actual points sources were invisible.** Clean sheets, goals
-    conceded and `defensive_contribution` (a real scoring category worth 2
-    points) were not features, while minutes - a defender's strength - was.
-    So the model saw their floor and none of their ceiling.
+    minutes, so least squares learns "will he play" and drags projections
+    toward the position mean - 1.57 points overall against 3.64 for a player
+    who actually starts.
+  * **Nothing separates an elite player from an average one.** Three-gameweek
+    rolling averages are mostly noise at that window, and season-to-date rate -
+    a player's established level - has to be a feature in its own right.
+  * **A defender's points sources must be visible.** Clean sheets, goals
+    conceded and `defensive_contribution` are real scoring categories; without
+    them the model sees their floor and none of their ceiling.
 
-So: two stages per position, which is the standard shape for a zero-inflated
-target.
+So, two stages per position - the standard shape for a zero-inflated target:
 
   1. **Will he play?** Two classifiers, P(starts) and P(plays at all).
   2. **What does he score if he does?** A Poisson regressor fitted ONLY on rows
-     where the player started. Poisson rather than squared error because points
-     are a non-negative count with a long right tail, and squared error is
-     precisely what flattens that tail.
+     where he started. Poisson rather than squared error because points are a
+     non-negative count with a long right tail, and squared error flattens it.
 
   E[points] = P(start) x E[points | start] + P(cameo) x (mean cameo points)
 
-The two stages are worth keeping separate for a second reason: `E[points |
-start]` is a genuinely useful number to show a reader ("6.4 if he starts, but
-he's a 60% starter"), and a single blended figure cannot say that.
+Keeping the stages separate also gives a number worth showing a reader - "6.4
+if he starts, but he's a 60% starter" - which a single blended figure cannot.
 
-Honest about what this does not fix: the very top of the distribution is still
-shrunk. Bruno Fernandes averaged 6.71 points per start across 2025-26 and the
-model puts the best midfielders around 5-6.5. A conditional mean fitted to one
-season will always pull the extremes in, and with 1,836 forward rows there is
-not enough evidence to do otherwise. It is a real improvement on 5.2-for-
-everyone, not a solved problem. See MODEL-NOTES.md.
+This does not fix the very top of the distribution. A conditional mean fitted
+to one season pulls the extremes in, and 1,836 forward rows is not enough
+evidence to do otherwise, so the best midfielders land around 5-6.5 against
+Bruno Fernandes' actual 6.71 per start.
 """
 
 import os
@@ -223,21 +209,33 @@ def build_rolling_features(df):
     for col in ROLLING_COLS:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce')
-    group = df.groupby(['player_key', 'season_start'], sort=False)
+    keys = ['player_key', 'season_start']
+    group = df.groupby(keys, sort=False)
 
     # Built into a dict and attached in one concat at the end. Assigning ~90
     # columns one at a time to a 21,000-row frame is what pandas means by
     # "highly fragmented", and it warns about it on every training run.
     derived = {}
 
+    # Shift first, then aggregate the shifted series. `group[col].transform(
+    # lambda x: x.shift(1).rolling(...))` is the obvious spelling and runs the
+    # lambda once per (player, season) - ~34,000 Python calls, each rebuilding a
+    # MultiIndex. Shifting and rolling as whole-column groupby operations stays
+    # on pandas' cython path and is ~20x faster for identical output.
+    def regrouped(series):
+        return series.groupby([df[keys[0]], df[keys[1]]], sort=False)
+
+    def flat(result):
+        return result.reset_index(level=[0, 1], drop=True)
+
     for col in ROLLING_COLS:
         if col not in df.columns:
             continue
+        shifted = regrouped(group[col].shift(1))
         for window in ROLL_WINDOWS:
-            derived[f'{col}_roll{window}'] = group[col].transform(
-                lambda x: x.shift(1).rolling(window, min_periods=1).mean())
-        derived[f'{col}_level'] = group[col].transform(
-            lambda x: x.shift(1).expanding().mean())
+            derived[f'{col}_roll{window}'] = flat(
+                shifted.rolling(window, min_periods=1).mean())
+        derived[f'{col}_level'] = flat(shifted.expanding().mean())
 
     derived['games_seen'] = group.cumcount()
 
@@ -245,12 +243,12 @@ def build_rolling_features(df):
     # minutes: below that the denominator is small enough that the rate is
     # noise, and NaN is the honest answer - HistGradientBoosting handles it
     # natively rather than needing an imputed value invented here.
-    minutes_to_date = group['minutes'].transform(
-        lambda x: x.shift(1).expanding().sum())
+    minutes_to_date = flat(
+        regrouped(group['minutes'].shift(1)).expanding().sum())
     for col in PER90_COLS:
         if col not in df.columns:
             continue
-        total = group[col].transform(lambda x: x.shift(1).expanding().sum())
+        total = flat(regrouped(group[col].shift(1)).expanding().sum())
         derived[f'{col}_per90'] = pd.Series(
             np.where(minutes_to_date >= 90, total / (minutes_to_date / 90.0), np.nan),
             index=df.index)

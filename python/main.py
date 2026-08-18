@@ -119,12 +119,10 @@ EMAILS = {
     "abuse": "abuse@fpl.mfhost.co.uk",
 }
 
-# The four tabs used to be fragments of one document (#pane-players and so on).
-# A fragment is discarded before a request is ever made, so to a crawler they
-# were all the same URL - four different tools competing to rank as one page,
-# and that page's server-rendered HTML was barely forty words. Each pane now has
-# a real path that renders the same shell with that tab already open, and the
-# tables inside it come down as HTML too - see seo_tables.py.
+# Each tab needs a real path, not a fragment (#pane-players). A fragment is
+# discarded before the request is made, so to a crawler four different tools
+# compete to rank as one URL. Each pane renders the same shell with that tab
+# already open, and its tables come down as HTML too - see seo_tables.py.
 #
 # This is the one definition of the tab bar: the routes below, the links the
 # template renders and the pane app.js opens all come from here, so a fifth tab
@@ -460,27 +458,23 @@ app = FastAPI()
 class HeadAsGet:
     """Answer HEAD wherever GET is answered.
 
-    Starlette adds HEAD to any route that declares GET. FastAPI's `@app.get`
-    does not, so every page here - the tabs, the several hundred player pages,
-    robots.txt, sitemap.xml - answered GET and returned 405 to HEAD. That is
-    wrong on its own terms: HTTP defines HEAD as GET without the body, and a
-    resource that exists is not entitled to refuse it.
+    Starlette adds HEAD to any route declaring GET; FastAPI's `@app.get` does
+    not, so every page here would answer 405 to HEAD. HTTP defines HEAD as GET
+    without the body, and a resource that exists is not entitled to refuse it.
 
-    It also matters for crawling. Bingbot uses HEAD to decide whether a URL is
-    worth fetching and whether it has changed since last time, and a 405 is not
-    a "nothing changed" answer - it is the origin saying the method isn't
-    allowed, on every URL on the site at once.
+    It also matters for crawling: Bingbot uses HEAD to decide whether a URL is
+    worth fetching and whether it changed, and a 405 is not a "nothing changed"
+    answer - it is the origin refusing the method on every URL at once.
 
-    Done as one ASGI middleware rather than by adding methods=["GET", "HEAD"] to
-    thirty-odd decorators: the player pages are generated from a routing table,
-    so a per-route change is both more edits and easier to forget on the next
-    route added.
+    One ASGI middleware rather than methods=["GET", "HEAD"] on thirty-odd
+    decorators, because the player pages come from a routing table and a
+    per-route change is easy to forget on the next route added.
 
-    RFC 9110 requires the headers to be the ones GET would have sent, so they go
-    through untouched - Content-Length included. Only the body is dropped. That
-    does mean the response is built in full and thrown away, which is the price
-    of not maintaining a second code path that could disagree with the first;
-    HEAD is a rounding error in traffic.
+    RFC 9110 requires the headers GET would have sent, so they pass through
+    untouched, Content-Length included, and only the body is dropped. The
+    response is therefore built in full and thrown away - the price of not
+    maintaining a second code path that could disagree with the first, and HEAD
+    is a rounding error in traffic.
     """
 
     def __init__(self, app):
@@ -530,20 +524,19 @@ def content_security_policy(nonce):
     regardless of where the markup came from, including strings this app's own
     JavaScript builds and assigns through innerHTML.
 
-    `style-src` still carries 'unsafe-inline', and that is a real gap rather
-    than an oversight. The front end sets element.style directly in a number of
-    places (the pitch layout, the chip cards, sizing that depends on measured
-    widths), and a nonce cannot cover a style property assigned from script.
-    Measured rather than assumed: /fixture-rotator alone renders 739 elements
-    carrying a style attribute, /ai-teams 499. Closing it means moving those to
-    classes. Worth doing; it is not what protects against script injection,
+    `style-src` still carries 'unsafe-inline', a real gap rather than an
+    oversight. The front end sets element.style directly in places (pitch
+    layout, chip cards, sizing from measured widths) and a nonce cannot cover a
+    style property assigned from script - /fixture-rotator alone renders 739
+    elements with a style attribute, /ai-teams 499. Closing it means moving
+    those to classes. Worth doing, but it is not what stops script injection,
     which is what this policy is for.
 
-    Every directive is 'self' now that Bootstrap is vendored into /static -
-    there is no third-party origin left to allow. `font-src` needs nothing
-    beyond 'self' because Bootstrap 5.3 ships a system font stack and requests
-    no webfont, and `img-src` keeps `data:` for the 23 inline SVGs its form
-    controls and accordion arrows are drawn with.
+    Every directive is 'self': Bootstrap is vendored into /static, so there is
+    no third-party origin left to allow. `font-src` needs nothing more because
+    Bootstrap 5.3 ships a system font stack and requests no webfont, and
+    `img-src` keeps `data:` for the 23 inline SVGs its form controls and
+    accordion arrows are drawn with.
 
     `object-src 'none'` and `base-uri 'self'` are the two cheap ones people
     forget: the first kills a class of plugin-based bypass, the second stops an
@@ -761,14 +754,14 @@ def load_data(mode=None):
 # ---------------------------------------------------------------------------
 #  Warm-up
 # ---------------------------------------------------------------------------
-# load_data() used to run inside startup(), which meant uvicorn answered
-# nothing until it finished - the pipeline, rating the whole pool, the rotation
-# table and the Best-XI ILP behind seo_tables(). Locally that is 15 seconds; on
-# the VM it is longer, and it was most of the minute the site was unreachable
-# on every watchtower deploy. The container swap itself is a few seconds.
+# load_data() must NOT run inside startup(): uvicorn would answer nothing until
+# it finished - the pipeline, rating the whole pool, the rotation table and the
+# Best-XI ILP behind seo_tables(). That is 15 seconds locally and longer on the
+# VM, and it was most of the minute the site was unreachable on every deploy,
+# against a container swap of a few seconds.
 #
-# So the load moved to a background thread and startup() returns immediately.
-# The app is up and serving in about as long as it takes to import pandas.
+# So it runs on a background thread and startup() returns immediately. The app
+# serves in about as long as it takes to import pandas.
 #
 # This is only safe because serving without ratings is a state the app already
 # supports deliberately - see the StaleModelError branch above, where

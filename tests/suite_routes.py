@@ -80,8 +80,8 @@ def test_tab_panes():
               note="the gameweek archive and the A-Z index need a link from "
                    "every page or they rank on footer links alone")
 
-    # The four tools are what the site is for, and they used to be reachable
-    # from a prose page only via the logo. Every page carries the bar now.
+    # The four tools are what the site is for, so every page carries the tab
+    # bar - not just the logo.
     for path in ["/about", "/faq", "/privacy", "/contact", "/players/a-z", "/gameweek"]:
         body = c.get(path).text
         check(f"{path} carries the four tool tabs", f"GET {path}",

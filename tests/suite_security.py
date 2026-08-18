@@ -11,7 +11,6 @@ Two kinds of case here:
 Nothing here attacks a third party: every request goes to the local test client.
 """
 
-import json
 import re
 
 import main
@@ -168,7 +167,6 @@ def test_xss():
 
     # Jinja autoescaping is what stands between page data and stored XSS. Prove
     # it is on, rather than assuming the default.
-    from fastapi.templating import Jinja2Templates
     check("Jinja autoescape is enabled", "main.templates.env.autoescape",
           "True", main.templates.env.autoescape, lambda v: v is True,
           severity="critical")

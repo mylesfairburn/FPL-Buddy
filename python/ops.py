@@ -1,12 +1,10 @@
 """Knowing whether the machine is still working.
 
-Five cron jobs keep this site current. Until this module existed, the only
-record that any of them had run was a log file on the host that nobody reads,
-and the failure mode was total silence: a job that stopped running looked
-exactly like a week in which nothing happened. The symptoms - a briefing that
-stops updating, an AI squad that never gets committed, a roundup that never
-appears - all show up days later and all look like a bug in the feature rather
-than a job that isn't running.
+Five cron jobs keep this site current, and their failure mode is total
+silence: a job that stops running looks exactly like a week in which nothing
+happened. The symptoms - a briefing that stops updating, an AI squad never
+committed, a roundup that never appears - surface days later and all look like
+a bug in the feature rather than a job that isn't running.
 
 Three things in here, in order of how much they matter to one person
 maintaining this alone:
@@ -21,7 +19,7 @@ maintaining this alone:
      the night and finding out when someone emails to ask why the site is stale.
 
   3. Backups. The SQLite file holds the entire published archive and the whole
-     predicted-versus-actual track record, and it existed in exactly one place.
+     predicted-versus-actual track record.
 
 None of this is allowed to break a job. Every function here swallows its own
 errors and reports them: an alerting system that can take down the thing it
