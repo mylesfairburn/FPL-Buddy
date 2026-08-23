@@ -285,6 +285,20 @@ function gameweekIsLocked() {
               && selectedEvent <= teamView.current_event);
 }
 
+// The AI tabs' answer to gameweekIsLocked(). Same question - is this a plan
+// or a result - asked where there is no manager squad to lock.
+//
+// Decided from the season clock rather than from `stored`, because the deadline
+// watcher commits both AI squads up to 100 minutes BEFORE a deadline (see
+// imminent_deadlines): for that window the next gameweek is stored and still
+// upcoming, and reading `stored` alone would flip the whole page into
+// result-mode while the round had not kicked off. `stored` is the fallback for
+// when /api/ai/status never answered and there are no bounds to compare to.
+function aiGwIsUpcoming(gameweek, bounds, d) {
+    if (bounds && bounds.max != null) return gameweek >= bounds.max;
+    return !!(d && d.stored === false);
+}
+
 function stopLivePolling() {
     if (livePollTimer) { clearInterval(livePollTimer); livePollTimer = null; }
 }
@@ -538,22 +552,39 @@ function renderStatChips(gw) {
                      + (h.bank != null ? bankChip(h.bank) : chip('In the bank', '\u2013'));
         return;
     }
-    // Total first, then this round's. Both are needed and they answer different
-    // questions, so showing only one was the bug: the header total is the
-    // season-to-date figure and never moved as you stepped back through the
-    // weeks, while GW points did \u2014 two numbers side by side that disagreed
-    // about which gameweek you were looking at. gw.total_points is the
-    // cumulative figure AS AT the round on screen, so the pair now agree.
-    // Falls back to the header total when FPL has not scored this round yet.
+    // A gameweek already played is a RESULT, and a result is a short story:
+    // what you scored, what we thought you would score, and whether you spent
+    // a chip on it. Bank, free transfers, squad value and team rating all
+    // describe decisions that are still open, and none of them is still open
+    // once the deadline has gone - printing them against a locked round
+    // invites reading them as things you could act on.
+    if (gameweekIsLocked()) {
+        el.innerHTML =
+              chip('GW points', gw.points ?? '\u2013')
+            + chip('Predicted', gw.predicted_points ?? '\u2013', true)
+            + chipPlayedChip(gw.active_chip);
+        return;
+    }
+    // The gameweek being picked is a PLAN, and a plan is about what you have
+    // left to work with. Same containers in the same order as the AI Manager's
+    // preview, so the two pages can be read against each other line by line.
     el.innerHTML =
-          chip('Total pts', gw.total_points ?? h.total_points ?? '\u2013')
-        + chip('GW points', gw.points ?? '\u2013')
+          chip('Total points', gw.total_points ?? h.total_points ?? '\u2013')
+        + rating
         + chip('Predicted', gw.predicted_points ?? '\u2013', true)
+        + chip('Squad value', (gw.value ?? h.value) != null
+                              ? '\u00a3' + Number(gw.value ?? h.value).toFixed(1) + 'm' : '\u2013')
         + bankChip(gw.bank)
         + freeTransfersChip(gw)
-        + rating
-        + costChip(transferCost(gw))
-        + (gw.active_chip ? chip('Active chip', gw.active_chip) : '');
+        + costChip(transferCost(gw));
+}
+// The chip spent on a round already played, or nothing at all when none was.
+// FPL names these in its own codes - '3xc', 'bboost' - which are fine as keys
+// and unreadable as a value on a card, so they go through the same CHIP_NAMES
+// map the AI Manager's chip cards use.
+function chipPlayedChip(activeChip) {
+    if (!activeChip) return '';
+    return chip('Chip played', CHIP_NAMES[activeChip] || activeChip);
 }
 // Free transfers remaining this preview session, next to the bank chip.
 // Once transfersUsed exceeds the free allowance, each extra manual
@@ -652,17 +683,35 @@ function ratingChip(rating) {
 }
 
 // ---- Pitch ----
+function fixtureTile(g) {
+    const color = g.difficulty != null ? colorFor(g.difficulty, 1, 5) : '#eee';
+    const ha = haTag(g);
+    const pts = g.points != null ? Number(g.points).toFixed(1) : '-';
+    return `<span class="mini-gw" style="background:${color}" title="GW${g.event}">`
+        // No space before the bracket: these tiles are ~21px wide while
+        // "ARS (H)" needs ~24px, so the separator is the one character
+        // that can go without shrinking the label below legibility.
+        + `<b>${g.opponent || ''}${ha}</b>${pts}</span>`;
+}
+
 function miniFixtures(p) {
-    return (p.next_gameweeks || []).slice(0, 3).map(g => {
-        const color = g.difficulty != null ? colorFor(g.difficulty, 1, 5) : '#eee';
-        const ha = haTag(g);
-        const pts = g.points != null ? Number(g.points).toFixed(1) : '-';
-        return `<span class="mini-gw" style="background:${color}" title="GW${g.event}">`
-            // No space before the bracket: these tiles are ~21px wide while
-            // "ARS (H)" needs ~24px, so the separator is the one character
-            // that can go without shrinking the label below legibility.
-            + `<b>${g.opponent || ''}${ha}</b>${pts}</span>`;
-    }).join('');
+    return (p.next_gameweeks || []).slice(0, 3).map(fixtureTile).join('');
+}
+
+// The single fixture a player is about to play, for a gameweek already under
+// way. Three tiles is planning information - the two after this one are rounds
+// you can still do something about, and on a locked gameweek you cannot, so
+// they are two thirds of the card spent saying nothing you can act on. The one
+// that matters is the match he is waiting to play.
+//
+// A blank gameweek gets a neutral tile rather than an empty string: an element
+// with no content has no line box, so the card would lose ~18px of height and
+// sit out of line with the ten around it.
+function fixtureForEvent(p, event) {
+    const g = (p.next_gameweeks || []).find(x => x.event === event);
+    if (g) return fixtureTile(g);
+    return `<span class="mini-gw" style="background:#eee" title="No fixture this gameweek">`
+        + `<b>\u2013</b>&nbsp;</span>`;
 }
 
 // Has this player's gameweek begun? A player whose match hasn't kicked off
@@ -705,20 +754,25 @@ function playerCard(p, opts) {
     const availBand = availabilityBandHtml(p);
     if (opts.pendingOut) cls += ' pending-out pending-active';
     const plus = opts.pendingOut ? '<div class="out-plus">+</div>' : '';
-    // Once a player's match is under way the projection is history - show
-    // what they actually scored instead. Before it, the fixture: that is
-    // still the only thing there is to say about them.
+    // Three states, and which one applies is a question about the gameweek
+    // rather than about the player.
+    //
+    //   locked + played      -> what he scored. The projection is history.
+    //   locked + not yet     -> the one fixture he is about to play.
+    //   not locked (planning) -> the next three, which is what you pick on.
     //
     // The captain's number is the doubled one, printed plainly. It used to
     // read "8 \u00d72", which is the arithmetic rather than the answer, and
     // left the reader to decide whether 8 or 16 was the figure that counted
     // towards the total in the banner above. The C badge already says who
     // the captain is.
+    const locked = gameweekIsLocked();
     const showLive = liveScores && liveScores[p.id] != null && hasKickedOff(p);
-    const live = showLive
-        ? `<div class="player-gws"><span class="live-pts${p.id === captainId ? ' live-cap' : ''}">`
-          + `${liveScores[p.id] * (p.id === captainId ? 2 : 1)}</span></div>`
-        : `<div class="player-gws">${miniFixtures(p)}</div>`;
+    const gws = showLive
+        ? `<span class="live-pts${p.id === captainId ? ' live-cap' : ''}">`
+          + `${liveScores[p.id] * (p.id === captainId ? 2 : 1)}</span>`
+        : (locked ? fixtureForEvent(p, selectedEvent) : miniFixtures(p));
+    const live = `<div class="player-gws">${gws}</div>`;
     return `<div class="${cls}" data-id="${p.id}" style="position:relative">
         ${posLabel}${badge}
         <div class="player-kit">${shirtImg(p.team_code, p.pos, 'kit')}${plus}</div>
@@ -1447,7 +1501,14 @@ document.getElementById('gwPrev').addEventListener('click', () => {
     if (selectedEvent > (teamView.min_event || 1)) { selectedEvent--; loadTeam(); }
 });
 document.getElementById('gwNext').addEventListener('click', () => {
-    if (selectedEvent < teamView.current_event) { selectedEvent++; loadTeam(); }
+    // max_event, not current_event. The button's disabled state was moved to
+    // max_event when the next gameweek became reachable, but this guard was
+    // left behind - so stepping back to the round in play left an arrow that
+    // looked live and did nothing, because `1 < 1` is false. Two places
+    // deciding the same thing, and they disagreed.
+    if (selectedEvent < (teamView.max_event || teamView.current_event)) {
+        selectedEvent++; loadTeam();
+    }
 });
 
 // ---- Leagues (accordion: opening one closes the others) ----
@@ -2332,26 +2393,41 @@ let aiReqSeq = 0;           // guards against out-of-order fetch responses
 // One box per player, same visual language as the My Team pitch: coloured by
 // fixture difficulty, projection on top, opponent underneath. Two separate
 // pills sitting side by side read as clutter at this size.
-function aiFixtureBox(p, gameweek) {
-    const gws = p.next_gameweeks || [];
-    const g = (gameweek != null && gws.find(x => x.event === gameweek)) || gws[0];
-    const colour = (g && g.difficulty != null) ? colorFor(g.difficulty, 1, 5) : '#eee';
+function aiFixtureBox(p, gameweek, opts) {
+    opts = opts || {};
     // A score only replaces the projection once the player's match has
     // actually begun - otherwise a mid-round pitch reads as though the AI's
     // squad had blanked when half of it hasn't kicked off. That decision is
     // the server's: it fills actual_points only for players whose fixture
     // has started, so an absent score here already means "hasn't played".
-    const val = p.actual_points != null
-        ? `<span class="ai-actual">${p.actual_points}</span>`
-        : `<span>${p.predicted != null ? p.predicted.toFixed(1) : '\u2013'}</span>`;
-    // Opponent on top, score underneath - same reading order as the My Team
-    // pitch, so the two look like one component rather than two conventions.
+    //
+    // Once he HAS played, the opponent stops being the point and the score is
+    // the whole of it - so this is the same pill the My Team pitch uses, not a
+    // fixture box with a number tucked inside it. Two pages showing a score two
+    // different ways is two conventions to learn for one fact.
+    if (p.actual_points != null) {
+        const mult = p.is_captain ? (opts.chip === '3xc' ? 3 : 2) : 1;
+        return `<span class="live-pts${p.is_captain ? ' live-cap' : ''}">`
+            + `${p.actual_points * mult}</span>`;
+    }
+
+    const gws = p.next_gameweeks || [];
+    const g = (gameweek != null && gws.find(x => x.event === gameweek)) || gws[0];
+
+    // Hasn't played, and the round is under way: the one fixture he is waiting
+    // on, drawn in the same tile My Team draws it in.
+    if (!opts.upcoming) return fixtureForEvent(p, gameweek);
+
+    // Hasn't played because the round hasn't started - the planning view.
+    // Opponent on top, projection underneath.
+    const colour = (g && g.difficulty != null) ? colorFor(g.difficulty, 1, 5) : '#eee';
+    const val = `<span>${p.predicted != null ? p.predicted.toFixed(1) : '\u2013'}</span>`;
     const fix = g ? `<b>${g.opponent || ''} ${haTag(g)}</b>` : '<b>&nbsp;</b>';
     const title = g ? `GW${g.event}` : '';
     return `<span class="ai-mini" style="background:${colour}" title="${title}">${fix}${val}</span>`;
 }
 
-function aiPlayerCard(p, onBench, gameweek) {
+function aiPlayerCard(p, onBench, gameweek, opts) {
     const badge = p.is_captain ? '<span class="cap-badge">C</span>'
                 : (p.is_vice_captain ? '<span class="cap-badge vice">V</span>' : '');
     const posLabel = onBench ? `<div class="bench-pos">${p.pos || ''}</div>` : '';
@@ -2367,11 +2443,11 @@ function aiPlayerCard(p, onBench, gameweek) {
         <div class="player-kit">${shirtImg(p.team_code, p.pos, 'kit')}</div>
         ${band}
         <div class="player-name-pill">${p.web_name}</div>
-        <div class="player-gws">${aiFixtureBox(p, gameweek)}</div>
+        <div class="player-gws">${aiFixtureBox(p, gameweek, opts)}</div>
     </div>`;
 }
 
-function renderAiPitch(squad, gameweek) { renderAiPitchInto('aiPitch', 'aiBench', squad, gameweek); }
+function renderAiPitch(squad, gameweek, opts) { renderAiPitchInto('aiPitch', 'aiBench', squad, gameweek, opts); }
 
 // A full-size pitch of blank cards, drawn before either AI endpoint has
 // answered so the block occupies its final height from the very first frame.
@@ -2393,8 +2469,11 @@ function renderAiSkeletons() {
     // by HTML and the pill would silently go back to 2px, and the two look
     // identical in the source.
     const squad = emptySquad().map(p => ({ ...p, web_name: ' ' }));
-    renderAiPitchInto('mgrPitch', 'mgrBench', squad, null);
-    renderAiPitchInto('aiPitch', 'aiBench', squad, null);
+    // upcoming: true so the placeholders draw the full-height .ai-mini box
+    // rather than the shorter fixture tile - reserving the height the real
+    // cards will need is the entire job of this pass.
+    renderAiPitchInto('mgrPitch', 'mgrBench', squad, null, { upcoming: true });
+    renderAiPitchInto('aiPitch', 'aiBench', squad, null, { upcoming: true });
 }
 
 // Data has arrived: stop blanking the text. Idempotent, so every load path can
@@ -2405,19 +2484,25 @@ function clearAiSkeleton(id) {
 }
 
 // Shared by the Best XI and AI Manager tabs - same card, same layout.
-function renderAiPitchInto(pitchId, benchId, squad, gameweek) {
+// `opts` carries the two things a card cannot work out for itself: whether
+// this gameweek is still to be played, and which chip is active - the latter
+// because actual_points is the player's raw score and a tripled captain is only
+// tripled by the chip. live_overlay applies the same multiplier when it totals
+// the squad, so the pitch and the points container agree by construction rather
+// than by coincidence.
+function renderAiPitchInto(pitchId, benchId, squad, gameweek, opts) {
     const starters = squad.filter(p => p.starting);
     const bench = squad.filter(p => !p.starting);
     document.getElementById(pitchId).innerHTML =
         ['GK', 'DEF', 'MID', 'FWD'].map(pos => {
             const line = starters.filter(p => p.pos === pos);
             return line.length
-                ? `<div class="pitch-row">${line.map(p => aiPlayerCard(p, false, gameweek)).join('')}</div>`
+                ? `<div class="pitch-row">${line.map(p => aiPlayerCard(p, false, gameweek, opts)).join('')}</div>`
                 : '';
         }).join('');
     document.getElementById(benchId).innerHTML =
         `<div class="bench-label">Bench</div>
-         <div class="bench-row">${bench.map(p => aiPlayerCard(p, true, gameweek)).join('')}</div>`;
+         <div class="bench-row">${bench.map(p => aiPlayerCard(p, true, gameweek, opts)).join('')}</div>`;
 }
 
 function renderAiSquadTable(squad) {
@@ -2439,20 +2524,30 @@ function renderAiChips(d) {
     const el = document.getElementById('aiChips');
     const spare = (d.budget != null && d.squad_cost != null)
         ? (d.budget - d.squad_cost) : null;
-    // Formation is readable off the pitch and the frozen/live distinction is
-    // already implied by the gameweek arrows and the provisional note, so
-    // neither earns a chip here.
+    // Two sets, same split as My Team.
     //
-    // GW points is always present, showing a dash before the round starts,
-    // rather than an 'Actual' chip that materialised only once the gameweek had
-    // settled. A container that appears and disappears is one whose absence you
-    // have to interpret; a dash says plainly that the answer isn't known yet.
+    // A gameweek already played is a result: what the squad was projected to
+    // score and what it actually scored. What it cost to assemble and what was
+    // left over were decisions, and they were taken weeks ago - stating them
+    // over a finished round invites reading a budget as though it were still
+    // there to spend. (A stored snapshot carries no team rating either, by
+    // design: ratings move nightly, so one derived now would describe today's
+    // players rather than the squad as picked.)
+    //
+    // The upcoming gameweek is the opposite: the budget is the interesting part
+    // and there is no score yet, so a GW points container would be a dash
+    // occupying a slot.
+    if (!aiGwIsUpcoming(d.gameweek, aiBounds, d)) {
+        el.innerHTML =
+              chip('Predicted', d.predicted_points != null ? d.predicted_points.toFixed(1) : '–', true)
+            + chip('GW points', d.actual_points != null ? d.actual_points : '–',
+                   false, d.provisional ? PROVISIONAL_TIP : '');
+        return;
+    }
     el.innerHTML =
           chip('Squad cost', d.squad_cost != null ? '£' + d.squad_cost.toFixed(1) + 'm' : '–')
         + chip('Unspent', spare != null ? '£' + spare.toFixed(1) + 'm' : '–')
         + chip('Predicted', d.predicted_points != null ? d.predicted_points.toFixed(1) : '–', true)
-        + chip('GW points', d.actual_points != null ? d.actual_points : '–',
-               false, d.provisional ? PROVISIONAL_TIP : '')
         + ratingChip(d.team_rating);
 }
 
@@ -2482,7 +2577,9 @@ function loadAi(gw) {
             content.classList.remove('d-none');
             clearAiSkeleton('aiContent');
             renderAiChips(d);
-            renderAiPitch(d.squad, d.gameweek);
+            // The Best XI plays no chips, so there is none to pass.
+            renderAiPitch(d.squad, d.gameweek,
+                          { upcoming: aiGwIsUpcoming(d.gameweek, aiBounds, d) });
             renderAiSquadTable(d.squad);
         })
         .catch(() => {
@@ -2645,27 +2742,29 @@ function loadMgr(gw) {
             content.classList.remove('d-none');
             clearAiSkeleton('mgrContent');
             const value = d.squad_cost != null ? d.squad_cost : d.value;
-            // The same row of containers My Team has, in the same order and
-            // reading the same way. The bot plays by the rules a human plays by
-            // - one bank, one free-transfer allowance, hits for going over -
-            // and the point of the tab is rather lost if the page doesn't show
-            // it living with them.
-            //
-            // 'GW points' rather than an 'Actual' chip that appeared only once
-            // the round settled, and 'Cost' rather than 'Hits', both matching
-            // My Team: two tabs describing the same quantity under two names is
-            // how a reader concludes they are two different quantities.
             const tip = d.provisional ? PROVISIONAL_TIP : '';
-            document.getElementById('mgrChips').innerHTML =
-                  chip('Total points', d.total_points != null ? d.total_points : '–', false, tip)
-                + chip('GW points', d.points != null ? d.points : '–', false, tip)
-                + chip('Predicted', d.predicted_points != null ? d.predicted_points.toFixed(1) : '–', true)
-                + chip('Squad value', value != null ? '£' + value.toFixed(1) + 'm' : '–')
-                + chip('Bank', d.bank != null ? '£' + d.bank.toFixed(1) + 'm' : '–')
-                + ratingChip(d.team_rating)
-                + chip('Free transfers', d.free_transfers != null ? d.free_transfers : '–')
-                + costChip(d.hits);
-            renderAiPitchInto('mgrPitch', 'mgrBench', d.squad || [], d.gameweek);
+            const mgrChipsEl = document.getElementById('mgrChips');
+            // The same two sets My Team uses, container for container, so the
+            // bot's week and yours can be read side by side without first
+            // working out which page calls which number what.
+            if (!aiGwIsUpcoming(d.gameweek, mgrBounds, d)) {
+                mgrChipsEl.innerHTML =
+                      chip('GW points', d.points != null ? d.points : '–', false, tip)
+                    + chip('Predicted', d.predicted_points != null ? d.predicted_points.toFixed(1) : '–', true)
+                    + chipPlayedChip(d.active_chip || d.chip);
+            } else {
+                mgrChipsEl.innerHTML =
+                      chip('Total points', d.total_points != null ? d.total_points : '–', false, tip)
+                    + ratingChip(d.team_rating)
+                    + chip('Predicted', d.predicted_points != null ? d.predicted_points.toFixed(1) : '–', true)
+                    + chip('Squad value', value != null ? '£' + value.toFixed(1) + 'm' : '–')
+                    + bankChip(d.bank)
+                    + chip('Free transfers', d.free_transfers != null ? d.free_transfers : '–')
+                    + costChip(d.hits);
+            }
+            renderAiPitchInto('mgrPitch', 'mgrBench', d.squad || [], d.gameweek,
+                              { upcoming: aiGwIsUpcoming(d.gameweek, mgrBounds, d),
+                                chip: d.active_chip || d.chip });
             renderMgrMoves(d);
             renderMgrChipPlan(d);
         })
