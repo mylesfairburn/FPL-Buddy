@@ -101,3 +101,26 @@
 
    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3656765376252128" crossorigin="anonymous"></script>
    #}
+
+{# Cloudflare Web Analytics. Rendered only when FPL_CF_ANALYTICS_TOKEN is set,
+   so a local run sends nothing and a laptop never appears in the numbers.
+
+   Why this and not the edge figures already in the Cloudflare dashboard: those
+   count requests at the proxy, which means every unclassified bot and scraper,
+   and every visitor behind one NAT collapsed into a single "unique". This runs
+   in the browser, so what it counts is a page a browser actually rendered.
+   It is not a headcount of humans - nothing is. Ad blockers remove a chunk of
+   an audience like this one, and one person on a phone and a laptop is two.
+
+   No cookies and no client-side state, which is what keeps /privacy's PECR
+   position intact - but it IS analytics and IS a third party, and /privacy says
+   so. If this is ever removed, that page has to change back.
+
+   `defer` so it never blocks the parse, and the nonce because script-src
+   carries no 'unsafe-inline' - without it the browser refuses the tag. The
+   token goes through |tojson so the value can't break out of the attribute. #}
+{% if cf_analytics_token %}
+   <script defer nonce="{{ csp_nonce }}"
+           src="https://static.cloudflareinsights.com/beacon.min.js"
+           data-cf-beacon='{"token": {{ cf_analytics_token|tojson }}}'></script>
+{% endif %}

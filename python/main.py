@@ -37,7 +37,9 @@ import seasons
 import seo_tables as seo_tables_builder
 import social
 from pipeline import run_pipeline
-from rating_model import StaleModelError, get_rated_position_dfs
+from rating_model import (MIN_CURRENT_GAMEWEEKS, StaleModelError,
+                          completed_current_gameweeks, get_rated_position_dfs,
+                          using_fallback_form)
 from fixture_rotator import (get_rotation_data, rank_rotation_pairs, recommend_pair_players, team_fixture_map)
 from search import search_player
 from squad_optimiser import DEFAULT_BUDGET, OptimisationError
@@ -101,6 +103,34 @@ if SOCIAL_KEY and not re.fullmatch(r"[A-Za-z0-9_-]{24,128}", SOCIAL_KEY):
     print("FPL_SOCIAL_KEY must be 24-128 chars of a-z, A-Z, 0-9, - or _ "
           "(try: openssl rand -hex 32); the phone route will not be served.")
     SOCIAL_KEY = ""
+
+# Cloudflare Web Analytics. The site token from the dashboard - not a secret
+# (it ships in the HTML of every page) but it identifies this property, so it
+# is configured rather than hard-coded and a staging host doesn't report its
+# traffic into production's numbers.
+#
+# Unset, no beacon is rendered and the CSP stays entirely 'self' - which is
+# what a local run wants, and what keeps `docker compose up` on a laptop out of
+# the visitor counts.
+#
+# Use the "add the JS snippet manually" option in the Cloudflare dashboard, NOT
+# automatic setup. Automatic setup injects the same beacon at the edge, and
+# with this snippet also present every page view is counted twice.
+#
+# Cost, stated plainly: this is the first third-party origin on the site since
+# Bootstrap was vendored, and it is a real reversal of that decision - see the
+# note in content_security_policy(). It buys the one number the edge and Search
+# Console can't give: page views from browsers that actually executed JS.
+CF_ANALYTICS_TOKEN = os.environ.get("FPL_CF_ANALYTICS_TOKEN", "").strip()
+# Cloudflare issues these as 32 hex characters. Validated because the value is
+# interpolated into a script tag's data attribute: |tojson escapes it in the
+# template, so this is the second line of defence rather than the only one, but
+# a token that can't be right should fail loudly here rather than silently
+# collect nothing.
+if CF_ANALYTICS_TOKEN and not re.fullmatch(r"[0-9a-f]{32}", CF_ANALYTICS_TOKEN):
+    print("FPL_CF_ANALYTICS_TOKEN is not a valid Cloudflare Web Analytics "
+          "token (32 hex characters); no beacon will be served.")
+    CF_ANALYTICS_TOKEN = ""
 
 # Role addresses rather than personal ones, so they can be reassigned without
 # rewriting the site. Kept server-side and rendered obfuscated - see the note in
@@ -532,23 +562,35 @@ def content_security_policy(nonce):
     those to classes. Worth doing, but it is not what stops script injection,
     which is what this policy is for.
 
-    Every directive is 'self': Bootstrap is vendored into /static, so there is
-    no third-party origin left to allow. `font-src` needs nothing more because
-    Bootstrap 5.3 ships a system font stack and requests no webfont, and
+    Every directive is 'self' by default: Bootstrap is vendored into /static, so
+    there is no third-party origin left to allow. `font-src` needs nothing more
+    because Bootstrap 5.3 ships a system font stack and requests no webfont, and
     `img-src` keeps `data:` for the 23 inline SVGs its form controls and
     accordion arrows are drawn with.
+
+    The one exception is Cloudflare Web Analytics, and only when a token is
+    configured: `static.cloudflareinsights.com` to fetch the beacon and
+    `cloudflareinsights.com` to let it POST to /cdn-cgi/rum. Both are added
+    conditionally rather than unconditionally, so a deployment without the
+    token - and every local run - keeps the stricter policy above. It is worth
+    being clear that this partially undoes the vendoring decision: that work
+    removed the last third-party script origin, and this adds one back. The
+    trade is deliberate, and the beacon is the narrowest thing that answers
+    "how many real people", but it is a trade rather than a free addition.
 
     `object-src 'none'` and `base-uri 'self'` are the two cheap ones people
     forget: the first kills a class of plugin-based bypass, the second stops an
     injected <base> tag repointing every relative URL on the page.
     """
+    beacon_script = " https://static.cloudflareinsights.com" if CF_ANALYTICS_TOKEN else ""
+    beacon_connect = " https://cloudflareinsights.com" if CF_ANALYTICS_TOKEN else ""
     return "; ".join([
         "default-src 'self'",
-        f"script-src 'self' 'nonce-{nonce}'",
+        f"script-src 'self' 'nonce-{nonce}'{beacon_script}",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data:",
         "font-src 'self'",
-        "connect-src 'self'",
+        f"connect-src 'self'{beacon_connect}",
         "form-action 'self'",
         "frame-ancestors 'self'",
         "base-uri 'self'",
@@ -692,14 +734,39 @@ def load_data(mode=None):
     print(f"Loading FPL data ({mode})...")
     data = run_pipeline()
 
+    # `mode` and the ratings' FORM SOURCE are two different questions, and
+    # answering them with one variable is what made the changeover happen a
+    # fortnight early.
+    #
+    # `mode` asks "has the season started". It flips at the first deadline and
+    # it governs team strength, which is right: FPL publishes its own strength
+    # numbers once matches exist, and until then the rotation table stands on
+    # last season's results plus Elo.
+    #
+    # The form features are a different matter. Handing them 'inseason'
+    # bypassed using_fallback_form() completely - see the mode branches in
+    # build_current_form_features - so the night the first current-season stats
+    # landed on disk, a "rolling three gameweek" average was built out of ONE
+    # gameweek, and PRESEASON_START_WEIGHT and the calibrators were switched off
+    # along with it. Last season's averages to a single week of noise, overnight,
+    # with MIN_CURRENT_GAMEWEEKS sitting there documenting a rule that never got
+    # to apply.
+    #
+    # So the form question goes to the function that owns it. None means
+    # auto-detect, and auto-detect counts the gameweeks actually on disk.
+    rating_mode = None if mode == "inseason" else mode
     try:
-        position_dfs = get_rated_position_dfs(data["position_dfs"], mode=mode)
+        position_dfs = get_rated_position_dfs(data["position_dfs"], mode=rating_mode)
     except ValueError as e:
+        # Near-unreachable now that the inseason path auto-detects rather than
+        # asserting, but kept: it is the last guard between an unreadable stats
+        # file and a site with no ratings at all.
         if mode != "inseason":
             raise
         print(f"Can't use inseason ratings yet ({e}) - falling back to preseason.")
         mode = "preseason"
-        position_dfs = get_rated_position_dfs(data["position_dfs"], mode=mode)
+        rating_mode = "preseason"
+        position_dfs = get_rated_position_dfs(data["position_dfs"], mode=rating_mode)
     except StaleModelError as e:
         # The model bundles on the volume are older than this code. Serve the
         # site without ratings rather than refusing to start.
@@ -732,6 +799,17 @@ def load_data(mode=None):
     rotation_df = get_rotation_data(mode=mode, n_gameweeks=8)
 
     state["mode"] = mode
+    # Recorded rather than inferred. "Are the new season's numbers being used
+    # yet?" is a question worth being able to answer without reading the startup
+    # log, and `mode` cannot answer it - it says the season has started, which
+    # is not the same as saying the ratings have anything from it. /api/ai/status
+    # reports this alongside the gameweek count it was decided from.
+    try:
+        state["form_basis"] = ("last-season-average"
+                               if using_fallback_form(rating_mode)
+                               else "current-season-form")
+    except Exception:
+        state["form_basis"] = None
     state["position_dfs"] = position_dfs
     state["rotation_df"] = rotation_df
     clear_preview_cache()   # ratings moved; any cached AI squad is now stale
@@ -1010,6 +1088,9 @@ def page_context(request, path, meta=None, **extra):
         "site_name": SITE_NAME,
         "emails": EMAILS,
         "kofi_url": KOFI_URL,
+        # Empty unless configured, and the head partial renders no beacon when
+        # it is - see the note on CF_ANALYTICS_TOKEN.
+        "cf_analytics_token": CF_ANALYTICS_TOKEN,
         "page_title": meta["title"],
         "page_description": meta["description"],
         "canonical": SITE_URL + path,
@@ -1776,15 +1857,19 @@ def rotation(response: Response, category: str = "defender", n_gameweeks: int = 
 def team(team_id: int, event: int = None):
     """Full Team-tab payload for a manager id (optionally a specific gameweek).
     Read-only: recommendations are returned, but nothing is written back to FPL."""
-    view = get_team_view(team_id, event, state["position_dfs"])
     # The gameweek being picked for. Before the season starts there's no
     # current_event at all, so without this the header has nothing to show but
     # the word "Preseason" - which doesn't tell you WHICH gameweek you're
-    # picking for.
+    # picking for. Read BEFORE the view rather than stapled on afterwards,
+    # because it is also the view's default target: with no explicit ?event the
+    # tab should open on the round you can still change, not the one in play.
     try:
-        view["next_event"] = gw_clock.next_gameweek()
+        next_event = gw_clock.next_gameweek()
     except Exception:
-        view["next_event"] = None
+        next_event = None
+    view = get_team_view(team_id, event, state["position_dfs"],
+                         next_event=next_event)
+    view["next_event"] = next_event
     # Remember ids that resolve to a real manager, so the snapshot job has a
     # finite list to walk instead of all ~11M FPL entries. Never fatal.
     if view.get("header"):
@@ -1879,8 +1964,18 @@ def live_scores(gameweek: int, response: Response = None):
                 "detail": "Live data isn't available for that gameweek."}
     settled = gw_clock.gameweek_is_finished(gameweek, events)
     in_progress = gameweek == gw_clock.current_gameweek(events) and not settled
+    # Which clubs are actually playing yet. Without it the front end cannot tell
+    # a genuine nil from a match that kicks off tomorrow - both arrive here as
+    # 0. Never fatal: `null` means "couldn't tell", and the pitch falls back to
+    # showing every score, which is what it did before.
+    try:
+        started = gw_clock.started_teams(gameweek)
+    except Exception as e:
+        print(f"couldn't read started fixtures for GW{gameweek}: {e}")
+        started = None
     return {"available": True, "gameweek": gameweek, "points": points,
-            "provisional": not settled, "in_progress": in_progress}
+            "provisional": not settled, "in_progress": in_progress,
+            "started_teams": sorted(started) if started is not None else None}
 
 
 # =========================================================================
@@ -1949,6 +2044,56 @@ def clear_draft(fpl_id: int):
 #  AI Manager
 # =========================================================================
 
+def _with_live_points(stored):
+    """A frozen AI squad with this afternoon's scores painted on top.
+
+    Both AI tabs read their gameweek from the database, where actual points stay
+    NULL until the nightly job backfills a SETTLED round - correctly so, since
+    bonus points move until FPL checks the data. The cost was that during the
+    one afternoon anyone wants to watch a squad, every tab showed a pitch of
+    projections and an empty points container, and the bot appeared not to be
+    playing at all.
+
+    So the scores are overlaid at the point of DISPLAY and nowhere else.
+    ai_team.live_overlay writes nothing; /api/ai/history and
+    /api/ai/manager/history still read the stored, settled figures, which is
+    what keeps the published track record honest. `provisional` is passed
+    through so the page can say which kind of number it is showing.
+
+    Never fatal. A stored gameweek that cannot be decorated is still a stored
+    gameweek, and it renders exactly as it did before this existed.
+    """
+    gameweek = stored.get("gameweek")
+    if not stored.get("squad") or gameweek is None:
+        return stored
+    try:
+        live = ai_team.live_overlay(stored["squad"], gameweek,
+                                    chip=stored.get("active_chip"))
+    except Exception as e:
+        print(f"couldn't overlay live points on GW{gameweek}: {e}")
+        return stored
+    if live is None:
+        return stored
+
+    out = {**stored, "squad": live["squad"], "provisional": True}
+    # Two different keys for the same idea, because the two tabs were built at
+    # different times: the Best XI head calls it actual_points, the AI Manager
+    # calls it points. Both are filled rather than renaming one, which would
+    # break the stored-snapshot readers that use the other.
+    out["actual_points"] = live["points"]
+    out["points"] = live["points"]
+    # The season total has to move with it. Summed from settled rounds only, it
+    # read zero through the whole of the bot's first gameweek. Guarded on the
+    # key already being there: it is the AI MANAGER's cumulative figure, and the
+    # Best XI - stateless, a fresh squad every week - has no such thing.
+    if "total_points" in stored:
+        try:
+            out["total_points"] = ai_manager.total_points_to(gameweek - 1) + live["points"]
+        except Exception:
+            pass
+    return out
+
+
 @app.get("/api/ai/manager")
 def ai_manager_gameweek(gameweek: int = None):
     """The bot's squad for a gameweek, with the transfers and chip it chose.
@@ -1969,7 +2114,7 @@ def ai_manager_gameweek(gameweek: int = None):
     except Exception as e:
         db_error = str(e)
     if stored:
-        return {"available": True, "stored": True, **stored}
+        return {"available": True, "stored": True, **_with_live_points(stored)}
 
     started = gw_clock.started_gameweeks()
     if started and target <= started[-1]:
@@ -2023,7 +2168,7 @@ def ai_best_xi(gameweek: int = None, budget: float = DEFAULT_BUDGET):
     except Exception as e:
         db_error = str(e)
     if stored:
-        return {"available": True, **stored}
+        return {"available": True, **_with_live_points(stored)}
 
     started = gw_clock.started_gameweeks()
     if started and target <= started[-1]:
@@ -2090,6 +2235,11 @@ def ai_status():
         "db": health,
         "data": data,
         "mode": state["mode"],
+        # What the projections are actually standing on. `mode` flips at the
+        # first deadline; the form source waits until there are enough played
+        # gameweeks to average, and the gap between the two is a fortnight of
+        # the season where the honest answer is "last season's, still".
+        "ratings": _ratings_basis(),
         "current_gameweek": gw_clock.current_gameweek(events),
         "next_gameweek": gw_clock.next_gameweek(events),
         "processed_deadlines": db.processed_deadlines(),
@@ -2100,6 +2250,21 @@ def ai_status():
         # have when a page looks stale. Guarded because a diagnostic endpoint
         # that can 500 is one you cannot use in the situation it is for.
         "jobs": _jobs_health(),
+    }
+
+
+def _ratings_basis():
+    """Which form source the live ratings were built from, and why."""
+    try:
+        played = completed_current_gameweeks()
+    except Exception:
+        played = None
+    return {
+        "mode": state["mode"],
+        "form_basis": state.get("form_basis"),
+        "current_gameweeks_on_disk": played,
+        "gameweeks_needed_for_current_form": MIN_CURRENT_GAMEWEEKS,
+        "degraded": state.get("degraded"),
     }
 
 

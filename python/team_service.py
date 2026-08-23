@@ -20,8 +20,10 @@ import requests
 import chip_model
 import fixture_structure
 import seasons
+from ai_manager import free_transfers as step_free_transfers
 from fetch_data import get_bootstrap_data
-from squad_optimiser import SELECTABLE_STATUS, team_rating
+from squad_optimiser import (SELECTABLE_STATUS, predicted_for_gameweek,
+                             team_rating)
 
 BASE = "https://fantasy.premierleague.com/api"
 
@@ -163,17 +165,37 @@ def _build_element_index(position_dfs):
 
 
 def _estimate_free_transfers(history):
-    """Walk the season history to estimate free transfers for the NEXT GW.
-    Rule modelled: start 1, +1 per gameweek, capped at 5, minus transfers made.
-    Approximate - ignores wildcard/free-hit weeks, and pre-2024 the cap was 2."""
-    if not history or "current" not in history or not history["current"]:
+    """Free transfers going into the gameweek AFTER the last one played.
+
+    The rule itself is not restated here - it is `ai_manager.free_transfers`,
+    which the bot has always used and which is the same rule for a human. There
+    were two copies of it and they disagreed, which is what produced "3" in a
+    week where the answer is 1. One copy now.
+
+    What IS this function's own is where the walk starts. GW1 has unlimited
+    transfers, so it neither consumes an allowance nor banks one: a manager who
+    has played only GW1 has exactly one free transfer for GW2, however many
+    changes they made before the first deadline. The old walk counted GW1 like
+    any other round AND added a further transfer on the way out, so it ran two
+    ahead of FPL from the first week of the season.
+    """
+    rounds = sorted(((history or {}).get("current") or []),
+                    key=lambda r: r.get("event") or 0)
+    if not rounds:
         return 1
-    ft = 1
-    for gw in history["current"]:
-        made = gw.get("event_transfers", 0) or 0
-        ft = min(5, ft + 1) - made
-        ft = max(0, ft)
-    return max(1, min(5, ft + 1))
+
+    # A wildcard or free hit week costs no transfer however many are made in it.
+    # Same list `_chips_state` reads, so the two cannot disagree about which
+    # weeks those were.
+    free_rounds = {c.get("event") for c in ((history or {}).get("chips") or [])
+                   if c.get("name") in ("wildcard", "freehit")}
+
+    ft = 1                       # what GW1 leaves you with, before any of GW2 on
+    for row in rounds[1:]:
+        on_chip = row.get("event") in free_rounds
+        made = 0 if on_chip else (row.get("event_transfers") or 0)
+        ft = step_free_transfers(ft, made, wildcard_or_freehit=on_chip)
+    return ft
 
 
 def _total_points_at(history, event):
@@ -590,8 +612,25 @@ def get_player_summary(player_id, n=6):
     return {"available": True, "history": rows, "history_past": past}
 
 
-def get_team_view(team_id, event, position_dfs):
-    """Assemble the whole Team tab payload for a manager id + gameweek."""
+def get_team_view(team_id, event, position_dfs, next_event=None,
+                  carry_forward=True):
+    """Assemble the whole Team tab payload for a manager id + gameweek.
+
+    `next_event` is the gameweek being picked for, from the season clock. It is
+    the default target rather than `current_event`, because the round you can
+    still change is the one you came here to change - see the carry-forward note
+    further down for why that view has to be assembled rather than fetched.
+
+    `carry_forward` is the switch on that behaviour, and callers that are
+    RECORDING rather than displaying must turn it off. The deadline watcher is
+    the one that matters: it snapshots official picks moments after a deadline,
+    when FPL has been known to still report the previous `current_event` while
+    already serving the new round's picks. If that fetch hiccupped, a
+    carried-forward squad would be written down as somebody's official team for
+    a gameweek they picked differently - a wrong answer that looks exactly like
+    a right one. Displaying last week's squad as a starting point is helpful;
+    filing it as fact is not.
+    """
     if position_dfs is None:
         return {"available": False, "detail": "Ratings not loaded yet."}
 
@@ -600,7 +639,8 @@ def get_team_view(team_id, event, position_dfs):
         return {"available": False, "detail": f"Couldn't find manager {team_id}. Check the ID."}
 
     current_event = entry.get("current_event")
-    event = event or current_event
+    event = event or next_event or current_event
+    max_event = next_event or current_event
     index = _build_element_index(position_dfs)
 
     # Leagues + header basics are available even in preseason.
@@ -616,14 +656,31 @@ def get_team_view(team_id, event, position_dfs):
     if not event:
         return {"available": False, "detail": "No gameweek has started yet (preseason).",
                 "header": header, "leagues": leagues,
-                "current_event": current_event, "min_event": 1}
+                "current_event": current_event, "min_event": 1,
+                "max_event": max_event}
 
+    # FPL does not publish a manager's picks for a gameweek until its deadline
+    # has passed - /entry/{id}/event/{next}/picks/ is a flat 404 - so the round
+    # you can actually still change is the one round the API cannot hand over.
+    # Refusing to show it left the tab able to display only locked gameweeks,
+    # which is the wrong half of the season to be able to edit.
+    #
+    # So it is carried forward: the last squad FPL does have, re-priced against
+    # the target gameweek's own projections. That is what the manager owns going
+    # into it, and it is the honest starting point for planning - overwritten by
+    # their real picks the moment the deadline passes and FPL starts answering.
+    carried_from = None
     picks_data = _get(f"{BASE}/entry/{team_id}/event/{event}/picks/")
+    if (picks_data is None or "picks" not in picks_data)             and carry_forward and current_event and event > current_event:
+        picks_data = _get(f"{BASE}/entry/{team_id}/event/{current_event}/picks/")
+        if picks_data is not None and "picks" in picks_data:
+            carried_from = current_event
     if picks_data is None or "picks" not in picks_data:
         return {"available": False,
                 "detail": f"Team for GW{event} isn't available yet (picks appear once the gameweek is live).",
                 "header": header, "leagues": leagues,
-                "current_event": current_event, "min_event": 1}
+                "current_event": current_event, "min_event": 1,
+                "max_event": max_event}
 
     history = _get(f"{BASE}/entry/{team_id}/history/")
     free_transfers = _estimate_free_transfers(history)
@@ -633,12 +690,25 @@ def get_team_view(team_id, event, position_dfs):
     bank = round((eh.get("bank") or 0) / 10, 1)
 
     # Merge each pick with its rated player info.
+    #
+    # `predicted` is re-read for the gameweek actually on screen rather than
+    # taken from the index, where it is `next_gameweeks[0]`. That list is built
+    # from unfinished fixtures and rolls forward per TEAM as matches complete,
+    # so mid-round it holds this gameweek for the clubs still to play and the
+    # next one for the clubs that have finished - eleven players projected
+    # against two different gameweeks at once. Matching on the event fixes them
+    # all to the same round. None means the pool has nothing for that gameweek
+    # (a past round; its fixtures are long gone), and the index value is the
+    # best available answer there.
     squad = []
     for pk in picks_data["picks"]:
         info = index.get(pk["element"])
         if info is None:
             continue
+        for_gw = predicted_for_gameweek(info, event)
         squad.append({**info,
+                      "predicted": round(for_gw, 1) if for_gw is not None
+                                   else info.get("predicted"),
                       "position": pk["position"],           # 1-11 start, 12-15 bench
                       "starting": pk["position"] <= 11,
                       "is_captain": pk["is_captain"],
@@ -661,17 +731,24 @@ def get_team_view(team_id, event, position_dfs):
         "header": header,
         "gw": {
             "event": event,
-            "points": eh.get("points"),
+            # Everything FPL reports per round belongs to the round the picks
+            # came FROM. On a carried-forward view that is a different gameweek
+            # to the one on screen, and stating last week's score, transfers and
+            # chip under next week's heading would be wrong on every count -
+            # so they are what they truly are for a gameweek not yet played:
+            # nothing has happened in it. The cumulative total still stands,
+            # because that is a season-to-date figure and it is up to date.
+            "points": None if carried_from else eh.get("points"),
             # Cumulative as at THIS round, so stepping back through the season
             # shows what the total actually was then. See _total_points_at.
-            "total_points": _total_points_at(history, event),
+            "total_points": _total_points_at(history, carried_from or event),
             "predicted_points": round(predicted_gw, 1),
             "bank": bank,
             "value": round((eh.get("value") or 0) / 10, 1),
-            "transfers_made": eh.get("event_transfers"),
-            "transfers_cost": eh.get("event_transfers_cost"),
+            "transfers_made": 0 if carried_from else eh.get("event_transfers"),
+            "transfers_cost": 0 if carried_from else eh.get("event_transfers_cost"),
             "free_transfers_est": free_transfers,
-            "active_chip": picks_data.get("active_chip"),
+            "active_chip": None if carried_from else picks_data.get("active_chip"),
             "chips_used": chips_used,
             "chips_available": chips_available,
             # What each held chip is worth to this squad this week, measured
@@ -692,6 +769,14 @@ def get_team_view(team_id, event, position_dfs):
         "leagues": leagues,
         "current_event": current_event,
         "min_event": 1,
+        # How far the forward arrow may go. The client used to cap itself at
+        # current_event, which is precisely the round it cannot change.
+        "max_event": max_event,
+        # Set when these picks are last week's, shown for a gameweek that has
+        # not had its deadline yet. The banner that says so is the only thing
+        # standing between a carried-forward squad and being read as a
+        # confirmed team - so it is stated in the payload, not inferred.
+        "carried_from": carried_from,
     }
 
 

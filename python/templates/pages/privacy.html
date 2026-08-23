@@ -80,12 +80,27 @@
 
 <h2>Cookies and local storage</h2>
 <p>
-    This site sets <strong>no cookies</strong> and runs no analytics or tracking.
-    It uses your browser's local storage for two functional things: remembering the
-    FPL ID you typed, and remembering which tab you were on. Both stay on your
-    device, are never transmitted anywhere, and are cleared when you clear your
-    browser data. Under PECR these are strictly necessary, so no consent banner is
-    required.
+    This site sets <strong>no cookies</strong>. It uses your browser's local storage
+    for two functional things: remembering the FPL ID you typed, and remembering
+    which tab you were on. Both stay on your device, are never transmitted
+    anywhere, and are cleared when you clear your browser data. Under PECR these
+    are strictly necessary, so no consent banner is required.
+</p>
+
+<h2>Visitor measurement</h2>
+<p>
+    This site uses <a href="https://www.cloudflare.com/web-analytics/" target="_blank" rel="noopener noreferrer">Cloudflare
+    Web Analytics</a> to count page views. It sets <strong>no cookies</strong>,
+    stores nothing on your device, and does not fingerprint you or follow you
+    between sites — there is no identifier that could recognise you on a second
+    visit, so no profile of you is built here or anywhere else.
+</p>
+<p>
+    What it records for a page view is the page address, the referring site, and
+    coarse details of your browser, device type and country. It does not record
+    your IP address, and none of it is linked to your FPL ID or to a saved team.
+    Because it neither stores nor reads anything on your device, PECR does not
+    require consent for it and there is no banner to click.
 </p>
 <p class="text-muted">
     If advertising is ever added, that will change — this page and a consent banner
@@ -102,8 +117,12 @@
 
 <h2>Security</h2>
 <p>
-    Data is held in a single database file on a server controlled by the site owner
-    and is not shared with, sold to, or processed by any third party. If you believe
+    Data is held in a single database file on a server controlled by the site owner.
+    Nothing in it is sold, and nothing in it is shared with a third party. The site
+    is served through Cloudflare, which therefore handles requests in transit and
+    processes the anonymous page-view counts described above; that is the only
+    third-party processing involved, and it does not extend to the manager data
+    in the database. If you believe
     you have found a security problem, please email {{ obf_mail(emails.security) }}
     rather than reporting it publicly.
 </p>

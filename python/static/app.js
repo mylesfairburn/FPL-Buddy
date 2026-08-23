@@ -270,6 +270,11 @@ let transfersUsed = 0;   // real (non-empty-slot) transfers made this preview se
 // editing controls step aside. The upcoming gameweek is the editable one.
 let liveScores = null;      // { [element_id]: points } for the viewed gameweek
 let liveMeta = null;        // { provisional, in_progress }
+// Team ids with a match under way or finished. null means the server
+// couldn't tell us, in which case every player is treated as having
+// played \u2014 the old behaviour, and the safe one: it shows a real score
+// where the alternative would blank the whole pitch on a fixtures outage.
+let liveStarted = null;
 let livePollTimer = null;
 const LIVE_POLL_MS = 60000; // matches finish in minutes, not seconds
 
@@ -291,9 +296,10 @@ function loadLiveScores(gameweek, opts) {
         .then(r => r.json())
         .then(d => {
             if (selectedEvent !== gameweek) return null;   // user moved on mid-flight
-            if (!d.available) { liveScores = null; liveMeta = null; return null; }
+            if (!d.available) { liveScores = null; liveMeta = null; liveStarted = null; return null; }
             liveScores = d.points || {};
             liveMeta = { provisional: d.provisional, in_progress: d.in_progress };
+            liveStarted = Array.isArray(d.started_teams) ? new Set(d.started_teams) : null;
             renderPitch();
             renderLiveBanner();
             // Only poll while matches are actually being played.
@@ -306,15 +312,39 @@ function loadLiveScores(gameweek, opts) {
         .catch(() => null);
 }
 
+// The one line saying what you are looking at. Two states, and they cannot
+// both be true: a locked gameweek is a RESULT and gets the live score; an
+// editable one carried forward from last week is a PLAN and has to say so.
+// Unlabelled, a carried-forward squad reads as a confirmed team, which is
+// the one misreading this view can cause.
 function renderLiveBanner() {
     const banner = document.getElementById('liveBanner');
     if (!banner) return;
-    if (!liveScores || !gameweekIsLocked()) { banner.classList.add('d-none'); return; }
-    const total = (workingSquad || []).filter(p => p.starting)
+    if (!liveScores || !gameweekIsLocked()) {
+        const from = teamView && teamView.carried_from;
+        if (from && !gameweekIsLocked()) {
+            banner.innerHTML =
+                `<strong>GW${selectedEvent}</strong> \u2014 starting from your GW${from} squad. `
+                + `FPL doesn\u2019t publish a gameweek\u2019s picks until its deadline, so this is `
+                + `what you own going into it. Edit freely \u2014 then apply the changes in the `
+                + `official app.`;
+            banner.classList.remove('d-none');
+            return;
+        }
+        banner.classList.add('d-none');
+        return;
+    }
+    // Only players whose match has begun, so the banner and the pitch add up
+    // to the same thing \u2014 a starter kicking off tomorrow contributes his
+    // eventual score to neither.
+    const started = (workingSquad || []).filter(p => p.starting && hasKickedOff(p));
+    const total = started
         .reduce((sum, p) => sum + (liveScores[p.id] || 0) * (p.id === captainId ? 2 : 1), 0);
+    const waiting = (workingSquad || []).filter(p => p.starting).length - started.length;
     banner.innerHTML =
         `<strong>GW${selectedEvent}</strong> &mdash; your team is locked. `
         + `Starting XI has scored <strong>${total}</strong> pts`
+        + (waiting > 0 ? ` from ${started.length} of 11 \u2014 ${waiting} still to play.` : '')
         + (liveMeta && liveMeta.provisional
             ? ' <span class="live-prov">(provisional &mdash; bonus points aren\u2019t final yet)</span>'
             : '')
@@ -389,7 +419,7 @@ function applyLockedState() {
     if (locked) {
         loadLiveScores(selectedEvent);
     } else {
-        liveScores = null; liveMeta = null;
+        liveScores = null; liveMeta = null; liveStarted = null;
         stopLivePolling();
         renderLiveBanner();
     }
@@ -397,7 +427,7 @@ function applyLockedState() {
 
 function renderTeam(view) {
     teamView = view;
-    liveScores = null; liveMeta = null; stopLivePolling();
+    liveScores = null; liveMeta = null; liveStarted = null; stopLivePolling();
     teamContent.classList.remove('d-none');
     idPrompt.classList.add('d-none');
     showChangeId(true);
@@ -425,11 +455,17 @@ function renderTeam(view) {
         document.getElementById('gwPrev').disabled = true;
         document.getElementById('gwNext').disabled = true;
     } else {
-        selectedEvent = view.gw ? view.gw.event : (selectedEvent || view.current_event);
+        selectedEvent = view.gw ? view.gw.event
+            : (selectedEvent || view.next_event || view.current_event);
         document.getElementById('gwLabel').textContent = selectedEvent ? `GW${selectedEvent}` : 'GW\u2013';
-        const cur = view.current_event, minE = view.min_event || 1;
+        // Forward stops at the gameweek being PICKED for, not the one in
+        // play. Capping at current_event put the arrow one short of the
+        // only round still editable \u2014 the tab could reach every
+        // gameweek except the one you came here to change.
+        const maxE = view.max_event || view.next_event || view.current_event;
+        const minE = view.min_event || 1;
         document.getElementById('gwPrev').disabled = !selectedEvent || selectedEvent <= minE;
-        document.getElementById('gwNext').disabled = !selectedEvent || !cur || selectedEvent >= cur;
+        document.getElementById('gwNext').disabled = !selectedEvent || !maxE || selectedEvent >= maxE;
     }
 
     const unavailable = document.getElementById('teamUnavailable');
@@ -502,7 +538,6 @@ function renderStatChips(gw) {
                      + (h.bank != null ? bankChip(h.bank) : chip('In the bank', '\u2013'));
         return;
     }
-    const tc = gw.transfers_cost ? ` (-${gw.transfers_cost})` : '';
     // Total first, then this round's. Both are needed and they answer different
     // questions, so showing only one was the bug: the header total is the
     // season-to-date figure and never moved as you stepped back through the
@@ -517,8 +552,7 @@ function renderStatChips(gw) {
         + bankChip(gw.bank)
         + freeTransfersChip(gw)
         + rating
-        + chip('Transfers', (gw.transfers_made ?? 0) + tc)
-        + chip('Chips left*', (gw.chips_available || []).join(', ') || 'none')
+        + costChip(transferCost(gw))
         + (gw.active_chip ? chip('Active chip', gw.active_chip) : '');
 }
 // Free transfers remaining this preview session, next to the bank chip.
@@ -537,11 +571,33 @@ function freeTransfersChip(gw) {
     if (teamView && teamView.built) {
         return `<div class="stat-chip"><span class="stat-label">Free transfers</span><span class="stat-value">Unlimited</span></div>`;
     }
+    // Just the count. This chip used to carry the hit as well - "0 (-4 hit)" -
+    // because it was the only place a hit could be shown. Cost is that place
+    // now, and the same -4 stated in two containers side by side reads as two
+    // separate deductions.
     const free = (gw && typeof gw.free_transfers_est === 'number') ? gw.free_transfers_est : 1;
-    const hitPts = transferHitPoints();
     const remaining = Math.max(0, free - transfersUsed);
-    const val = hitPts > 0 ? `0 <span class="stat-hit">(\u2212${hitPts} hit)</span>` : String(remaining);
-    return `<div class="stat-chip${hitPts > 0 ? ' stat-neg' : ''}"><span class="stat-label">Free transfers</span><span class="stat-value">${val}</span></div>`;
+    const spent = remaining === 0;
+    return `<div class="stat-chip${spent ? ' stat-neg' : ''}"><span class="stat-label">Free transfers</span><span class="stat-value">${remaining}</span></div>`;
+}
+// What this gameweek has cost in points, which is a different question from
+// how many transfers were made \u2014 and the only one of the two that moves
+// your score. Two free transfers and no transfers at all both cost nothing,
+// so a count of them told you nothing; a hit is what there is to know.
+//
+// Zero is stated rather than hidden. "0 pts" is the reassurance someone
+// mid-transfer is looking for, and a chip that disappears when the news is
+// good is a chip whose absence you have to remember the meaning of.
+function transferCost(gw) {
+    // A locked gameweek has FPL's own figure and it cannot change. An
+    // editable one is whatever this preview session has run up so far.
+    if (gameweekIsLocked()) return (gw && gw.transfers_cost) || 0;
+    return transferHitPoints();
+}
+function costChip(cost) {
+    const pts = Number(cost) || 0;
+    const val = pts ? `\u2212${pts} pts` : '0 pts';
+    return `<div class="stat-chip${pts ? ' stat-neg' : ''}"><span class="stat-label">Cost</span><span class="stat-value">${val}</span></div>`;
 }
 function bankChip(bank) {
     const neg = bank < 0;
@@ -581,6 +637,12 @@ function teamRating(squad) {
 // squad-quality figure and not a points forecast. It sits on the chip because
 // that is where the misreading happens - a number out of 100 next to a
 // predicted-points number invites being read as the better of the two.
+// Said on the containers that carry a live score rather than in a banner:
+// the number itself is what gets read and quoted, so the caveat belongs on
+// it. Bonus points are not settled until FPL checks the round, so a total
+// shown mid-Saturday genuinely will move.
+const PROVISIONAL_TIP = 'Provisional \u2014 the gameweek is still being played '
+    + 'and bonus points are not final until FPL checks the round.';
 const RATING_TIP = 'Squad quality, not a points forecast. Each rating is a '
     + "player's projected points ranked within his own position, so the best "
     + 'keeper and the best forward both read 100. Predicted points is the '
@@ -603,6 +665,16 @@ function miniFixtures(p) {
     }).join('');
 }
 
+// Has this player's gameweek begun? A player whose match hasn't kicked off
+// has no score yet \u2014 and "0" is not the same statement as "hasn't
+// played", though on a pitch they look identical. Owning six players who
+// have scored and five who kick off tomorrow read as a disaster.
+//
+// A double gameweek counts as begun once either fixture has: a real score
+// from the first match is worth more than a fixture tile for the second.
+function hasKickedOff(p) {
+    return !liveStarted || p.team == null || liveStarted.has(p.team);
+}
 function playerCard(p, opts) {
     opts = opts || {};
     const isEmpty = p.id < 0;
@@ -633,11 +705,19 @@ function playerCard(p, opts) {
     const availBand = availabilityBandHtml(p);
     if (opts.pendingOut) cls += ' pending-out pending-active';
     const plus = opts.pendingOut ? '<div class="out-plus">+</div>' : '';
-    // Once a gameweek is under way the projection is history - show what they
-    // actually scored instead.
-    const live = (liveScores && liveScores[p.id] != null)
+    // Once a player's match is under way the projection is history - show
+    // what they actually scored instead. Before it, the fixture: that is
+    // still the only thing there is to say about them.
+    //
+    // The captain's number is the doubled one, printed plainly. It used to
+    // read "8 \u00d72", which is the arithmetic rather than the answer, and
+    // left the reader to decide whether 8 or 16 was the figure that counted
+    // towards the total in the banner above. The C badge already says who
+    // the captain is.
+    const showLive = liveScores && liveScores[p.id] != null && hasKickedOff(p);
+    const live = showLive
         ? `<div class="player-gws"><span class="live-pts${p.id === captainId ? ' live-cap' : ''}">`
-          + `${liveScores[p.id]}${p.id === captainId ? ' \u00d72' : ''}</span></div>`
+          + `${liveScores[p.id] * (p.id === captainId ? 2 : 1)}</span></div>`
         : `<div class="player-gws">${miniFixtures(p)}</div>`;
     return `<div class="${cls}" data-id="${p.id}" style="position:relative">
         ${posLabel}${badge}
@@ -1161,12 +1241,17 @@ function renderChips(gw) {
         return note + ' Refreshes at gameweek 19.';
     }
 
+    // The card says whether you HAVE the chip, and nothing more. It used to
+    // read "Play it" and light up whenever a projection cleared a floor,
+    // which is a recommendation dressed as a status \u2014 and one good week
+    // for a captain is a thin basis on which to spend something that has to
+    // last half a season. The full argument is still one tap away in the
+    // note; it is offered there rather than pushed here.
     bar.innerHTML = CHIPS.map(c => {
         const a = advice[c.key];
         const available = a ? true : (avail.includes(c.key) || avail.includes(c.name));
-        const ready = a && a.verdict === 'play';
-        const status = !available ? 'Used' : (ready ? 'Play it' : 'Available');
-        return `<div class="chip-card ${available ? 'chip-avail' : 'chip-unavail'}${ready ? ' chip-playing' : ''}" tabindex="0" data-i="${c.key}">
+        const status = available ? 'Available' : 'Used';
+        return `<div class="chip-card ${available ? 'chip-avail' : 'chip-unavail'}" tabindex="0" data-i="${c.key}">
             <img class="chip-img" src="/static/${c.key}.svg" alt="${c.name}" data-onerror="invisible">
             <div class="chip-card-name">${c.name}</div>
             <div class="chip-status">${status}</div>
@@ -2251,6 +2336,11 @@ function aiFixtureBox(p, gameweek) {
     const gws = p.next_gameweeks || [];
     const g = (gameweek != null && gws.find(x => x.event === gameweek)) || gws[0];
     const colour = (g && g.difficulty != null) ? colorFor(g.difficulty, 1, 5) : '#eee';
+    // A score only replaces the projection once the player's match has
+    // actually begun - otherwise a mid-round pitch reads as though the AI's
+    // squad had blanked when half of it hasn't kicked off. That decision is
+    // the server's: it fills actual_points only for players whose fixture
+    // has started, so an absent score here already means "hasn't played".
     const val = p.actual_points != null
         ? `<span class="ai-actual">${p.actual_points}</span>`
         : `<span>${p.predicted != null ? p.predicted.toFixed(1) : '\u2013'}</span>`;
@@ -2350,14 +2440,20 @@ function renderAiChips(d) {
     const spare = (d.budget != null && d.squad_cost != null)
         ? (d.budget - d.squad_cost) : null;
     // Formation is readable off the pitch and the frozen/live distinction is
-    // already implied by the gameweek arrows and whether actual points exist,
-    // so neither earns a chip here.
+    // already implied by the gameweek arrows and the provisional note, so
+    // neither earns a chip here.
+    //
+    // GW points is always present, showing a dash before the round starts,
+    // rather than an 'Actual' chip that materialised only once the gameweek had
+    // settled. A container that appears and disappears is one whose absence you
+    // have to interpret; a dash says plainly that the answer isn't known yet.
     el.innerHTML =
           chip('Squad cost', d.squad_cost != null ? '£' + d.squad_cost.toFixed(1) + 'm' : '–')
         + chip('Unspent', spare != null ? '£' + spare.toFixed(1) + 'm' : '–')
         + chip('Predicted', d.predicted_points != null ? d.predicted_points.toFixed(1) : '–', true)
-        + ratingChip(d.team_rating)
-        + (d.actual_points != null ? chip('Actual', d.actual_points) : '');
+        + chip('GW points', d.actual_points != null ? d.actual_points : '–',
+               false, d.provisional ? PROVISIONAL_TIP : '')
+        + ratingChip(d.team_rating);
 }
 
 function loadAi(gw) {
@@ -2549,14 +2645,26 @@ function loadMgr(gw) {
             content.classList.remove('d-none');
             clearAiSkeleton('mgrContent');
             const value = d.squad_cost != null ? d.squad_cost : d.value;
+            // The same row of containers My Team has, in the same order and
+            // reading the same way. The bot plays by the rules a human plays by
+            // - one bank, one free-transfer allowance, hits for going over -
+            // and the point of the tab is rather lost if the page doesn't show
+            // it living with them.
+            //
+            // 'GW points' rather than an 'Actual' chip that appeared only once
+            // the round settled, and 'Cost' rather than 'Hits', both matching
+            // My Team: two tabs describing the same quantity under two names is
+            // how a reader concludes they are two different quantities.
+            const tip = d.provisional ? PROVISIONAL_TIP : '';
             document.getElementById('mgrChips').innerHTML =
-                  chip('Total points', d.total_points != null ? d.total_points : '–')
+                  chip('Total points', d.total_points != null ? d.total_points : '–', false, tip)
+                + chip('GW points', d.points != null ? d.points : '–', false, tip)
+                + chip('Predicted', d.predicted_points != null ? d.predicted_points.toFixed(1) : '–', true)
                 + chip('Squad value', value != null ? '£' + value.toFixed(1) + 'm' : '–')
                 + chip('Bank', d.bank != null ? '£' + d.bank.toFixed(1) + 'm' : '–')
-                + chip('Predicted', d.predicted_points != null ? d.predicted_points.toFixed(1) : '–', true)
                 + ratingChip(d.team_rating)
-                + (d.points != null ? chip('Actual', d.points) : '')
-                + (d.hits ? chip('Hits', '−' + d.hits) : '');
+                + chip('Free transfers', d.free_transfers != null ? d.free_transfers : '–')
+                + costChip(d.hits);
             renderAiPitchInto('mgrPitch', 'mgrBench', d.squad || [], d.gameweek);
             renderMgrMoves(d);
             renderMgrChipPlan(d);

@@ -110,6 +110,10 @@ services:
       # INSIDE this container via `docker exec`, so loopback is the app itself.
       FPL_APP_URL: http://127.0.0.1:8000
       FPL_SOCIAL_KEY: ${FPL_SOCIAL_KEY:-}
+      # Cloudflare Web Analytics site token. Not a secret - it is served in the
+      # HTML of every page. Blank means no beacon is rendered and the CSP stays
+      # entirely 'self', which is what a staging or local stack wants.
+      FPL_CF_ANALYTICS_TOKEN: ${FPL_CF_ANALYTICS_TOKEN:-}
       # --- Discord channels --------------------------------------------------
       # Each falls back to FPL_ALERT_WEBHOOK when blank, so one variable puts
       # everything in one channel and they can be split out one at a time.

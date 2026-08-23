@@ -16,6 +16,7 @@ import numpy
 import pandas as pd
 
 import ai_manager
+import ai_team
 import chip_model
 import drafts
 import gw_report as gwr
@@ -27,6 +28,7 @@ import fixture_structure
 import rating_model
 import seasons
 import social
+import team_service
 import train_model as tm
 from harness import check, expect, group, safe
 
@@ -2331,6 +2333,140 @@ def test_season_fixture_structure():
                 "than 'no data'")
 
 
+def test_free_transfer_estimate():
+    """How many free transfers a manager has for the gameweek being picked.
+
+    The number that read 3 in a week where the answer was 1. FPL's rule is one
+    per gameweek, banked up to five, spent by transferring - and GW1, where
+    transfers are unlimited, is outside it entirely: it neither spends an
+    allowance nor banks one.
+    """
+    group("free transfer estimate", "high")
+
+    def history(rounds, chips=None):
+        return {"current": [{"event": e, "event_transfers": t} for e, t in rounds],
+                "chips": chips or []}
+
+    est = team_service._estimate_free_transfers
+
+    expect("preseason, nothing played yet", "no rounds in history",
+           1, safe(est, history([])))
+    # The live bug, pinned: one played gameweek is one free transfer, always.
+    expect("after GW1 only", "GW1 played, 0 transfers",
+           1, safe(est, history([(1, 0)])))
+    expect("preseason churn doesn't cost the GW2 transfer",
+           "GW1 played after 5 preseason changes",
+           1, safe(est, history([(1, 5)])))
+    expect("a quiet GW2 banks one", "GW1-2 played, none used in GW2",
+           2, safe(est, history([(1, 0), (2, 0)])))
+    expect("using it leaves one", "GW1-2, one transfer in GW2",
+           1, safe(est, history([(1, 0), (2, 1)])))
+    expect("taking a hit still leaves one", "GW1-2, two transfers in GW2",
+           1, safe(est, history([(1, 0), (2, 2)])))
+    expect("banked transfers cap at five", "six quiet gameweeks",
+           5, safe(est, history([(g, 0) for g in range(1, 7)])))
+    expect("and stay capped", "twelve quiet gameweeks",
+           5, safe(est, history([(g, 0) for g in range(1, 13)])))
+    expect("a wildcard week consumes nothing",
+           "GW1-3 quiet, wildcard + 8 transfers in GW3",
+           3, safe(est, history([(1, 0), (2, 0), (3, 8)],
+                                [{"event": 3, "name": "wildcard"}])))
+    expect("a free hit week consumes nothing",
+           "GW1-3 quiet, free hit + 11 transfers in GW3",
+           3, safe(est, history([(1, 0), (2, 0), (3, 11)],
+                                [{"event": 3, "name": "freehit"}])))
+    expect("rounds are walked in gameweek order, not list order",
+           "history listing GW2 before GW1",
+           2, safe(est, history([(2, 0), (1, 0)])))
+    check("a missing history degrades to one rather than raising", "None",
+          "1", safe(est, None), lambda v: v == 1)
+
+
+def test_free_transfer_step():
+    """The single-round rule both the bot and My Team now share."""
+    group("free transfer step", "high")
+
+    step = ai_manager.free_transfers
+    expect("a quiet round banks one", "had 1, used 0", 2, safe(step, 1, 0))
+    expect("spending it holds at one", "had 1, used 1", 1, safe(step, 1, 1))
+    expect("never drops below one", "had 1, used 4", 1, safe(step, 1, 4))
+    expect("never rises above five", "had 5, used 0", 5, safe(step, 5, 0))
+    expect("a chip week ignores the transfers made", "had 2, used 9, on a chip",
+           3, safe(step, 2, 9, True))
+
+
+def test_live_overlay():
+    """Provisional scores painted onto a frozen AI squad mid-gameweek.
+
+    Display only - it must never be the thing that writes a number down. The
+    scoring rule matches ai_team.backfill_actuals: starters only, captain
+    doubled, extended by whichever chip is in play.
+    """
+    group("live overlay", "high")
+
+    def squad():
+        # Two clubs: 1 has kicked off, 2 has not.
+        return [
+            {"id": 10, "team": 1, "starting": True, "is_captain": True,
+             "actual_points": None},
+            {"id": 11, "team": 1, "starting": True, "is_captain": False,
+             "actual_points": None},
+            {"id": 12, "team": 2, "starting": True, "is_captain": False,
+             "actual_points": None},
+            {"id": 13, "team": 1, "starting": False, "is_captain": False,
+             "actual_points": None},
+        ]
+
+    live = {10: 8, 11: 2, 12: 6, 13: 5}
+    started = {1}
+
+    def run(chip=None):
+        return ai_team.live_overlay(
+            squad(), 1, events=[{"id": 1, "finished": False, "data_checked": False}],
+            chip=chip)
+
+    saved = (ai_team.get_event_live, ai_team.started_teams)
+    ai_team.get_event_live = lambda gw: live
+    ai_team.started_teams = lambda gw: started
+    try:
+        plain = safe(run)
+        # 8 doubled for the captain + 2. Player 12's club has not kicked off, so
+        # his 6 is not counted and not shown - the whole point of the exercise.
+        expect("captain doubled, unstarted club excluded",
+               "clubs 1 started, 2 not; captain scored 8",
+               18, plain["points"] if isinstance(plain, dict) else plain)
+        scores = ([p["actual_points"] for p in plain["squad"]]
+                  if isinstance(plain, dict) else plain)
+        expect("a player whose match hasn't begun keeps no score",
+               "player 12, club 2, not started",
+               [8, 2, None, 5], scores)
+        expect("provisional is always flagged", "an unfinished gameweek",
+               True, plain["provisional"] if isinstance(plain, dict) else plain)
+
+        boosted = safe(run, "bboost")
+        expect("bench boost counts the bench too", "same squad, bboost",
+               23, boosted["points"] if isinstance(boosted, dict) else boosted)
+
+        tripled = safe(run, "3xc")
+        expect("triple captain trebles rather than doubles", "same squad, 3xc",
+               26, tripled["points"] if isinstance(tripled, dict) else tripled)
+
+        # A settled gameweek has real stored numbers; overlaying provisional
+        # ones over the top is exactly what must not happen.
+        settled = safe(ai_team.live_overlay, squad(), 1,
+                       [{"id": 1, "finished": True, "data_checked": True}])
+        expect("a settled gameweek is left alone", "finished + data_checked",
+               None, settled)
+
+        ai_team.started_teams = lambda gw: None
+        blind = safe(ai_team.live_overlay, squad(), 1,
+                     [{"id": 1, "finished": False, "data_checked": False}])
+        expect("no fixture data means no overlay at all",
+               "started_teams unavailable", None, blind)
+    finally:
+        ai_team.get_event_live, ai_team.started_teams = saved
+
+
 SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_a_to_z_grouping, test_draft_validation, test_storage_kind,
           test_horizon_points, test_gw_report_predicted_for,
@@ -2354,4 +2490,6 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_chip_halves, test_chip_schedule_rules,
           test_chip_schedule_fallback, test_chip_priors,
           test_chip_gain_shapes, test_bench_build_weight,
-          test_season_fixture_structure]
+          test_season_fixture_structure,
+          test_free_transfer_estimate, test_free_transfer_step,
+          test_live_overlay]

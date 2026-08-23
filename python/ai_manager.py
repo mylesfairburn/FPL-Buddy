@@ -186,8 +186,14 @@ def free_transfers_for(gameweek):
         elif r["chip"] in ("wildcard", "freehit"):
             slot["free_chip"] = True
 
+    # The bot's FIRST gameweek is skipped, not stepped. That week it drafted a
+    # squad from nothing under the same unlimited-transfer rule a human gets
+    # before the first deadline - it neither spent an allowance nor banked one,
+    # so it goes into gameweek two with exactly one free transfer. Stepping it
+    # like an ordinary round left the bot believing it had two, and spending the
+    # phantom one is a -4 it never accounted for.
     ft = 1
-    for gw in sorted(per_gw):
+    for gw in sorted(per_gw)[1:]:
         info = per_gw[gw]
         ft = free_transfers(ft, info["transfers"], info["free_chip"])
     return ft
@@ -528,6 +534,7 @@ def run_gameweek(pool, gameweek, budget=DEFAULT_BUDGET, persist=True):
     return {
         "gameweek": gameweek, "first_run": first_run, "bank": bank,
         "total_points": total_points_to(gameweek - 1),
+        "free_transfers": prev_free,
         "squad": (lineup or {}).get("squad", squad),
         "formation": (lineup or {}).get("formation"),
         "squad_cost": round(sum(p.get("cost") or 0 for p in squad), 1),
@@ -585,6 +592,16 @@ def get_gameweek(gameweek, pool=None):
             "pos": p.get("pos"), "team_code": p.get("team_code"),
             "team_name": p.get("team_name"), "cost": r["cost"],
             "predicted": r["predicted_points"], "actual_points": r["actual_points"],
+            # The club id, not just its code. The code draws the shirt; the id
+            # is what says whether that club has kicked off yet, which is what
+            # decides between showing a score and showing a fixture.
+            "team": p.get("team"),
+            # And the fixture itself, which this has never sent. The card falls
+            # back to showing the opponent when there is no score yet, so
+            # without this the fallback had nothing to fall back TO - a blank
+            # tile with a projection floating in it. ai_team's snapshot reader
+            # has always passed these through; this one simply did not.
+            "next_gameweeks": p.get("next_gameweeks") or [],
             "position": r["position"], "starting": (r["position"] or 99) <= 11,
             "is_captain": bool(r["is_captain"]), "is_vice_captain": bool(r["is_vice_captain"]),
         })
@@ -596,9 +613,17 @@ def get_gameweek(gameweek, pool=None):
     } for r in log]
     return {
         "gameweek": head["gameweek"], "bank": head["bank"], "value": head["value"],
+        "squad_cost": head["value"],
         "predicted_points": head["predicted_points"], "points": head["points"],
         "total_points": total_points_to(head["gameweek"]),
         "active_chip": head["active_chip"], "captured_at": head["captured_at"],
+        # What the week cost and what it had to spend. Both are already in the
+        # rows above - the hits in the transfer log, the allowance replayable
+        # from the decision history - they simply were not being handed over,
+        # so the tab could describe the bot's squad but not the rules it was
+        # playing under.
+        "hits": sum(r["cost_hit"] or 0 for r in log),
+        "free_transfers": free_transfers_for(head["gameweek"]),
         "squad": squad, "transfers": transfers,
         # None for the same reason as ai_team.get_snapshot: ratings move every
         # night, so one derived now would describe today's players rather than

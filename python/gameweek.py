@@ -294,6 +294,38 @@ def get_event_live(gameweek):
     return out
 
 
+def started_teams(gameweek):
+    """Team ids with at least one kicked-off fixture in `gameweek`.
+
+    The distinction `get_event_live` cannot make. That call returns a points
+    total for every element in the game, and a player whose match is still
+    hours away scores 0 in it - indistinguishable from a player who has been on
+    the pitch for ninety minutes and done nothing. On a Saturday lunchtime that
+    is most of the league, so a squad reads as a disaster when in truth it has
+    barely started.
+
+    A club with a double gameweek counts as started once EITHER fixture has: by
+    then there is a real score to show, which beats a fixture tile for the
+    second match.
+
+    Returns None - not an empty set - when the fixtures call fails. Empty would
+    mean "nobody has played", which would blank every score on the pitch on the
+    strength of one failed request. None means "can't tell", and the callers
+    fall back to showing scores, which is what they did before this existed.
+    """
+    data = _get(f"{BASE}/fixtures/?event={int(gameweek)}")
+    if data is None:
+        return None
+    out = set()
+    for fixture in data:
+        if not fixture.get("started"):
+            continue
+        for side in ("team_h", "team_a"):
+            if fixture.get(side) is not None:
+                out.add(int(fixture[side]))
+    return out
+
+
 def get_event_live_stats(gameweek):
     """The same call, but the WHOLE stats block per element rather than just
     the points total: minutes, goals, assists, bonus, bps and the expected-goal

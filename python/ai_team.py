@@ -11,7 +11,7 @@ would retroactively change - which would make the tab worthless as a record.
 """
 
 from db import connect, utcnow
-from gameweek import get_event_live, gameweek_is_finished
+from gameweek import get_event_live, gameweek_is_finished, started_teams
 from squad_optimiser import (DEFAULT_BUDGET, OptimisationError, optimise_squad,
                              verify)
 
@@ -162,6 +162,66 @@ def backfill_actuals(gameweek, events=None):
 
     return {"updated": True, "gameweek": gw, "actual_points": total,
             "predicted_points": head["predicted_points"], "players_scored": len(updates)}
+
+
+def live_overlay(squad, gameweek, events=None, chip=None):
+    """Live scores for a squad whose gameweek is still being played.
+
+    The deliberate opposite number to backfill_actuals above, and the contrast
+    between them is the point. That one WRITES, and is gated on `data_checked`
+    because bonus points are not final before it - a stored figure has to be the
+    settled one forever, or the published predicted-vs-actual record stops
+    meaning anything. This one never writes. It exists because a squad sitting
+    on a page mid-Saturday showed nothing at all until the following night's
+    cron, which is the one afternoon anybody wants to look at it.
+
+    So: the pitch gets provisional numbers and says they are provisional, and
+    the track-record tables keep reading the settled ones. Nothing here touches
+    the database.
+
+    Returns None when there is nothing to overlay - the gameweek is settled (the
+    stored numbers are already the real ones), or FPL couldn't be reached.
+    Otherwise {"squad": [...], "points": int, "provisional": True}.
+
+    Only players whose match has actually kicked off are scored. Everyone else
+    keeps `actual_points: None`, which is what the front end reads as "show me
+    his fixture, not a nought".
+
+    Scoring matches backfill_actuals: starters only, captain doubled. Chips
+    extend that where the caller passes one - the AI Manager plays them, the
+    Best XI does not. Auto-subs are not modelled, exactly as they are not in the
+    backfill, so a squad with a non-playing starter reads a little low until the
+    round settles. Guessing at substitutions from an unfinished match would
+    produce a number that moves for reasons nobody watching could explain.
+    """
+    if gameweek_is_finished(gameweek, events):
+        return None
+    started = started_teams(gameweek)
+    if started is None:
+        return None
+    live = get_event_live(gameweek)
+    if not live:
+        return None
+
+    out, total = [], 0
+    for p in squad:
+        pid = p.get("id", p.get("element_id"))
+        team = p.get("team")
+        kicked_off = team is None or int(team) in started
+        pts = live.get(pid) if kicked_off else None
+        out.append({**p, "actual_points": pts if pts is not None
+                                          else p.get("actual_points")})
+        if pts is None:
+            continue
+        counts = p.get("starting") or chip == "bboost"
+        if not counts:
+            continue
+        multiplier = 1
+        if p.get("is_captain"):
+            multiplier = 3 if chip == "3xc" else 2
+        total += pts * multiplier
+
+    return {"squad": out, "points": total, "provisional": True}
 
 
 def generate_and_store(players, gameweek, budget=DEFAULT_BUDGET):

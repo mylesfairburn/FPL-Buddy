@@ -210,6 +210,35 @@ nothing breaks for a local run.
 Better still, don't expose it at all: keep port 8000 bound to localhost and put
 the reverse proxy in front, denying `/api/refresh` from outside.
 
+## 2a. Visitor numbers
+
+Set `FPL_CF_ANALYTICS_TOKEN` to the site token from **Cloudflare dashboard →
+Analytics & Logs → Web Analytics**, choosing *add the JS snippet manually*
+rather than automatic setup — automatic injects the same beacon at the edge, and
+with both in place every page view is counted twice.
+
+Blank, no beacon is served and the Content-Security-Policy stays entirely
+`'self'`. That is the right setting for a staging stack, and it is why a local
+run never appears in the numbers.
+
+Three sources measure this site and they disagree on purpose:
+
+| Source | Counts | Blind to |
+|---|---|---|
+| Search Console (`seo-report`) | Clicks from Google search | Direct, Bing, social, anything not Google |
+| Cloudflare edge analytics | Requests at the proxy | Nothing — which is the problem: bots and scrapers are in there, and a whole office behind one NAT is one "unique" |
+| Cloudflare Web Analytics | Page views a browser actually rendered | Anyone running an ad blocker; and one person on a phone and a laptop counts twice |
+
+The third is the closest thing to "real people" and is still not a headcount —
+no analytics product is. Read it for **trend and relative page popularity**,
+not as an attendance register.
+
+**This adds a third-party origin back to the CSP** (`static.cloudflareinsights.com`
+for the script, `cloudflareinsights.com` for the beacon POST), which partially
+reverses the decision to vendor Bootstrap. Both are added only while the token
+is set. It also makes `/privacy` say the site runs analytics — if the beacon is
+ever removed, that page has to be changed back.
+
 ## 3. Cron
 
 Two jobs, because they answer to different clocks.

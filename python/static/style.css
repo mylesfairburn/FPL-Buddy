@@ -311,7 +311,6 @@ table th { color: var(--accent-dark); }
 .stat-chip.accent .stat-label, .stat-chip.accent .stat-value { color: #fff; }
 .stat-label { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.03em; color: #888; }
 .stat-value { font-size: 0.95rem; font-weight: 700; color: #222; }
-.stat-hit { font-size: 0.72rem; font-weight: 700; color: #e03131; }
 
 /* Actions row above pitch */
 .pitch-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }

@@ -69,8 +69,16 @@ def _rated_pool(mode=None):
     which is fine for a scheduled job."""
     mode = mode or gw_clock.detect_mode()
     data = run_pipeline()
+    # Same split as main.load_data, and it has to be the same or the two
+    # disagree about who the good players are. This process rates the pool the
+    # AI Manager commits a squad from and the briefing is written off; the app
+    # rates the pool every page shows. Rating them on different form sources
+    # would put the bot's transfers and the site's projections quietly out of
+    # step, which is the kind of difference nobody notices until it is a
+    # fortnight old. None = auto-detect, which counts played gameweeks.
+    rating_mode = None if mode == "inseason" else mode
     try:
-        position_dfs = get_rated_position_dfs(data["position_dfs"], mode=mode)
+        position_dfs = get_rated_position_dfs(data["position_dfs"], mode=rating_mode)
     except ValueError as e:
         if mode != "inseason":
             raise
@@ -106,7 +114,10 @@ def snapshot_managers(gameweek, position_dfs, next_gameweek=None):
     saved = replaced = 0
     for fpl_id in ids:
         try:
-            view = get_team_view(fpl_id, gameweek, position_dfs)
+            # carry_forward off: this writes down what a manager ACTUALLY
+            # picked. See the note on get_team_view.
+            view = get_team_view(fpl_id, gameweek, position_dfs,
+                                 carry_forward=False)
             if not view.get("available") or not view.get("squad"):
                 log(f"  manager {fpl_id}: GW{gameweek} unavailable, skipping")
                 continue
