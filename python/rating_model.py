@@ -585,10 +585,26 @@ def _load_gameweek_stats(gw_path, players_path):
     can inherit a departed player's number and quietly acquire his history.
     `code` is the one identifier that stays with a real player across seasons,
     which is what makes joining two seasons together safe at all.
+
+    The two seasons' files do not have the same schema, and that is worth being
+    careful about rather than papering over. Last season's is the seeded
+    historical dataset and names the player column `player_id`. The current
+    season's is written by `fetch_data.refresh_gameweek_stats` straight from
+    FPL's element-summary history, which names it `element` - and that writer
+    appends a `player_id` of its own, so the file has BOTH.
+
+    Renaming `element` unconditionally therefore produced two columns called
+    `player_id` on the current season's file. `frame['player_id']` then returns
+    a DataFrame rather than a Series, and `.map(a_dict)` on a DataFrame fails
+    with "the first argument must be callable" - which took the site's ratings
+    down on the first run that read the current-season file at all. So: rename
+    only when there is nothing to collide with, and drop any duplicate that
+    survives.
     """
     frame = pd.read_csv(gw_path)
-    if 'element' in frame.columns:
+    if 'player_id' not in frame.columns and 'element' in frame.columns:
         frame = frame.rename(columns={'element': 'player_id'})
+    frame = frame.loc[:, ~frame.columns.duplicated()]
 
     players = pd.read_csv(players_path)
     id_to_code = dict(zip(players['id'], players['code']))

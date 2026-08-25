@@ -2657,6 +2657,61 @@ def test_form_blend_weight():
            note="so the captain-pick suppression and calibrators flip when they always did")
 
 
+def test_gameweek_stats_schemas():
+    """The two seasons' gameweek_stats.csv files do NOT share a schema, and the
+    ratings read both.
+
+    Last season's is the seeded historical dataset (`player_id`). The current
+    season's is written from FPL's element-summary history, which names the
+    column `element` and carries an appended `player_id` as well - so it has
+    both. Renaming `element` unconditionally made two columns of the same name,
+    `frame['player_id']` became a DataFrame, and `.map(dict)` raised
+    "the first argument must be callable". That took every projection on the
+    site down, and it went unnoticed because until the blend landed nothing
+    ever read the current-season file.
+    """
+    group("gameweek stats schemas", "critical")
+
+    players = pd.DataFrame([{"id": 7, "code": 700}, {"id": 8, "code": 800}])
+
+    def load(rows):
+        with tempfile.TemporaryDirectory() as d:
+            gw = os.path.join(d, "gw.csv")
+            pl = os.path.join(d, "players.csv")
+            pd.DataFrame(rows).to_csv(gw, index=False)
+            players.to_csv(pl, index=False)
+            return rating_model._load_gameweek_stats(gw, pl)
+
+    # The current season's shape: element AND player_id, identical values.
+    both = load([{"element": 7, "player_id": 7, "round": 1, "minutes": 90,
+                  "total_points": 6}])
+    check("a file carrying both element and player_id loads",
+          "current season's schema", "one row keyed on code", both,
+          lambda f: len(f) == 1 and int(f["code"].iloc[0]) == 700)
+    check("and does not end up with a duplicate column",
+          "element renamed onto an existing player_id", "no duplicates",
+          both.columns.tolist(), lambda c: len(c) == len(set(c)),
+          note="the duplicate is what made .map() raise")
+    check("player_id stays a Series, not a frame", "current season's schema",
+          "Series", both["player_id"], lambda v: isinstance(v, pd.Series))
+
+    # Last season's shape: player_id only.
+    only = load([{"player_id": 8, "round": 5, "minutes": 45, "total_points": 2}])
+    expect("the seeded historical schema still loads", "player_id only", 800,
+           int(only["code"].iloc[0]))
+
+    # FPL's raw shape, if the appended column ever goes away.
+    element_only = load([{"element": 8, "round": 5, "minutes": 45,
+                          "total_points": 2}])
+    expect("and so does element on its own", "FPL history as-is", 800,
+           int(element_only["code"].iloc[0]))
+
+    unknown = load([{"element": 99, "player_id": 99, "round": 1, "minutes": 0,
+                     "total_points": 0}])
+    expect("a player with no code is dropped rather than carried as NaN",
+           "an id not in players.csv", 0, len(unknown))
+
+
 def test_form_blend():
     """The blend itself: who moves, who doesn't, and who stops being dropped."""
     group("form blend", "high")
@@ -2734,4 +2789,5 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_live_overlay,
           test_upcoming_fixture_horizon, test_rotation_difficulty_spread,
           test_flat_difficulty_renders_neutral, test_fixture_runs_needs_a_spread,
-          test_form_blend_weight, test_form_blend]
+          test_form_blend_weight, test_form_blend,
+          test_gameweek_stats_schemas]
