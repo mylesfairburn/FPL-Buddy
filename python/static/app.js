@@ -2226,8 +2226,16 @@ let currentCategory = 'defender';
 let selectedTeams = new Set();
 let latestRotationData = null;
 
+// Grey, not green, when every fixture scores the same. A flat range means the
+// strength data behind the grid is missing, and green is the one answer that
+// cannot be right for all twenty clubs at once - it reads as "every fixture is
+// a banker" rather than "we don't know yet". Mirrored exactly by colour() in
+// seo_tables.py; change the two together.
+const NO_DIFFICULTY_COLOUR = 'hsl(210, 8%, 88%)';
+
 function colorFor(value, min, max) {
-    if (max === min) return 'hsl(120, 70%, 85%)';
+    if (value == null || !isFinite(value)) return NO_DIFFICULTY_COLOUR;
+    if (max === min) return NO_DIFFICULTY_COLOUR;
     const ratio = (value - min) / (max - min);
     const hue = 120 - (ratio * 120);
     return `hsl(${hue}, 70%, 82%)`;
@@ -2598,6 +2606,42 @@ function updateAiNav() {
 document.getElementById('aiPrev').addEventListener('click', () => { if (aiGw > aiBounds.min) loadAi(aiGw - 1); });
 document.getElementById('aiNext').addEventListener('click', () => { if (aiBounds.max == null || aiGw < aiBounds.max) loadAi(aiGw + 1); });
 
+// How many track-record rows are drawn before the "Show all" button. Matches
+// TRACK_RECORD_ROWS in seo_tables.py, so the server-rendered table and the one
+// the script replaces it with are the same length and nothing jumps on load.
+//
+// Capped at all because these tables grow by a row a week: by May they are
+// thirty-eight rows apiece, two of them stacked under a full pitch, and on a
+// phone that was the longest thing on the page. Newest first, so the cap hides
+// the oldest gameweeks rather than the ones anyone is looking for.
+const TRACK_RECORD_ROWS = 10;
+
+// Same expand/collapse the rotation pairs use. Appended after the table rather
+// than inside it so it isn't a seventh column, and it removes itself when there
+// is nothing left to show.
+function attachRowToggle(tbody, total, render) {
+    const host = tbody.closest('.ps-list') || tbody.closest('table');
+    const existing = host && host.parentNode
+        && host.parentNode.querySelector('.history-toggle');
+    if (existing) existing.remove();
+    if (!host || !host.parentNode || total <= TRACK_RECORD_ROWS) return;
+
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-outline-primary btn-sm mt-2 history-toggle';
+    let expanded = false;
+    const paint = () => {
+        btn.textContent = expanded ? 'Show less' : `Show all (${total})`;
+        btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    };
+    btn.addEventListener('click', () => {
+        expanded = !expanded;
+        render(expanded);
+        paint();
+    });
+    paint();
+    host.parentNode.insertBefore(btn, host.nextSibling);
+}
+
 function loadAiHistory() {
     fetch('/api/ai/history').then(r => r.json()).then(d => {
         const body = document.getElementById('aiHistoryBody');
@@ -2607,7 +2651,7 @@ function loadAiHistory() {
                 + 'No gameweeks recorded yet &mdash; the first snapshot is frozen when the next deadline passes.</td></tr>';
             return;
         }
-        body.innerHTML = rows.map(s => {
+        const rowHtml = s => {
             const diff = (s.actual_points != null && s.predicted_points != null)
                 ? (s.actual_points - s.predicted_points) : null;
             const diffCls = diff == null ? '' : (diff >= 0 ? 'ai-over' : 'ai-under');
@@ -2619,7 +2663,13 @@ function loadAiHistory() {
                 <td>${s.actual_points != null ? s.actual_points : '<span class="text-muted">pending</span>'}</td>
                 <td>${diff == null ? '–' : `<span class="${diffCls}">${diff >= 0 ? '+' : ''}${diff.toFixed(1)}</span>`}</td>
             </tr>`;
-        }).join('');
+        };
+        const render = all => {
+            body.innerHTML = (all ? rows : rows.slice(0, TRACK_RECORD_ROWS))
+                .map(rowHtml).join('');
+        };
+        render(false);
+        attachRowToggle(body, rows.length, render);
     }).catch(() => {});
 }
 
@@ -2788,7 +2838,13 @@ function loadMgrHistory() {
     fetch('/api/ai/manager/history').then(r => r.json()).then(d => {
         const body = document.getElementById('mgrHistoryBody');
         const rows = d.history || [];
-        body.innerHTML = rows.length ? rows.map(h => `
+        if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="6" class="text-muted small p-2">'
+                + 'No gameweeks played yet &mdash; the bot commits its first squad '
+                + 'when the next deadline passes.</td></tr>';
+            return;
+        }
+        const rowHtml = h => `
             <tr>
                 <td>GW${h.gameweek}</td>
                 <td>${h.value != null ? '£' + h.value.toFixed(1) + 'm' : '–'}</td>
@@ -2796,9 +2852,13 @@ function loadMgrHistory() {
                 <td>${h.active_chip || '–'}</td>
                 <td>${h.predicted_points != null ? h.predicted_points.toFixed(1) : '–'}</td>
                 <td>${h.points != null ? h.points : '<span class="text-muted">pending</span>'}</td>
-            </tr>`).join('')
-            : '<tr><td colspan="6" class="text-muted small p-2">No gameweeks played yet &mdash; '
-              + 'the bot commits its first squad when the next deadline passes.</td></tr>';
+            </tr>`;
+        const render = all => {
+            body.innerHTML = (all ? rows : rows.slice(0, TRACK_RECORD_ROWS))
+                .map(rowHtml).join('');
+        };
+        render(false);
+        attachRowToggle(body, rows.length, render);
     }).catch(() => {});
 }
 

@@ -51,6 +51,69 @@ def half_deadline(gameweek):
     return chip_half(gameweek)[1]
 
 
+# ---------------------------------------------------------------------------
+#  The projection horizon
+# ---------------------------------------------------------------------------
+# Everything that projects forward - the blended rating, the per-gameweek
+# points list, the rotation grid - has to agree on where "next" starts. It used
+# to be decided per fixture, with `finished == False`, and that is wrong for a
+# day or more after every round: FPL only flips `finished` once `data_checked`
+# does, so a played gameweek stays in the upcoming set with its results already
+# on the page beside it. The 2026-27 opener sat that way for over a day, all ten
+# matches carrying `finished_provisional=True, started=True, minutes=90` under
+# an event still marked `finished=False`.
+#
+# So the horizon is anchored on the season clock instead, and on `next_gameweek`
+# rather than `current_gameweek`: the round whose deadline has NOT passed is the
+# one a projection is actually for. That also settles the mid-round drift the
+# comments in squad_optimiser and team_service describe - while GW2's matches
+# are being played the anchor is GW3 for every team at once, rather than rolling
+# forward club by club as their fixtures finish.
+
+PLAYED_FLAGS = ("finished", "finished_provisional", "started")
+
+
+def first_upcoming_event(fixtures_df, next_gameweek=None):
+    """The event id the projection horizon starts at.
+
+    `next_gameweek` (from `gameweek.next_gameweek()`) is the answer whenever the
+    caller has one - it is the only source that knows about deadlines. The
+    derived path below exists for when the bootstrap call fails, and is
+    deliberately the fallback rather than the default: it can only see which
+    matches have kicked off, so during a round it would answer with the round
+    already in progress.
+
+    Returns None when there is nothing left to play.
+    """
+    if next_gameweek is not None:
+        return int(next_gameweek)
+    if fixtures_df is None or fixtures_df.empty or 'event' not in fixtures_df:
+        return None
+
+    played = pd.Series(False, index=fixtures_df.index)
+    for flag in PLAYED_FLAGS:
+        if flag in fixtures_df.columns:
+            played |= fixtures_df[flag].fillna(False).astype(bool)
+
+    unplayed = fixtures_df.loc[~played, 'event'].dropna()
+    return int(unplayed.min()) if len(unplayed) else None
+
+
+def upcoming_fixtures(fixtures_df, from_event):
+    """Every scheduled fixture from `from_event` onwards, oldest first.
+
+    Keyed on the event id alone. A fixture with no `event` is one FPL has not
+    scheduled - excluded here for the same reason it is excluded from the
+    double/blank maths above.
+    """
+    if fixtures_df is None or 'event' not in fixtures_df:
+        return pd.DataFrame()
+    if from_event is None:
+        return fixtures_df.iloc[0:0]
+    events = pd.to_numeric(fixtures_df['event'], errors='coerce')
+    return fixtures_df[events.notna() & (events >= int(from_event))]         .sort_values('event')
+
+
 def load_fixtures(season=None):
     """The season's fixture list, or None if it isn't on disk."""
     path = seasons.fixtures_path(season)

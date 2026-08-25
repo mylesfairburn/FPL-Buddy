@@ -24,8 +24,10 @@ import gw_roundup as gwru
 import kits
 import player_pages as pp
 import player_spotlight as ps
+import fixture_rotator
 import fixture_structure
 import rating_model
+import seo_tables
 import seasons
 import social
 import team_service
@@ -2467,6 +2469,243 @@ def test_live_overlay():
         ai_team.get_event_live, ai_team.started_teams = saved
 
 
+def test_upcoming_fixture_horizon():
+    """The filter that used to be `finished == False`.
+
+    None of this was covered, which is how a played gameweek came to sit at the
+    top of every player's projection for a day after each round: FPL only flips
+    `finished` once `data_checked` does, and until then a finished match still
+    reads as upcoming.
+    """
+    group("upcoming fixture horizon", "high")
+
+    # The exact GW1 shape from 2026-27: played, but not yet confirmed.
+    fixtures = pd.DataFrame([
+        {"event": 1, "team_h": 1, "team_a": 2, "finished": False,
+         "finished_provisional": True, "started": True},
+        {"event": 1, "team_h": 3, "team_a": 4, "finished": False,
+         "finished_provisional": True, "started": True},
+        {"event": 2, "team_h": 1, "team_a": 3, "finished": False,
+         "finished_provisional": False, "started": False},
+        {"event": 3, "team_h": 2, "team_a": 4, "finished": False,
+         "finished_provisional": False, "started": False},
+        {"event": None, "team_h": 1, "team_a": 4, "finished": False,
+         "finished_provisional": False, "started": False},
+    ])
+
+    expect("the season clock wins when it has an answer",
+           "next_gameweek=2", 2,
+           fixture_structure.first_upcoming_event(fixtures, 2))
+
+    expect("without the clock, a played-but-unconfirmed round is still skipped",
+           "finished=False, finished_provisional=True, started=True", 2,
+           fixture_structure.first_upcoming_event(fixtures),
+           note="`finished` alone would have answered 1")
+
+    horizon = fixture_structure.upcoming_fixtures(fixtures, 2)
+    check("a played gameweek is excluded from the horizon", "GW1 rows", "none",
+          int((horizon["event"] == 1).sum()), lambda n: n == 0)
+    expect("the rounds that remain are kept", "GW2, GW3", [2.0, 3.0],
+           sorted(horizon["event"].dropna().tolist()))
+    check("an unscheduled fixture is not guessed at", "event=None", "excluded",
+          len(horizon), lambda n: n == 2,
+          note="same rule the double/blank maths uses")
+
+    expect("nothing left to play returns an empty frame", "from_event=None", 0,
+           len(fixture_structure.upcoming_fixtures(fixtures, None)))
+
+    done = fixtures.assign(finished=True, started=True, finished_provisional=True)
+    expect("a finished season has no anchor", "every fixture played", None,
+           fixture_structure.first_upcoming_event(done))
+
+
+def test_rotation_difficulty_spread():
+    """The rotator drew every fixture green for the first weeks of 2026-27.
+
+    Not a colour bug: FPL leaves its strength columns at zero until well into
+    the season, the substitution that fills them in was gated on preseason
+    mode, and `detect_mode` had already flipped. Every difficulty came out as
+    0 - 0, and a flat range has no scale to draw.
+    """
+    group("rotation difficulty", "high")
+
+    fixtures = pd.DataFrame([
+        {"event": 1, "team_h": 1, "team_a": 2, "finished": False,
+         "finished_provisional": True, "started": True},
+        {"event": 2, "team_h": 1, "team_a": 2, "finished": False,
+         "finished_provisional": False, "started": False},
+        {"event": 3, "team_h": 2, "team_a": 1, "finished": False,
+         "finished_provisional": False, "started": False},
+    ])
+    empty = pd.DataFrame([
+        {"id": 1, "short_name": "AAA", "strength_attack_home": 0,
+         "strength_attack_away": 0, "strength_defence_home": 0,
+         "strength_defence_away": 0},
+        {"id": 2, "short_name": "BBB", "strength_attack_home": 0,
+         "strength_attack_away": 0, "strength_defence_home": 0,
+         "strength_defence_away": 0},
+    ])
+
+    expect("all-zero strength columns are detected", "a fresh season's teams.csv",
+           True, fixture_rotator.strength_data_is_empty(empty))
+
+    flat = fixture_rotator.build_rotation_table(fixtures, empty, from_event=2)
+    check("zero strength gives every fixture the same difficulty",
+          "the state that produced the all-green grid", "no spread",
+          float(flat["defensive_difficulty"].std()), lambda s: s == 0,
+          note="which is why the colour scale must not paint this green")
+
+    real = empty.copy()
+    real.loc[0, ["strength_attack_home", "strength_attack_away",
+                 "strength_defence_home", "strength_defence_away"]] = [1300, 1250, 1200, 1150]
+    real.loc[1, ["strength_attack_home", "strength_attack_away",
+                 "strength_defence_home", "strength_defence_away"]] = [1050, 1000, 980, 940]
+    spread = fixture_rotator.build_rotation_table(fixtures, real, from_event=2)
+    check("real strength gives a spread to colour", "populated teams.csv",
+          "non-zero", float(spread["defensive_difficulty"].std()), lambda s: s > 0)
+
+    check("the rotation grid starts at the anchor, not at GW1",
+          "from_event=2", "no GW1 column",
+          sorted(spread["event"].unique().tolist()), lambda e: 1 not in e)
+
+
+def test_flat_difficulty_renders_neutral():
+    """A degenerate range must read as "we don't know", not "every fixture is
+    easy". Green for all twenty clubs is the one answer that cannot be true."""
+    group("flat difficulty colouring", "high")
+
+    rotation = pd.DataFrame([
+        {"team": 1, "team_name": "AAA", "event": 2, "opponent": "BBB",
+         "was_home": True, "defensive_difficulty": 0.0, "attacking_difficulty": 0.0},
+        {"team": 2, "team_name": "BBB", "event": 2, "opponent": "AAA",
+         "was_home": False, "defensive_difficulty": 0.0, "attacking_difficulty": 0.0},
+    ])
+    block = seo_tables.rotation_block(rotation, "defensive_difficulty")
+    colours = {c["colour"] for team in block["teams"] for c in team["cells"]}
+
+    check("a flat range is not painted green", "every difficulty 0.0",
+          "no green", colours,
+          lambda cs: not any(str(c).startswith("hsl(120") for c in cs),
+          note="green here claimed twenty easy runs off a table of zeroes")
+    expect("it is painted the neutral no-data colour", "every difficulty 0.0",
+           {seo_tables.NO_DIFFICULTY_COLOUR}, colours)
+
+    varied = rotation.copy()
+    varied.loc[0, "defensive_difficulty"] = -200.0
+    varied.loc[1, "defensive_difficulty"] = 200.0
+    block = seo_tables.rotation_block(varied, "defensive_difficulty")
+    colours = [c["colour"] for team in block["teams"] for c in team["cells"]]
+    check("a real range still spans the scale", "-200 vs 200",
+          "green and red present", colours,
+          lambda cs: any(str(c).startswith("hsl(120") for c in cs)
+          and any(str(c).startswith("hsl(0") for c in cs))
+
+
+def test_fixture_runs_needs_a_spread():
+    """`fixture_runs` used to award 10.0/10 to every club when the difficulties
+    were identical, and print the first three alphabetically as the league's
+    kindest run. That is how "Arsenal have the kindest attacking run" reached a
+    live briefing off a table of zeroes."""
+    group("fixture runs", "high")
+
+    flat = pd.DataFrame([
+        {"team_name": s, "event": e, "opponent": "XXX", "was_home": True,
+         "attacking_difficulty": 0.0, "defensive_difficulty": 0.0}
+        for s in ("ARS", "BOU", "CHE") for e in (2, 3, 4)
+    ])
+    out = gwr.fixture_runs(flat, {}, 2)
+    expect("no attacking runs are claimed off a flat table", "every club 0.0",
+           [], out["attack"])
+    expect("and none defensively", "every club 0.0", [], out["defence"])
+
+    varied = flat.copy()
+    varied.loc[varied.team_name == "ARS", "attacking_difficulty"] = -500.0
+    varied.loc[varied.team_name == "CHE", "attacking_difficulty"] = 500.0
+    out = gwr.fixture_runs(varied, {}, 2)
+    check("a real spread still produces runs", "ARS easiest", "ARS first",
+          [r["team_short"] for r in out["attack"]], lambda r: r[:1] == ["ARS"])
+    check("and the easiest run scores 10", "ARS", 10.0,
+          out["attack"][0]["ease"], lambda e: e == 10.0)
+
+
+def test_form_blend_weight():
+    """Current-season results used to contribute nothing until three gameweeks
+    existed, then last season was dropped entirely overnight. It is a shrinkage
+    blend now, so GW1 counts from the night its stats land."""
+    group("form blend weight", "high")
+
+    cases = [(0, 0.0), (1, 0.25), (2, 0.4), (3, 0.5), (6, 2 / 3), (19, 0.864)]
+    for games, expected in cases:
+        check(f"{games} gameweek(s) played", f"games_seen={games}",
+              f"~{expected:.3f}", rating_model.current_form_weight(games),
+              lambda w, e=expected: abs(w - e) < 0.001)
+
+    check("a played gameweek moves the numbers immediately", "games_seen=1",
+          "> 0", rating_model.current_form_weight(1), lambda w: w > 0,
+          note="the whole point - this was 0 under the old switch")
+    check("the weight never reaches 1", "games_seen=38", "< 1",
+          rating_model.current_form_weight(38), lambda w: w < 1.0)
+    check("the ramp is monotone", "0..38 games", "increasing",
+          [rating_model.current_form_weight(n) for n in range(39)],
+          lambda ws: all(b > a for a, b in zip(ws, ws[1:])))
+    expect("junk is treated as no games played", "games_seen=None", 0.0,
+           rating_model.current_form_weight(None))
+
+    expect("the fallback threshold is still three gameweeks",
+           "current_form_weight(3)", rating_model.FALLBACK_FORM_WEIGHT,
+           rating_model.current_form_weight(rating_model.MIN_CURRENT_GAMEWEEKS),
+           note="so the captain-pick suppression and calibrators flip when they always did")
+
+
+def test_form_blend():
+    """The blend itself: who moves, who doesn't, and who stops being dropped."""
+    group("form blend", "high")
+
+    def frame(rows):
+        f = pd.DataFrame(rows).set_index("code")
+        f.index.name = "code"
+        return f
+
+    prior = frame([
+        {"code": 1, "total_points_roll3": 2.0, "games_seen": 38.0},
+        {"code": 2, "total_points_roll3": 6.0, "games_seen": 38.0},
+    ])
+    current = frame([
+        {"code": 1, "total_points_roll3": 10.0, "games_seen": 1.0},
+        {"code": 3, "total_points_roll3": 8.0, "games_seen": 1.0},
+    ])
+    out = rating_model._blend_form(current, prior)
+
+    check("a player who played is pulled toward this season", "code 1, w=0.25",
+          "0.25*10 + 0.75*2 = 4.0", float(out.loc[1, "total_points_roll3"]),
+          lambda v: abs(v - 4.0) < 1e-9)
+
+    check("a player who did not play keeps the prior exactly", "code 2",
+          6.0, float(out.loc[2, "total_points_roll3"]),
+          lambda v: abs(v - 6.0) < 1e-9,
+          note="w comes from HIS appearances, not the league's gameweek count")
+
+    check("a player with no prior is shrunk toward a typical one, not crowned",
+          "code 3, one game, no last season", "between the median and his own game",
+          float(out.loc[3, "total_points_roll3"]), lambda v: 2.0 < v < 8.0)
+
+    check("nobody loses coverage to the blend", "3 distinct codes", 3, len(out),
+          lambda n: n == 3,
+          note="the 180-minute filter used to drop new signings outright")
+
+    check("games_seen stays above the predict_ratings gate", "every player",
+          "> 0", out["games_seen"], lambda s: bool((s > 0).all()),
+          note="a zero here would drop the player off the site entirely")
+
+    empty = prior.iloc[0:0]
+    expect("an empty current season is the prior untouched", "no current rows",
+           6.0, float(rating_model._blend_form(
+               empty, prior).loc[2, "total_points_roll3"]))
+    expect("and an empty prior is the current season untouched", "no prior rows",
+           10.0, float(rating_model._blend_form(
+               current, empty).loc[1, "total_points_roll3"]))
+
+
 SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_a_to_z_grouping, test_draft_validation, test_storage_kind,
           test_horizon_points, test_gw_report_predicted_for,
@@ -2492,4 +2731,7 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_chip_gain_shapes, test_bench_build_weight,
           test_season_fixture_structure,
           test_free_transfer_estimate, test_free_transfer_step,
-          test_live_overlay]
+          test_live_overlay,
+          test_upcoming_fixture_horizon, test_rotation_difficulty_spread,
+          test_flat_difficulty_renders_neutral, test_fixture_runs_needs_a_spread,
+          test_form_blend_weight, test_form_blend]

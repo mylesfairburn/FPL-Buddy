@@ -2,8 +2,9 @@
 #
 # Six jobs on different clocks - see deploy/README.md for the reasoning.
 #   deadline-watch  : hourly, must be timing-accurate (FPL deadlines are irregular)
+#                     also: the gameweek roundup, published within the hour
 #   daily-refresh   : 03:00, deliberately late (BPS/data_checked lags late kickoffs)
-#                     also: the roundup and the DB backup
+#                     also: the DB backup
 #   gameweek-report : 03:15, after the refresh, before IndexNow reads the sitemap
 #                     also: tonight's player write-up
 #   indexnow        : 03:30, after the refresh has rewritten the player pages
@@ -68,23 +69,28 @@ CRON_TZ=Europe/London
 # Hourly, at 5 past - a few minutes clear of the top of the hour so it isn't
 # competing with every other cron on the box.
 #
-# Three phases per run: publish the postable gameweek briefing ~24h out, commit
-# and freeze the AI squads ~100 min out, capture real managers' teams just after
-# the deadline. All three windows are wider than this interval, so a single
-# missed run costs nothing.
+# Four phases per run: publish the roundup for any round FPL has just confirmed,
+# publish the postable gameweek briefing ~24h out, commit and freeze the AI
+# squads ~100 min out, capture real managers' teams just after the deadline. All
+# the deadline windows are wider than this interval, so a single missed run
+# costs nothing.
+#
+# The roundup is here rather than on the nightly refresh because FPL confirms a
+# round's stats at no fixed hour - see deploy/README.md. It is cheap to attempt
+# hourly: an existing roundup short-circuits before anything expensive runs.
 5 * * * * root docker exec fpl-buddy python jobs.py deadline-watch >> /var/log/fpl-buddy-watch.log 2>&1
 
 # Daily heavy refresh + backfill of actual scores onto frozen snapshots.
 #
-# Also carries two things that have no cron line of their own, both for the
-# same reason: each wants to happen once a day, and a separate entry is another
-# thing that can silently fail to be installed.
+# Also carries a dated SQLite backup into state/backups/, 14 kept - it wants to
+# happen once a day, and a separate cron entry is another thing that can
+# silently fail to be installed.
 #
-#   - the gameweek roundup, written once FPL confirms a round's stats. That is
-#     the same condition the backfill above already waits for, so it can only
-#     run after it - and it must, because the roundup prints the AI squad's
-#     actual score, which the backfill is what writes.
-#   - a dated SQLite backup into state/backups/, 14 kept.
+# The roundup used to ride here too. It now runs hourly on deadline-watch above,
+# because once a day is not often enough for a page about what just happened.
+# The backfill below still runs here as well as there: it is the roundup's
+# prerequisite (the scorecard prints the AI squad's actual score, which only the
+# backfill writes) and it is cheap enough to attempt in both.
 #
 # It used to carry the staleness check as well. That was a mistake and is now
 # the 05:00 line at the bottom of this file - see the note there.

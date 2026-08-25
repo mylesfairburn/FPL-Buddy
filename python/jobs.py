@@ -69,16 +69,21 @@ def _rated_pool(mode=None):
     which is fine for a scheduled job."""
     mode = mode or gw_clock.detect_mode()
     data = run_pipeline()
-    # Same split as main.load_data, and it has to be the same or the two
+    # Same mode as main.load_data, and it has to be the same or the two
     # disagree about who the good players are. This process rates the pool the
     # AI Manager commits a squad from and the briefing is written off; the app
     # rates the pool every page shows. Rating them on different form sources
     # would put the bot's transfers and the site's projections quietly out of
     # step, which is the kind of difference nobody notices until it is a
-    # fortnight old. None = auto-detect, which counts played gameweeks.
-    rating_mode = None if mode == "inseason" else mode
+    # fortnight old.
+    #
+    # `mode` used to be laundered to None here, because 'inseason' bypassed the
+    # form threshold entirely. It no longer means anything of the kind: the form
+    # features blend whatever current-season data exists against last season's
+    # average, in the proportion the data earns, and 'inseason' just means the
+    # season has started. So it is passed straight through.
     try:
-        position_dfs = get_rated_position_dfs(data["position_dfs"], mode=rating_mode)
+        position_dfs = get_rated_position_dfs(data["position_dfs"], mode=mode)
     except ValueError as e:
         if mode != "inseason":
             raise
@@ -261,7 +266,7 @@ def send_deadline_reminders(events):
 
 
 def deadline_watch(budget=DEFAULT_BUDGET, force_gameweek=None):
-    """Hourly. Three phases:
+    """Hourly. Four phases:
 
       1. About a DAY before a deadline - rebuild the gameweek briefing and mark
          it postable. This is when managers are actually making transfers, so
@@ -272,6 +277,9 @@ def deadline_watch(budget=DEFAULT_BUDGET, force_gameweek=None):
       3. Just AFTER one - capture real managers' picks, replace their drafts
          with the official team, and backfill anything the pre-commit missed
          (e.g. the box was down when the window passed).
+      4. Once a round SETTLES - backfill actual scores and publish its roundup.
+         Hourly rather than nightly because FPL confirms a round's stats at no
+         fixed hour; see publish_settled_roundup.
     """
     db.init_db()
     events = gw_clock.get_events()
@@ -295,6 +303,15 @@ def deadline_watch(budget=DEFAULT_BUDGET, force_gameweek=None):
         send_deadline_reminders(events)
     except Exception as e:
         log(f"deadline reminders FAILED: {e}")
+
+    # Before the deadline phases below rather than after, because those return
+    # early on "no unprocessed deadlines" - which is true for most of the week,
+    # and is exactly when a round has just settled and wants writing up. Never
+    # fatal: the deadline handling is this job's real work.
+    try:
+        publish_settled_roundup(events)
+    except Exception as e:
+        log(f"gameweek roundup FAILED: {e}")
 
     pool = pre_deadline_commit(events, budget=budget)
 
@@ -430,8 +447,12 @@ def build_gameweek_report(force_gameweek=None, position_dfs=None, events=None,
     rotation_df = None
     try:
         from fixture_rotator import get_rotation_data
+        # Anchored on the gameweek the edition is FOR. The briefing is written
+        # before a deadline, so its fixture run has to start at that round -
+        # not at whichever one FPL has not yet flagged as finished.
         rotation_df = get_rotation_data(mode=gw_clock.detect_mode(),
-                                        n_gameweeks=gw_report_builder.FIXTURE_HORIZON + 2)
+                                        n_gameweeks=gw_report_builder.FIXTURE_HORIZON + 2,
+                                        from_event=gw)
     except Exception as e:
         log(f"  rotation table unavailable ({e}); skipping the fixtures section")
 
@@ -754,6 +775,51 @@ def _roundup_scorecard(gameweek):
             "difference": round(actual - predicted, 1)}
 
 
+def backfill_actual_points(events):
+    """Write real scores onto every frozen snapshot still waiting for one.
+
+    Cheap - a handful of API reads and UPDATEs, no rated pool - which is what
+    lets the hourly watcher run it as well as the nightly refresh. Idempotent:
+    a snapshot that already has its actuals is skipped, and one whose round
+    isn't settled yet reports a reason and is retried next time.
+
+    Must run BEFORE the roundup. The roundup's scorecard prints the AI squad's
+    actual score, and this is the only thing that writes it.
+    """
+    for snap in ai_team.list_snapshots():
+        gw = snap["gameweek"]
+        if snap["actual_points"] is not None:
+            continue
+        res = ai_team.backfill_actuals(gw, events)
+        if res.get("updated"):
+            log(f"GW{gw}: AI Best XI scored {res['actual_points']} "
+                f"(predicted {res['predicted_points']})")
+            m = manager_history.backfill_manager_actuals(gw, events)
+            log(f"GW{gw}: backfilled {m['updated']} manager picks")
+        else:
+            log(f"GW{gw}: not backfilled - {res.get('reason')}")
+
+
+def publish_settled_roundup(events):
+    """Backfill, then write up the round - if there is one waiting.
+
+    Split out of the nightly refresh and onto the hourly watcher because once a
+    day is not often enough for a page whose whole subject is what just
+    happened. FPL flips `finished`/`data_checked` at no fixed hour: the 2026-27
+    opener's last match ended on the Monday evening and the flags were still
+    down at 03:00 Tuesday, so the nightly run found nothing and the next attempt
+    was 03:00 Wednesday - two days after the round ended, and two days before
+    the next deadline.
+
+    Cheap to call hourly for the rest of the week. `build_gameweek_roundup`
+    short-circuits on an existing roundup before it builds the rated pool, so
+    the 23 runs a day that have nothing to do cost one already-fetched events
+    list and a primary-key lookup.
+    """
+    backfill_actual_points(events)
+    build_gameweek_roundup(events=events)
+
+
 def build_gameweek_roundup(force_gameweek=None, position_dfs=None, events=None,
                            replace=False):
     """Write up a settled gameweek: /gameweek/<n>/roundup.
@@ -871,23 +937,12 @@ def daily_refresh(skip_stats=False):
             # Never let a slow scrape stop the backfill below from running.
             log(f"  gameweek stats refresh FAILED: {e}")
 
-    for snap in ai_team.list_snapshots():
-        gw = snap["gameweek"]
-        if snap["actual_points"] is not None:
-            continue
-        res = ai_team.backfill_actuals(gw, events)
-        if res.get("updated"):
-            log(f"GW{gw}: AI Best XI scored {res['actual_points']} "
-                f"(predicted {res['predicted_points']})")
-            m = manager_history.backfill_manager_actuals(gw, events)
-            log(f"GW{gw}: backfilled {m['updated']} manager picks")
-        else:
-            log(f"GW{gw}: not backfilled - {res.get('reason')}")
+    backfill_actual_points(events)
 
     # After the backfill, deliberately. The roundup's scorecard section reads
-    # the snapshot's actual_points, which the loop above is what writes - build
-    # it first and the one number on the page that costs something to publish
-    # would be missing from every roundup by exactly one day.
+    # the snapshot's actual_points, which the backfill is what writes - build it
+    # first and the one number on the page that costs something to publish would
+    # be missing from every roundup by exactly one day.
     #
     # Never fatal. The backfill above is the job's real work and has already
     # committed; a failure writing up the round must not make this run look

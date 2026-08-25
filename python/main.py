@@ -38,8 +38,8 @@ import seo_tables as seo_tables_builder
 import social
 from pipeline import run_pipeline
 from rating_model import (MIN_CURRENT_GAMEWEEKS, StaleModelError,
-                          completed_current_gameweeks, get_rated_position_dfs,
-                          using_fallback_form)
+                          completed_current_gameweeks, form_blend_weight,
+                          get_rated_position_dfs, using_fallback_form)
 from fixture_rotator import (get_rotation_data, rank_rotation_pairs, recommend_pair_players, team_fixture_map)
 from search import search_player
 from squad_optimiser import DEFAULT_BUDGET, OptimisationError
@@ -721,6 +721,20 @@ def asset_version():
 state = {"mode": "preseason", "position_dfs": None, "rotation_df": None}
 
 
+def _horizon_anchor():
+    """The gameweek every forward-looking view on the site starts at.
+
+    `next_gameweek` - the round whose deadline has not passed - rather than
+    `current_gameweek`, because that is the round a projection is FOR. Returns
+    None when the API can't be reached, and the fixture-list fallback inside
+    `fixture_structure.first_upcoming_event` takes over from there.
+    """
+    try:
+        return gw_clock.next_gameweek()
+    except Exception:
+        return None
+
+
 def load_data(mode=None):
     """Load rated data for `mode`, or auto-detect it from the first gameweek
     deadline when no mode is given (the normal path - there's no manual toggle).
@@ -734,29 +748,22 @@ def load_data(mode=None):
     print(f"Loading FPL data ({mode})...")
     data = run_pipeline()
 
-    # `mode` and the ratings' FORM SOURCE are two different questions, and
-    # answering them with one variable is what made the changeover happen a
-    # fortnight early.
-    #
     # `mode` asks "has the season started". It flips at the first deadline and
-    # it governs team strength, which is right: FPL publishes its own strength
-    # numbers once matches exist, and until then the rotation table stands on
-    # last season's results plus Elo.
+    # it governs team strength: FPL publishes its own strength numbers once
+    # enough matches exist, and until then the rotation table stands on last
+    # season's results plus Elo.
     #
-    # The form features are a different matter. Handing them 'inseason'
-    # bypassed using_fallback_form() completely - see the mode branches in
-    # build_current_form_features - so the night the first current-season stats
-    # landed on disk, a "rolling three gameweek" average was built out of ONE
-    # gameweek, and PRESEASON_START_WEIGHT and the calibrators were switched off
-    # along with it. Last season's averages to a single week of noise, overnight,
-    # with MIN_CURRENT_GAMEWEEKS sitting there documenting a rule that never got
-    # to apply.
+    # It used to have to be laundered to None before reaching the ratings,
+    # because 'inseason' switched the form features wholesale onto whatever was
+    # on disk - so the night the first current-season stats landed, a "rolling
+    # three gameweek" average was built out of ONE gameweek and the calibrators
+    # were turned off along with it.
     #
-    # So the form question goes to the function that owns it. None means
-    # auto-detect, and auto-detect counts the gameweeks actually on disk.
-    rating_mode = None if mode == "inseason" else mode
+    # That switch is gone. Form is now a blend weighted by how many gameweeks
+    # have actually been played, so there is nothing for 'inseason' to short-
+    # circuit and the mode is passed through unchanged.
     try:
-        position_dfs = get_rated_position_dfs(data["position_dfs"], mode=rating_mode)
+        position_dfs = get_rated_position_dfs(data["position_dfs"], mode=mode)
     except ValueError as e:
         # Near-unreachable now that the inseason path auto-detects rather than
         # asserting, but kept: it is the last guard between an unreadable stats
@@ -796,7 +803,11 @@ def load_data(mode=None):
         return
 
     state.pop("degraded", None)
-    rotation_df = get_rotation_data(mode=mode, n_gameweeks=8)
+    # Same horizon the ratings used. Without the anchor the grid started at
+    # whichever round FPL had not yet marked `finished`, which for a day or more
+    # after every deadline is the round already played.
+    rotation_df = get_rotation_data(mode=mode, n_gameweeks=8,
+                                    from_event=_horizon_anchor())
 
     state["mode"] = mode
     # Recorded rather than inferred. "Are the new season's numbers being used
@@ -805,10 +816,14 @@ def load_data(mode=None):
     # is not the same as saying the ratings have anything from it. /api/ai/status
     # reports this alongside the gameweek count it was decided from.
     try:
-        state["form_basis"] = ("last-season-average"
-                               if using_fallback_form(rating_mode)
-                               else "current-season-form")
+        weight = form_blend_weight(mode)
+        state["form_weight"] = round(weight, 3)
+        state["form_basis"] = (
+            "last-season-average" if weight <= 0
+            else "prior-weighted-blend" if using_fallback_form(mode)
+            else "current-season-form")
     except Exception:
+        state["form_weight"] = None
         state["form_basis"] = None
     state["position_dfs"] = position_dfs
     state["rotation_df"] = rotation_df
@@ -2236,9 +2251,9 @@ def ai_status():
         "data": data,
         "mode": state["mode"],
         # What the projections are actually standing on. `mode` flips at the
-        # first deadline; the form source waits until there are enough played
-        # gameweeks to average, and the gap between the two is a fortnight of
-        # the season where the honest answer is "last season's, still".
+        # first deadline; the form features blend the two seasons in whatever
+        # proportion the played gameweeks earn, so for the first weeks the
+        # honest answer is "mostly last season's, and increasingly not".
         "ratings": _ratings_basis(),
         "current_gameweek": gw_clock.current_gameweek(events),
         "next_gameweek": gw_clock.next_gameweek(events),
@@ -2262,6 +2277,11 @@ def _ratings_basis():
     return {
         "mode": state["mode"],
         "form_basis": state.get("form_basis"),
+        # The share of form coming from this season, and the number to read.
+        # `form_basis` is three buckets cut out of it, and the buckets can't
+        # tell you whether a played gameweek is in the ratings - it is, from
+        # the night its stats land, at whatever weight this says.
+        "form_weight": state.get("form_weight"),
         "current_gameweeks_on_disk": played,
         "gameweeks_needed_for_current_form": MIN_CURRENT_GAMEWEEKS,
         "degraded": state.get("degraded"),

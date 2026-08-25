@@ -16,8 +16,8 @@ the thing that costs a month.
 
 | Job | When | What breaks if it stops |
 |---|---|---|
-| `deadline-watch` | hourly, :05 | AI squads never get committed; briefings never freeze or go postable; real teams never captured |
-| `daily-refresh` | 03:00 | Ratings go stale; actual scores never backfilled; no roundups; no backups |
+| `deadline-watch` | hourly, :05 | AI squads never get committed; briefings never freeze or go postable; real teams never captured; no roundups |
+| `daily-refresh` | 03:00 | Ratings go stale; actual scores never backfilled; no backups |
 | `gameweek-report` | 03:15 | The briefing stops updating; no nightly player write-up |
 | `indexnow` | 03:30 | New pages take longer to be indexed |
 | `seo-report` | 04:00 | No Search Console / Bing history accumulates |

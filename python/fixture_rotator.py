@@ -2,6 +2,8 @@ import itertools
 
 import pandas as pd
 
+import fixture_structure
+
 
 def rank_rotation_pairs(rotation_df, difficulty_col, exclude_top_n=4, top_n=8,
                         min_improvement=0.0):
@@ -213,14 +215,22 @@ def apply_previous_season_strength(teams_df, strength_df, elo_df=None, name_map=
     return teams_df
 
 
-def build_rotation_table(fixtures_df, teams_df, n_gameweeks=8):
+def build_rotation_table(fixtures_df, teams_df, n_gameweeks=8, from_event=None):
     """Builds one row per team per upcoming fixture, with defensive and
     attacking difficulty scored as a NET difference - a team's own
     defence/attack strength relative to the opponent's attack/defence, not
     the opponent's strength alone. A strong defence facing a weak attack
-    should look easier than a weak defence facing that same attack."""
+    should look easier than a weak defence facing that same attack.
 
-    upcoming = fixtures_df[fixtures_df['finished'] == False].sort_values('event')
+    `from_event` is the gameweek the grid starts at - see
+    `fixture_structure.first_upcoming_event`. Anchoring on the season clock
+    rather than on each fixture's `finished` flag is what stops a round that has
+    already been played occupying the first column."""
+
+    upcoming = fixture_structure.upcoming_fixtures(
+        fixtures_df, fixture_structure.first_upcoming_event(fixtures_df, from_event))
+    if upcoming.empty:
+        return pd.DataFrame()
 
     next_events = sorted(upcoming['event'].dropna().unique())[:n_gameweeks]
     upcoming = upcoming[upcoming['event'].isin(next_events)]
@@ -287,7 +297,7 @@ def team_fixture_map(rotation_df, difficulty_col):
     return result
 
 
-def get_rotation_data(mode='preseason', n_gameweeks=8):
+def get_rotation_data(mode='preseason', n_gameweeks=8, from_event=None):
     """Fetches fixtures/teams and builds the rotation table for the given
     mode. Shared by the CLI and the web app so the logic only exists once."""
     from fetch_data import (get_fixtures, get_bootstrap_data, get_previous_season_fixture_strength,
@@ -297,16 +307,25 @@ def get_rotation_data(mode='preseason', n_gameweeks=8):
     all_data = get_bootstrap_data()
     teams_df = pd.DataFrame(all_data['teams'])
 
-    if mode == 'preseason':
+    # Substituted whenever FPL's own strength columns are empty, not only in
+    # preseason. `detect_mode` flips to 'inseason' the moment the first deadline
+    # passes, but FPL does not populate strength until well into the season -
+    # so for those first weeks the mode said "use the real numbers" and the real
+    # numbers were all zero. Every difficulty came out as 0 - 0, the colour
+    # scale collapsed, and the whole grid rendered as "every fixture is easy".
+    #
+    # The condition is now the data rather than the calendar, which is the thing
+    # that actually determines whether there is anything to use.
+    if mode == 'preseason' or strength_data_is_empty(teams_df):
         strength_df = get_previous_season_fixture_strength()
         elo_df = get_clubelo_ratings()
         teams_df = apply_previous_season_strength(teams_df, strength_df, elo_df, CLUBELO_NAME_MAP)
-    else:
-        if strength_data_is_empty(teams_df):
-            print("Warning: inseason mode selected, but FPL strength data is still empty - "
-                  "results may look flat until real matches have been played")
+        if mode != 'preseason':
+            print("FPL strength data is still empty - using last season's "
+                  "strength (and ClubElo for promoted clubs) instead")
 
-    return build_rotation_table(fixtures_df, teams_df, n_gameweeks=n_gameweeks)
+    return build_rotation_table(fixtures_df, teams_df, n_gameweeks=n_gameweeks,
+                                from_event=from_event)
 
 
 if __name__ == '__main__':

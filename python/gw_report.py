@@ -374,9 +374,20 @@ def fixture_runs(rotation_df, pages, gameweek, limit=SECTION_SIZE):
         easiest, hardest = float(means.min()), float(means.max())
         span = hardest - easiest
 
+        # Every club scoring the same means the strength data behind the
+        # rotation planner is missing, not that the whole division has a kind
+        # run. This used to award 10.0 across the board and print the first
+        # three clubs alphabetically as the league's best fixtures - which is
+        # how "Arsenal have the kindest attacking run" reached a live briefing
+        # off a table of zeroes. `captain_picks` above already declines to rank
+        # on evidence it doesn't have; so does this.
+        if span <= 0:
+            out[key] = []
+            continue
+
         runs = []
         for short_name, difficulty in list(means.items())[:limit]:
-            ease = 10.0 if span <= 0 else 10.0 * (hardest - float(difficulty)) / span
+            ease = 10.0 * (hardest - float(difficulty)) / span
             games = horizon[horizon["team_name"] == short_name].sort_values("event")
             team_code = None
             if "team_code" in games.columns and len(games):

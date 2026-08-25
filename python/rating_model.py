@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+import fixture_structure
 import seasons
 import train_model
 from train_model import predict_bundle
@@ -104,14 +105,23 @@ def _opponent_rank_columns(rows, ranks):
     return rows
 
 
-def build_fixture_features(fixtures_df, n_fixtures=3):
+def build_fixture_features(fixtures_df, n_fixtures=3, from_event=None):
     """For each team, the average strength of their next N unplayed fixtures.
 
     Averaged across the run rather than taken one at a time, because this feeds
     the single blended `predicted_points` figure. Per-gameweek numbers come from
     build_per_gameweek_fixture_features below.
+
+    `from_event` is the gameweek the horizon starts at - see
+    `fixture_structure.first_upcoming_event`. Callers should resolve it once and
+    pass the same value here and to build_per_gameweek_fixture_features, so the
+    blended figure and the per-gameweek list cannot disagree about which
+    fixtures they are describing.
     """
-    upcoming = fixtures_df[fixtures_df['finished'] == False].sort_values('event')
+    upcoming = fixture_structure.upcoming_fixtures(
+        fixtures_df, fixture_structure.first_upcoming_event(fixtures_df, from_event))
+    if upcoming.empty:
+        return pd.DataFrame()
     ranks = _current_strength_ranks()
 
     rows = []
@@ -140,12 +150,15 @@ def build_fixture_features(fixtures_df, n_fixtures=3):
             .mean().reset_index())
 
 
-def build_per_gameweek_fixture_features(fixtures_df, n_fixtures=3):
+def build_per_gameweek_fixture_features(fixtures_df, n_fixtures=3, from_event=None):
     """Like build_fixture_features, but keeps each of the next N fixtures
     SEPARATE (one row per team per upcoming event) instead of averaging them
     into a single number. This is what lets us predict points per gameweek for
     the 'next 3 GWs' columns, rather than one blended figure."""
-    upcoming = fixtures_df[fixtures_df['finished'] == False].sort_values('event')
+    upcoming = fixture_structure.upcoming_fixtures(
+        fixtures_df, fixture_structure.first_upcoming_event(fixtures_df, from_event))
+    if upcoming.empty:
+        return pd.DataFrame()
 
     rows = []
     team_ids = pd.concat([upcoming['team_h'], upcoming['team_a']]).unique()
@@ -454,11 +467,55 @@ def zero_unavailable_points(position_dfs, fixtures_df, now=None):
     return updated
 
 
-# How many completed current-season gameweeks the form features need before
-# they stop falling back to last season's average. Three, because that is the
-# window the rolling average is built over - below it the "rolling" figure is a
-# partial one dressed up as a full one.
+# How current-season results and last season's average are combined.
+#
+# This used to be a switch, not a blend: below three gameweeks on disk the
+# current-season file was never opened at all, so a round that had been played
+# moved nothing, and on the night the third one landed last season was dropped
+# entirely. Two weeks of a live season ignored, then a discontinuity.
+#
+# It is now a shrinkage blend. Last season is a prior worth PRIOR_STRENGTH
+# gameweeks; each current-season gameweek counts for CURRENT_GAME_WEIGHT of
+# them, and the current season's share of the answer is the ratio between the
+# two. Nothing switches - GW1 counts from the night its stats land, GW2 adds to
+# it, and the prior fades on its own.
+#
+# CURRENT_GAME_WEIGHT is above 1 deliberately. A game played this season under
+# this manager, at this price, in this role, says more about the next fixture
+# than an equal count of last season's did - a summer of transfers and tactical
+# change sits between them.
+CURRENT_GAME_WEIGHT = 2.0
+PRIOR_STRENGTH = 6.0
+
+# The blend weight at which the ratings stop being prior-dominated. Everything
+# gated on `using_fallback_form` flips here. 0.5 with the constants above is
+# exactly three gameweeks - the same threshold MIN_CURRENT_GAMEWEEKS used to
+# name, kept so the captain-pick suppression, PRESEASON_START_WEIGHT and the
+# calibrators behave as they always have.
+FALLBACK_FORM_WEIGHT = 0.5
+
+# Retained because it is the honest name for the same number and is referenced
+# from /api/ai/status. Derived from the constants rather than set beside them,
+# so the two cannot drift apart.
 MIN_CURRENT_GAMEWEEKS = 3
+
+
+def current_form_weight(games_seen):
+    """How much of a player's form comes from this season, in [0, 1].
+
+    1 game -> 0.25, 2 -> 0.40, 3 -> 0.50, 6 -> 0.67, 10 -> 0.77, 19 -> 0.86.
+    Accepts a scalar or a pandas Series.
+    """
+    if isinstance(games_seen, pd.Series):
+        n_eff = CURRENT_GAME_WEIGHT * pd.to_numeric(
+            games_seen, errors='coerce').fillna(0.0).clip(lower=0)
+        return n_eff / (n_eff + PRIOR_STRENGTH)
+    try:
+        n = max(float(games_seen or 0), 0.0)
+    except (TypeError, ValueError):
+        n = 0.0
+    n_eff = CURRENT_GAME_WEIGHT * n
+    return n_eff / (n_eff + PRIOR_STRENGTH)
 
 
 def completed_current_gameweeks(current_gw_path=None):
@@ -481,26 +538,149 @@ def completed_current_gameweeks(current_gw_path=None):
     return int(current['round'].nunique())
 
 
+def form_blend_weight(mode=None, current_gw_path=None):
+    """The league-level share of form coming from this season, in [0, 1].
+
+    A summary of what `build_current_form_features` will do, for callers that
+    want to describe the state rather than compute it - the blend itself is per
+    player, off each player's own appearances. `preseason` forces 0: whatever is
+    on disk belongs to a season that hasn't started.
+    """
+    if mode == 'preseason':
+        return 0.0
+    return current_form_weight(completed_current_gameweeks(current_gw_path))
+
+
 def using_fallback_form(mode=None, current_gw_path=None,
                         min_current_gameweeks=MIN_CURRENT_GAMEWEEKS):
-    """Whether ratings are standing on last season's average rather than
-    current-season form.
+    """Whether ratings are still standing mostly on last season's average.
 
     Asked from outside the pipeline to find out whether a projection is a real
-    ranking or a cold-start estimate. While this is true every player's "form"
-    is a whole-season average, which flattens the variance that separates
+    ranking or a cold-start estimate. While this is true most of every player's
+    "form" is a whole-season average, which flattens the variance that separates
     attackers far harder than it touches a defender's appearance-and-clean-sheet
     floor: the projections bunch, and defenders drift to the top of them. See
     `gw_report.captain_picks`, which declines to print a ranking on that basis.
 
-    `build_current_form_features` decides the same question by calling this, so
-    the page and the pipeline cannot disagree about which mode produced the
-    numbers on it."""
+    Since the blend replaced the switch this is a threshold on a continuum
+    rather than a statement about which file was opened - current-season results
+    are in the numbers from the first round on either way. It flips at the same
+    three gameweeks it always did, so everything gated on it is unchanged.
+
+    `min_current_gameweeks` is still honoured for callers that pass their own
+    threshold; it is converted to the equivalent blend weight.
+    """
     if mode == 'preseason':
         return True
-    if mode == 'inseason':
-        return False
-    return completed_current_gameweeks(current_gw_path) < min_current_gameweeks
+    cutoff = (FALLBACK_FORM_WEIGHT
+              if min_current_gameweeks == MIN_CURRENT_GAMEWEEKS
+              else current_form_weight(min_current_gameweeks))
+    return form_blend_weight(mode, current_gw_path) < cutoff
+
+
+def _load_gameweek_stats(gw_path, players_path):
+    """One season's per-gameweek rows, keyed on `code`.
+
+    `code` rather than `id`: FPL reassigns `id` every season, so a new signing
+    can inherit a departed player's number and quietly acquire his history.
+    `code` is the one identifier that stays with a real player across seasons,
+    which is what makes joining two seasons together safe at all.
+    """
+    frame = pd.read_csv(gw_path)
+    if 'element' in frame.columns:
+        frame = frame.rename(columns={'element': 'player_id'})
+
+    players = pd.read_csv(players_path)
+    id_to_code = dict(zip(players['id'], players['code']))
+    frame['code'] = frame['player_id'].map(id_to_code)
+    frame = frame.dropna(subset=['code'])
+    frame['code'] = frame['code'].astype(int)
+    return frame
+
+
+def _prior_form(fallback_path, previous_players_path):
+    """Last season's whole-season average per player, shaped like a form row.
+
+    The short windows are flattened onto the season-long level. Left alone they
+    would hold last season's FINAL three and six gameweeks, which is the run-in
+    - rested title winners, rotated squads, dead rubbers. That is the exact bug
+    this was written to avoid: Haaland ranked low off a rested finish, fringe
+    players ranked high off one lucky game. Across a summer of transfers those
+    last three games carry no more information than the season did, so they are
+    set to the season average rather than trusted as "form".
+    """
+    source = _load_gameweek_stats(fallback_path, previous_players_path)
+
+    # Filter out players with minimal minutes so a single substitute cameo
+    # doesn't produce a misleadingly high per-game average.
+    minutes_played = pd.to_numeric(source['minutes'], errors='coerce') \
+        .groupby(source['code']).sum()
+    eligible = minutes_played[minutes_played >= 180].index  # ~2 full games
+    source = source[source['code'].isin(eligible)]
+
+    prior = _features_for_next_gameweek(source)
+    for col in train_model.ROLLING_COLS:
+        level = f'{col}_level'
+        if level not in prior.columns:
+            continue
+        for window in train_model.ROLL_WINDOWS:
+            if f'{col}_roll{window}' in prior.columns:
+                prior[f'{col}_roll{window}'] = prior[level]
+    return prior
+
+
+def _blend_form(current, prior):
+    """Shrink each player's current-season form toward last season's average.
+
+    `blended = w * current + (1 - w) * prior`, with `w` from that player's OWN
+    current-season appearances rather than from the league's gameweek count. A
+    player who missed the opening round gets w = 0 and keeps the prior, which is
+    correct: he has played nothing to update it with.
+
+    Two asymmetric cases, and both matter:
+
+      * No current-season row - most of the pool in August. Pure prior.
+      * No prior - a new signing, or anyone from a promoted club. The missing
+        prior is filled with the column's median across players who have one,
+        so he is shrunk toward a typical player rather than ranked off a single
+        game. Under the old switch these players were dropped outright by the
+        180-minute filter; this is what replaces that coverage.
+    """
+    if prior is None or prior.empty:
+        return current
+    if current is None or current.empty:
+        return prior
+
+    columns = sorted(set(current.columns) | set(prior.columns))
+    current = current.reindex(columns=columns)
+    prior = prior.reindex(columns=columns)
+
+    codes = current.index.union(prior.index)
+    current = current.reindex(codes)
+    prior = prior.reindex(codes)
+
+    # A typical player, for anyone last season has never seen. The median is
+    # taken over the reindexed frame, so it describes the players who actually
+    # have a prior rather than the ones being filled.
+    prior = prior.fillna(prior.median(numeric_only=True))
+
+    # Current-season games drive the weight, and a player absent from this
+    # season's file has played none of them.
+    games = current['games_seen'] if 'games_seen' in current else pd.Series(
+        np.nan, index=codes)
+    weight = current_form_weight(games.fillna(0.0))
+
+    current = current.fillna(prior)
+    blended = current.mul(weight, axis=0) + prior.mul(1.0 - weight, axis=0)
+
+    # `games_seen` is blended along with everything else, deliberately. In this
+    # frame it has always meant "how much evidence backs these numbers" rather
+    # than "which round is it" - in production during August it was last
+    # season's 38 - and blending is what preserves that meaning. It also keeps
+    # every player above the `games_seen > 0` gate in predict_ratings, so a
+    # player who has not featured this season is still rated off last season
+    # rather than dropping off the site.
+    return blended
 
 
 def build_current_form_features(
@@ -511,96 +691,55 @@ def build_current_form_features(
     min_current_gameweeks=MIN_CURRENT_GAMEWEEKS,
     mode=None,
 ):
-    """Builds a rolling-3-gameweek 'current form' row per player, keyed by
-    'code' rather than 'id' - FPL reassigns 'id' every season, so a brand
-    new signing can end up sharing last season's id with a departed player.
-    'code' is the one identifier that stays consistent for a given real
-    player across seasons, so it's the only safe join key here.
+    """A 'current form' row per player, keyed by `code`, blending this season's
+    results with last season's average.
 
-    mode: 'preseason' or 'inseason' forces which source is used. Leave as
-    None to auto-detect based on how many current-season gameweeks exist.
+    See CURRENT_GAME_WEIGHT above for the weighting and why it is a blend rather
+    than the switch it used to be. The short answer: a gameweek that has been
+    played should move the ratings that night, and nothing about the numbers
+    should change discontinuously on a particular Tuesday.
+
+    mode: 'preseason' forces the prior alone - whatever is on disk belongs to a
+    season that has not started. Anything else blends with whatever current
+    season data exists, which for an empty or missing file is also the prior.
 
     Paths default to the current/previous season directories via seasons.py.
-    The current-season file used to be written by one path and read by another,
-    so 'inseason' could never find it however far into the season you were."""
-
+    """
     prev = seasons.previous_season() or seasons.FIRST_TRAINING_SEASON
     current_gw_path = current_gw_path or seasons.gameweek_stats_path()
     fallback_path = fallback_path or seasons.gameweek_stats_path(prev)
     current_players_path = current_players_path or seasons.players_path()
     previous_players_path = previous_players_path or seasons.players_path(prev)
 
+    prior = _prior_form(fallback_path, previous_players_path)
+
     if mode == 'preseason':
-        use_fallback = True
-    elif mode == 'inseason':
-        use_fallback = False
-        if not os.path.exists(current_gw_path):
+        return prior.reset_index()
+
+    if not os.path.exists(current_gw_path):
+        if mode == 'inseason':
             raise ValueError("No current-season gameweek data exists yet - can't use inseason mode")
-        current = pd.read_csv(current_gw_path)
-        if 'element' in current.columns:
-            current = current.rename(columns={'element': 'player_id'})
-        if current['round'].nunique() < 1:
+        print("No current-season gameweeks on disk yet - form is last season's average")
+        return prior.reset_index()
+
+    current_source = _load_gameweek_stats(current_gw_path, current_players_path)
+    rounds = int(pd.to_numeric(current_source.get('round'), errors='coerce').nunique())
+    if not rounds:
+        if mode == 'inseason':
             raise ValueError("Current-season gameweek data is empty - can't use inseason mode")
-    else:
-        use_fallback = using_fallback_form(mode, current_gw_path,
-                                           min_current_gameweeks)
-        if not use_fallback:
-            current = pd.read_csv(current_gw_path)
-            if 'element' in current.columns:
-                current = current.rename(columns={'element': 'player_id'})
+        print("Current-season gameweek data is empty - form is last season's average")
+        return prior.reset_index()
 
-    if not use_fallback and os.path.exists(current_gw_path):
-        current = pd.read_csv(current_gw_path)
-        if 'element' in current.columns:
-            current = current.rename(columns={'element': 'player_id'})
+    # Rolls left INTACT here, unlike the prior above: this season's last three
+    # gameweeks genuinely are form. That asymmetry is the point of keeping the
+    # two frames separate rather than concatenating the seasons.
+    current = _features_for_next_gameweek(current_source)
 
-    if use_fallback:
-        print("Not enough current-season gameweeks yet - using last season's full-season average as current form")
-        source = pd.read_csv(fallback_path)
-        if 'element' in source.columns:
-            source = source.rename(columns={'element': 'player_id'})
+    weight = current_form_weight(rounds)
+    print(f"Form: blending {rounds} current-season gameweek(s) with last "
+          f"season's average (league weight {weight:.2f})")
 
-        previous_players = pd.read_csv(previous_players_path)
-        id_to_code = dict(zip(previous_players['id'], previous_players['code']))
-
-    else:
-        source = current
-        current_players = pd.read_csv(current_players_path)
-        id_to_code = dict(zip(current_players['id'], current_players['code']))
-
-    source['code'] = source['player_id'].map(id_to_code)
-    source = source.dropna(subset=['code'])
-    source['code'] = source['code'].astype(int)
-
-    if use_fallback:
-        # Filter out players with minimal minutes so a single substitute cameo
-        # doesn't produce a misleadingly high per-game average.
-        minutes_played = pd.to_numeric(source['minutes'], errors='coerce') \
-            .groupby(source['code']).sum()
-        eligible = minutes_played[minutes_played >= 180].index  # ~2 full games
-        source = source[source['code'].isin(eligible)]
-
-    form = _features_for_next_gameweek(source)
-
-    if use_fallback:
-        # Preseason only: flatten the short windows onto the season-long level.
-        #
-        # The rolling columns would otherwise hold last season's FINAL three and
-        # six gameweeks, which is the run-in - rested title winners, rotated
-        # squads, dead rubbers. That is the exact bug this fallback was written
-        # to avoid: Haaland ranked low off a rested finish, fringe players
-        # ranked high off one lucky game. Across a summer of transfers those
-        # last three games carry no more information than the season did, so
-        # they are set to the season average rather than trusted as "form".
-        for col in train_model.ROLLING_COLS:
-            level = f'{col}_level'
-            if level not in form.columns:
-                continue
-            for window in train_model.ROLL_WINDOWS:
-                if f'{col}_roll{window}' in form.columns:
-                    form[f'{col}_roll{window}'] = form[level]
-
-    return form.reset_index()
+    return _blend_form(current, prior).reset_index()
 
 
 def _features_for_next_gameweek(source):
@@ -1009,7 +1148,8 @@ def plot_top_ratings(position_dfs, top_n=10, out_dir='../data/plots'):
         print(f"Saved chart to {path}")
 
 
-def get_rated_position_dfs(position_dfs, mode='preseason', n_gameweeks=8):
+def get_rated_position_dfs(position_dfs, mode='preseason', n_gameweeks=8,
+                           from_event=None):
     """Runs the full rating pipeline (form features, fixtures, model
     inference) for the given mode, then attaches per-gameweek predicted points
     for the next N gameweeks. Shared entry point for the CLI and the web app."""
@@ -1019,7 +1159,22 @@ def get_rated_position_dfs(position_dfs, mode='preseason', n_gameweeks=8):
     form_features = build_current_form_features(mode=mode)
 
     fixtures_df = get_fixtures()
-    fixture_features = build_fixture_features(fixtures_df, n_fixtures=3)
+
+    # Resolved ONCE, here, and handed to both fixture builders below. They used
+    # to decide independently (each filtering on `finished == False`), which is
+    # how the blended projection and the per-gameweek list could end up
+    # describing different fixtures. The season clock is the source; if it can't
+    # be reached, first_upcoming_event falls back to the fixture list.
+    if from_event is None:
+        try:
+            import gameweek as gw_clock
+            from_event = gw_clock.next_gameweek()
+        except Exception:
+            from_event = None
+    from_event = fixture_structure.first_upcoming_event(fixtures_df, from_event)
+
+    fixture_features = build_fixture_features(fixtures_df, n_fixtures=3,
+                                              from_event=from_event)
 
     # Asked of the same function build_current_form_features just used, so the
     # rating basis cannot disagree with the form source it is ranking. Reverts
@@ -1038,7 +1193,8 @@ def get_rated_position_dfs(position_dfs, mode='preseason', n_gameweeks=8):
         rated = calibrate_position_dfs(rated, calibrators, start_weight=start_weight)
 
     # Per-gameweek points for the 'next 3 GWs' columns on ratings/search.
-    per_gw_features = build_per_gameweek_fixture_features(fixtures_df, n_fixtures=n_gameweeks)
+    per_gw_features = build_per_gameweek_fixture_features(
+        fixtures_df, n_fixtures=n_gameweeks, from_event=from_event)
     teams_df = pd.DataFrame(get_bootstrap_data()['teams'])
     team_id_to_short = dict(zip(teams_df['id'], teams_df['short_name']))
     rated = attach_per_gameweek_points(

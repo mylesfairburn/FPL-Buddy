@@ -52,8 +52,13 @@
             </div>
 
             <h6 class="section-heading mt-4">Track record</h6>
-            <div class="ps-list">
-                <table class="table table-sm ps-table ai-history-table mb-0">
+            {# ps-list-history, not bare ps-list. The bare class is sized for
+               the player-search pane it was written for - a 70vh scroll box on
+               a 260px floor - and this table holds one row in August and
+               thirty-eight by May. Neither end of that fits inside a fixed box
+               on a phone. See the .ps-list-history rules in style.css. #}
+            <div class="ps-list ps-list-history">
+                <table class="table table-sm ps-table ai-history-table mgr-history-table mb-0">
                     <thead><tr>
                         <th>GW</th><th>Value</th><th>Bank</th>
                         <th>Chip</th><th>Predicted</th><th>Actual</th>
@@ -132,8 +137,8 @@
                 Predictions are frozen at each deadline and never recalculated, so these
                 comparisons stay honest as the model changes.
             </p>
-            <div class="ps-list">
-                <table class="table table-sm ps-table ai-history-table mb-0">
+            <div class="ps-list ps-list-history">
+                <table class="table table-sm ps-table ai-history-table xi-history-table mb-0">
                     <thead><tr>
                         <th>GW</th><th>Formation</th><th>Cost</th>
                         <th>Predicted</th><th>Actual</th><th>Diff</th>

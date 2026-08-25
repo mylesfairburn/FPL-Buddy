@@ -271,11 +271,19 @@ run risks freezing provisional scores that later change.
 that night's in-depth player write-up, sharing one rating run between them.
 Must come before the IndexNow ping at 03:30, which reads the live sitemap.
 
-**Two things ride on `daily-refresh` rather than having cron lines of their
-own.** The gameweek roundup, because the moment it has to hit — after FPL
-confirms a round's stats — is the same condition the actual-points backfill
-already waits for. And the nightly housekeeping: the database backup and the
-disk tidy-up.
+**The roundup rides on `deadline-watch`, not on `daily-refresh`.** It used to be
+nightly, on the reasoning that it waits for the same `data_checked` flag the
+actual-points backfill does. True, but that flag flips at no fixed hour, and
+once a day is not often enough for a page whose entire subject is what just
+happened. The 2026-27 opener made the point: the last match ended Monday
+evening, the flags were still down at 03:00 Tuesday, so the run found nothing
+and the next attempt was 03:00 Wednesday — two days after the round ended and
+two days before the next deadline. It now publishes within the hour. The
+backfill runs immediately before it in both jobs, because the roundup's
+scorecard prints a number only the backfill writes.
+
+**One thing still rides on `daily-refresh`**: the nightly housekeeping — the
+database backup and the disk tidy-up.
 
 **The staleness check at 05:00, last.** It rode on `daily-refresh` until it was
 noticed doing the one thing a staleness check must never do. At 03:00 it judged

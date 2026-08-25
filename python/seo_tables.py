@@ -45,6 +45,11 @@ TOP_PLAYERS = 100
 TOP_PAIRS = 6
 TRACK_RECORD_ROWS = 10
 
+# What a fixture cell looks like when there is no difficulty to show. Kept in
+# step with NO_DIFFICULTY_COLOUR in static/app.js - the script replaces this
+# table in place, so a disagreement would repaint every cell on load.
+NO_DIFFICULTY_COLOUR = "hsl(210, 8%, 88%)"
+
 
 def _fmt(value, places=1):
     """A number for display, or an en dash. Mirrors the front end's `–` for a
@@ -228,8 +233,10 @@ def rotation_block(rotation_df, difficulty_col="defensive_difficulty",
     def colour(difficulty):
         if difficulty is None:
             return None
+        # A flat range is missing data, not twenty easy runs. Grey says so;
+        # green claimed the opposite. Mirrors NO_DIFFICULTY_COLOUR in app.js.
         if hi == lo:
-            return "hsl(120, 70%, 85%)"
+            return NO_DIFFICULTY_COLOUR
         hue = 120 - ((float(difficulty) - lo) / (hi - lo) * 120)
         return f"hsl({hue:g}, 70%, 82%)"
 

@@ -1802,6 +1802,26 @@ a.navbar-brand.brand:focus-visible {
    on a fetch, and so has nothing to reserve against. */
 .ps-list { min-height: 260px; }
 
+/* The two track-record tables are exempt from all of it - the reservation
+   above, the 70vh cap and the inner scroll. Those numbers describe the player
+   search, which is always about that tall. A track record is one row in August
+   and thirty-eight in May, so a fixed box is wrong at both ends: today it wraps
+   a single 29px row in 260px of nothing, and by the end of the season it is a
+   nested scroller inside a page that already scrolls.
+
+   The row cap in loadAiHistory/loadMgrHistory is what bounds the height now, so
+   nothing here needs to. Same shape as the .ps-rec .ps-list override further
+   up, and for the same reason. */
+.ps-list-history {
+    min-height: 0;
+    /* The vertical trap goes; the horizontal one stays. `overflow-y` is left
+       alone deliberately - it cannot be set to `visible` while overflow-x is
+       hidden (the spec computes it back to auto), and it does not need to be:
+       with no max-height the box grows to its content and the scrollbar never
+       appears. */
+    max-height: none;
+}
+
 /* Rotation pairs are cards, not a table, and the row of them is about this
    tall on every breakpoint. */
 #pairsContainer { min-height: 300px; }
@@ -1888,6 +1908,19 @@ a.navbar-brand.brand:focus-visible {
        being violent, not enough to be exact. */
     #playersTabSearch, #playerSearch { min-height: 420px; }
     .ps-list { min-height: 200px; }
+    .ps-list-history { min-height: 0; }
+
+    /* Six columns of numbers do not fit across 375px, and squeezing them
+       wraps every cell onto two lines - which is most of why these blocks read
+       as too long on a phone. Value/Bank and Cost are the ones a reader can
+       lose: GW, Predicted and Actual are the whole point of the table, and the
+       chip and formation change what those numbers mean. Same nth-child
+       approach as .ai-squad-table above. */
+    .mgr-history-table th:nth-child(2), .mgr-history-table td:nth-child(2),
+    .mgr-history-table th:nth-child(3), .mgr-history-table td:nth-child(3),
+    .xi-history-table th:nth-child(3), .xi-history-table td:nth-child(3) {
+        display: none;
+    }
     #pairsContainer { min-height: 240px; }
     #rotationTable { min-height: 480px; }
     /* The chips wrap to more rows on a narrow screen, and the two AI Manager
