@@ -43,7 +43,8 @@ from rating_model import (MIN_CURRENT_GAMEWEEKS, StaleModelError,
 from fixture_rotator import (get_rotation_data, rank_rotation_pairs, recommend_pair_players, team_fixture_map)
 from search import search_player
 from squad_optimiser import DEFAULT_BUDGET, OptimisationError
-from team_service import (get_team_view, get_league_standings, get_all_players, get_player_summary,
+from team_service import (PREV_SEASON_MIN_MINUTES, get_team_view,
+                          get_league_standings, get_all_players, get_player_summary,
                           get_news_feed, get_underperforming_players,
                           get_overperforming_players, team_name_map,
                           _team_short_map as get_team_short_map)
@@ -1307,6 +1308,12 @@ def player_profile(request: Request, slug: str):
         meta=player_pages.meta_for(rec, season, stats_season, started),
         player=rec, season_label=season,
         stats_season=stats_season, season_started=started,
+        # The previous season, for the comparison column. Named here rather
+        # than derived in the template so the label and the numbers come from
+        # one place - seasons.previous_season() is what _prev_season_stats_by_code
+        # aggregated, so they cannot end up describing different years.
+        prev_season_label=seasons.previous_season() or seasons.FIRST_TRAINING_SEASON,
+        prev_season_min_minutes=PREV_SEASON_MIN_MINUTES,
         paragraphs=player_pages.describe(rec, season, stats_season, started),
         horizon=player_pages.horizon_points(rec),
         fixture_label=player_pages.fixture_label)

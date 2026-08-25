@@ -84,24 +84,59 @@
             {% endif %}
             {% set s = player.stats %}
             {% if s.minutes %}
+            {#- Last season's column, when there is a real one to show. A
+                gameweek into a season every figure on the left is a single
+                match, and printing it alone invites the reader to draw a
+                conclusion from it. The comparison is the context, and it is
+                the same shape a reader already knows from FPL's own player
+                pages. Dropped entirely for anyone who did not play enough of
+                last season for the totals to mean anything - see
+                PREV_SEASON_MIN_MINUTES - rather than shown as a row of zeroes,
+                which would read as "did nothing" instead of "wasn't here". -#}
+            {% set p = player.prev_season or {} %}
+            {% set show_prev = season_started and (p.minutes or 0) >= prev_season_min_minutes %}
+            {% set cols = 3 if show_prev else 2 %}
             <div class="table-scroll">
-                <table class="stat-table">
+                <table class="stat-table stat-table-seasons">
+                    {% if show_prev %}
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th class="num">{{ stats_season }}</th>
+                            <th class="num">{{ prev_season_label }}</th>
+                        </tr>
+                    </thead>
+                    {% endif %}
                     <tbody>
-                        <tr><th>Points</th><td class="num">{{ s.total_points | int }}</td>
-                            <th>Points per game</th><td class="num">{{ s.points_per_game }}</td></tr>
-                        <tr><th>Minutes</th><td class="num">{{ s.minutes | int }}</td>
-                            <th>Starts</th><td class="num">{{ s.starts | int if s.starts is defined else '—' }}</td></tr>
-                        <tr><th>Goals</th><td class="num">{{ s.goals_scored | int if s.goals_scored is defined else 0 }}</td>
-                            <th>Assists</th><td class="num">{{ s.assists | int if s.assists is defined else 0 }}</td></tr>
-                        <tr><th>Clean sheets</th><td class="num">{{ s.clean_sheets | int if s.clean_sheets is defined else 0 }}</td>
-                            <th>Bonus</th><td class="num">{{ s.bonus | int if s.bonus is defined else 0 }}</td></tr>
-                        <tr><th>Expected goals</th><td class="num">{{ s.expected_goals if s.expected_goals is defined else '—' }}</td>
-                            <th>Expected assists</th><td class="num">{{ s.expected_assists if s.expected_assists is defined else '—' }}</td></tr>
-                        <tr><th>Yellow cards</th><td class="num">{{ s.yellow_cards | int if s.yellow_cards is defined else 0 }}</td>
-                            <th>Red cards</th><td class="num">{{ s.red_cards | int if s.red_cards is defined else 0 }}</td></tr>
+                        {%- macro row(label, now, then, decimals=0) -%}
+                        <tr>
+                            <th>{{ label }}</th>
+                            <td class="num">{{ now }}</td>
+                            {% if show_prev %}<td class="num">{{ then }}</td>{% endif %}
+                        </tr>
+                        {%- endmacro -%}
+                        {{ row('Points', s.total_points | int, p.total_points | int if p.total_points is not none else '—') }}
+                        {{ row('Points per game', s.points_per_game, p.points_per_game if p.points_per_game is not none else '—') }}
+                        {{ row('Minutes', s.minutes | int, p.minutes | int if p.minutes is not none else '—') }}
+                        {{ row('Starts', s.starts | int if s.starts is defined else '—', p.starts | int if p.starts is not none else '—') }}
+                        {{ row('Goals', s.goals_scored | int if s.goals_scored is defined else 0, p.goals_scored | int if p.goals_scored is not none else '—') }}
+                        {{ row('Assists', s.assists | int if s.assists is defined else 0, p.assists | int if p.assists is not none else '—') }}
+                        {{ row('Clean sheets', s.clean_sheets | int if s.clean_sheets is defined else 0, p.clean_sheets | int if p.clean_sheets is not none else '—') }}
+                        {{ row('Bonus', s.bonus | int if s.bonus is defined else 0, p.bonus | int if p.bonus is not none else '—') }}
+                        {{ row('Expected goals', s.expected_goals if s.expected_goals is defined else '—', '%.2f'|format(p.expected_goals) if p.expected_goals is not none else '—') }}
+                        {{ row('Expected assists', s.expected_assists if s.expected_assists is defined else '—', '%.2f'|format(p.expected_assists) if p.expected_assists is not none else '—') }}
+                        {{ row('Yellow cards', s.yellow_cards | int if s.yellow_cards is defined else 0, p.yellow_cards | int if p.yellow_cards is not none else '—') }}
+                        {{ row('Red cards', s.red_cards | int if s.red_cards is defined else 0, p.red_cards | int if p.red_cards is not none else '—') }}
                     </tbody>
                 </table>
             </div>
+            {% if show_prev %}
+            <p class="text-muted small">
+                {{ prev_season_label }} totals are this player&rsquo;s full previous
+                season, for comparison &mdash; {{ stats_season }} is {{ s.minutes | int }}
+                minutes so far.
+            </p>
+            {% endif %}
             {% else %}
             <p class="text-muted">
                 No {{ stats_season }} minutes played.

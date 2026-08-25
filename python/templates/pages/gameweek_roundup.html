@@ -70,9 +70,19 @@
             </h3>
             <p class="gw-card-figure">{{ p.headline }}</p>
             <p class="gw-card-why">{{ p.why }}</p>
+            {# Clean sheet sits with the goals rather than only in the prose.
+               For a keeper or a defender it is usually the largest single
+               component of the score - four points, before any bonus it drags
+               along with it - and a card that lists "Goals 1, Bonus 2" against
+               a 15-point defender is not showing where the points came from.
+               Only for the positions that score for one: a forward keeping a
+               clean sheet earns nothing and printing it would imply otherwise.
+               Saves likewise, which is the keeper's other missing column. #}
             <dl class="gw-stats">
                 {% if p.goals %}<div><dt>Goals</dt><dd>{{ p.goals|int }}</dd></div>{% endif %}
                 {% if p.assists %}<div><dt>Assists</dt><dd>{{ p.assists|int }}</dd></div>{% endif %}
+                {% if p.clean_sheet and p.pos in ('GK', 'DEF', 'MID') %}<div><dt>Clean sheet</dt><dd>Yes</dd></div>{% endif %}
+                {% if p.saves and p.pos == 'GK' %}<div><dt>Saves</dt><dd>{{ p.saves|int }}</dd></div>{% endif %}
                 {% if p.bonus %}<div><dt>Bonus</dt><dd>{{ p.bonus|int }}</dd></div>{% endif %}
                 {% if p.owned is not none %}<div><dt>Owned</dt><dd>{{ '%.1f'|format(p.owned) }}%</dd></div>{% endif %}
             </dl>

@@ -403,6 +403,12 @@ def _transfer_recs(squad, index, bank, free_transfers, max_recs=3):
                     "out": weak, "in": cand,
                     "rating_gain": round(cand["rating"] - weak["rating"], 1),
                     "cost_change": round(cand["cost"] - weak["cost"], 1),
+                    # True for a freshly loaded page and nothing more. The
+                    # allowance is spent client-side as the reader makes
+                    # transfers, so app.js recomputes the free/-4 tag from what
+                    # is LEFT every time it draws the list - see
+                    # renderTransfers. Kept here because it is the right answer
+                    # at render time and the only one a non-JS reader gets.
                     "free": len(recs) < free_transfers,
                 })
                 owned.add(cand["id"])
@@ -459,7 +465,19 @@ def get_all_players(position_dfs):
 
 
 _PREV_SEASON_UNDERPERF_STATS = None
-_PREV_STAT_COLS = ["expected_goals", "goals_scored", "expected_goals_conceded", "goals_conceded", "minutes"]
+# The five the performance-gap table needs, plus the ones a player page prints
+# beside this season's. Widened rather than aggregated a second time elsewhere:
+# the file is read once and cached, so the extra columns are free, and two
+# separate summaries of the same CSV are two things to keep in step.
+_PREV_STAT_COLS = ["expected_goals", "goals_scored", "expected_goals_conceded",
+                   "goals_conceded", "minutes", "total_points", "assists",
+                   "clean_sheets", "bonus", "starts", "expected_assists",
+                   "yellow_cards", "red_cards"]
+
+# What counts as having played last season at all. Two full matches - below
+# that the totals are a cameo and printing them beside a full season invites a
+# comparison the numbers cannot support.
+PREV_SEASON_MIN_MINUTES = 180
 
 
 def _prev_season_stats_by_code():
@@ -487,15 +505,36 @@ def _prev_season_stats_by_code():
         for c in _PREV_STAT_COLS:
             stats[c] = pd.to_numeric(stats[c], errors="coerce")
         totals = stats.groupby("code")[_PREV_STAT_COLS].sum()
-        _PREV_SEASON_UNDERPERF_STATS = {
-            int(code): {c: row[c] for c in _PREV_STAT_COLS}
-            for code, row in totals.iterrows()
-        }
+
+        # Appearances, so points-per-game can be shown on the same basis FPL
+        # uses. Counted from rows with minutes rather than from row count: an
+        # unused substitute has a gameweek row and did not appear in the match.
+        played = stats[stats["minutes"] > 0].groupby("code").size()
+
+        _PREV_SEASON_UNDERPERF_STATS = {}
+        for code, row in totals.iterrows():
+            rec = {c: row[c] for c in _PREV_STAT_COLS}
+            games = int(played.get(code, 0))
+            rec["appearances"] = games
+            rec["points_per_game"] = (round(float(row["total_points"]) / games, 1)
+                                      if games else None)
+            _PREV_SEASON_UNDERPERF_STATS[int(code)] = rec
     return _PREV_SEASON_UNDERPERF_STATS
 
 
+# One substantial appearance. 180 (two full matches) was the old floor and it
+# is the right number for a settled season, but it cannot be met by anybody
+# until the third gameweek - so for the opening fortnight the table silently
+# described last season instead. 60 is a start or a long substitute appearance:
+# thin evidence, which is what the first weeks of a season are, and the table
+# prints the minutes beside every row so a reader can weigh it.
+MIN_MINUTES_GAP = 60
+MIN_MINUTES_GAP_PREV = 900
+
+
 def get_performance_gap_players(position_dfs, direction="under", top_n=20,
-                                min_minutes=180, min_minutes_prev=900):
+                                min_minutes=MIN_MINUTES_GAP,
+                                min_minutes_prev=MIN_MINUTES_GAP_PREV):
     """Players whose actual returns and underlying numbers disagree.
 
     `direction="under"` - doing worse than the underlying play deserves:
@@ -515,9 +554,19 @@ def get_performance_gap_players(position_dfs, direction="under", top_n=20,
     revert".
 
     Both are FPL's own underlying-stat fields, straight from bootstrap-static.
-    Falls back to last season's full totals (keyed by the season-stable 'code',
-    not 'id') for anyone short of min_minutes so far this season - otherwise
-    the table is empty for the whole preseason and the first few gameweeks.
+
+    THIS season's numbers, once this season has any. It used to fall back to
+    last season per player for anyone under the minutes floor, which sounds
+    like a gentle degradation and was not: for the first two gameweeks nobody
+    could clear the floor, so every row came from last season while the page
+    around it talked about the current one. The only signal that a table headed
+    "underperforming" was describing a season that had finished was a small
+    "last season" label on each row.
+
+    So the fallback is now all-or-nothing and keyed on whether the season has
+    started at all. Before the opener there is nothing else to show and last
+    season is the honest answer; after it, a thin sample of the season the
+    reader is actually playing beats a complete sample of one they are not.
 
     top_n is applied PER group (attackers, defenders) rather than to a single
     combined-then-sorted list - otherwise one group's generally larger diffs
@@ -527,7 +576,15 @@ def get_performance_gap_players(position_dfs, direction="under", top_n=20,
         return {"results": []}
     over = direction == "over"
     short = _team_short_map()
-    prev_stats = _prev_season_stats_by_code()
+
+    # Has anyone kicked a ball this season? Asked of the pool rather than of
+    # the season clock, so this needs no network call and cannot disagree with
+    # the very numbers it is about to read.
+    season_started = any(
+        (_num(r.get("minutes")) or 0) > 0
+        for df in position_dfs.values() for _, r in df.iterrows())
+
+    prev_stats = {} if season_started else _prev_season_stats_by_code()
     attacking_rows, defensive_rows = [], []
     for pos_name, df in position_dfs.items():
         attacking = pos_name in ("Midfielder", "Forward")
@@ -536,6 +593,8 @@ def get_performance_gap_players(position_dfs, direction="under", top_n=20,
             minutes = _num(r.get("minutes")) or 0
             source, used_fallback = r, False
             if minutes < min_minutes:
+                if season_started:
+                    continue        # too little of THIS season to say anything
                 code = int(r["code"]) if r.get("code") == r.get("code") else None
                 fb = prev_stats.get(code) if code is not None else None
                 fb_minutes = (fb or {}).get("minutes") or 0
@@ -579,7 +638,12 @@ def get_performance_gap_players(position_dfs, direction="under", top_n=20,
     attacking_rows.sort(key=lambda x: -x["diff"])
     defensive_rows.sort(key=lambda x: -x["diff"])
     return {"results": attacking_rows[:top_n] + defensive_rows[:top_n],
-            "direction": "over" if over else "under"}
+            "direction": "over" if over else "under",
+            # Which season the whole table is about. Per-row `season` labels
+            # stay, because they are what a reader sees; this is for the header
+            # above them, which previously could not say.
+            "season": "this season" if season_started else "last season",
+            "min_minutes": min_minutes if season_started else min_minutes_prev}
 
 
 def get_underperforming_players(position_dfs, **kwargs):

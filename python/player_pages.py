@@ -23,7 +23,8 @@ the several hundred similar questions people really ask.
 import re
 import unicodedata
 
-from team_service import POS_SHORT, _num, _prev_season_stats_by_code
+from team_service import (POS_SHORT, PREV_SEASON_MIN_MINUTES, _num,
+                          _prev_season_stats_by_code)
 
 POS_NAME = {"GK": "goalkeeper", "DEF": "defender", "MID": "midfielder", "FWD": "forward"}
 
@@ -165,6 +166,11 @@ def build_index(position_dfs):
                 "chance_of_playing_next_round": _num(row.get("chance_of_playing_next_round")),
                 "next_gameweeks": next_gws,
                 "stats": stats,
+                # Carried whole rather than pre-filtered, because two readers
+                # want different things from it: the page prints it beside this
+                # season only for players who actually played, while the prose
+                # below still uses a thin one to explain an empty current
+                # season. Eligibility is applied where it is displayed.
                 "prev_season": prev.get(code),
             }
             pages[code] = rec
@@ -252,6 +258,22 @@ def describe(rec, season_label, stats_season=None, season_started=True):
         if returns:
             paras.append(("That breaks down as " if season_started
                           else "That was ") + _join(returns) + ".")
+
+        # A gameweek or two into a season, this season's totals are a sample
+        # too small to say anything, and the page previously offered no
+        # context for them at all - last season was mentioned only when there
+        # was nothing else to print. This is the sentence that makes a
+        # two-point return readable.
+        prev = rec.get("prev_season") or {}
+        prev_minutes = prev.get("minutes") or 0
+        if season_started and prev_minutes >= PREV_SEASON_MIN_MINUTES:
+            prev_points = prev.get("total_points") or 0
+            ppg = prev.get("points_per_game")
+            rate = f", {_fmt(ppg, 1)} per game" if ppg else ""
+            paras.append(
+                f"For comparison, {short} scored {_fmt(prev_points)} "
+                f"{_plural(prev_points, 'point')} from {_fmt(prev_minutes)} "
+                f"minutes last season{rate}.")
     else:
         prev = rec.get("prev_season") or {}
         if prev.get("minutes"):

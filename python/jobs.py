@@ -786,6 +786,17 @@ def backfill_actual_points(events):
     Must run BEFORE the roundup. The roundup's scorecard prints the AI squad's
     actual score, and this is the only thing that writes it.
     """
+    # Two independent backfills over the same gameweeks, deliberately not
+    # nested. They used to be: the manager backfill ran only inside
+    # `if best_xi_updated`, and the whole loop skipped any gameweek whose Best
+    # XI snapshot already had its actuals. So the manager backfill got exactly
+    # one attempt, on the single run that happened to settle the Best XI, and
+    # if it did nothing that round it was never retried - the loop had already
+    # started skipping the gameweek. That is how GW1's AI Manager score stayed
+    # "pending" while the Best XI beside it showed 36.
+    #
+    # Each now decides for itself whether it has work to do, and both are
+    # idempotent, so a missed night costs nothing.
     for snap in ai_team.list_snapshots():
         gw = snap["gameweek"]
         if snap["actual_points"] is not None:
@@ -794,10 +805,16 @@ def backfill_actual_points(events):
         if res.get("updated"):
             log(f"GW{gw}: AI Best XI scored {res['actual_points']} "
                 f"(predicted {res['predicted_points']})")
-            m = manager_history.backfill_manager_actuals(gw, events)
-            log(f"GW{gw}: backfilled {m['updated']} manager picks")
         else:
-            log(f"GW{gw}: not backfilled - {res.get('reason')}")
+            log(f"GW{gw}: Best XI not backfilled - {res.get('reason')}")
+
+    for gw in manager_history.gameweeks_awaiting_actuals():
+        m = manager_history.backfill_manager_actuals(gw, events)
+        if m.get("updated") or m.get("totals"):
+            log(f"GW{gw}: backfilled {m['updated']} manager picks, "
+                f"{m.get('totals', 0)} team total(s)")
+        else:
+            log(f"GW{gw}: manager totals not backfilled - {m.get('reason')}")
 
 
 def publish_settled_roundup(events):

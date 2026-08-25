@@ -598,6 +598,21 @@ function transferHitPoints() {
         ? teamView.gw.free_transfers_est : 1;
     return Math.max(0, transfersUsed - free) * 4;
 }
+// How many free transfers are left right now, after whatever this session has
+// already spent. Infinity in a preseason/draft team, where transfers are
+// unlimited and nothing can be a hit.
+//
+// Extracted because three things need the same answer and two of them used to
+// work it out for themselves: the chip below, the -4 accounting in
+// transferHitPoints, and - the one that was wrong - the free/hit tag on each
+// recommended transfer.
+function freeTransfersLeft() {
+    if (teamView && teamView.built) return Infinity;
+    const free = (teamView && teamView.gw && typeof teamView.gw.free_transfers_est === 'number')
+        ? teamView.gw.free_transfers_est : 1;
+    return Math.max(0, free - transfersUsed);
+}
+
 function freeTransfersChip(gw) {
     if (teamView && teamView.built) {
         return `<div class="stat-chip"><span class="stat-label">Free transfers</span><span class="stat-value">Unlimited</span></div>`;
@@ -606,8 +621,7 @@ function freeTransfersChip(gw) {
     // because it was the only place a hit could be shown. Cost is that place
     // now, and the same -4 stated in two containers side by side reads as two
     // separate deductions.
-    const free = (gw && typeof gw.free_transfers_est === 'number') ? gw.free_transfers_est : 1;
-    const remaining = Math.max(0, free - transfersUsed);
+    const remaining = freeTransfersLeft();
     const spent = remaining === 0;
     return `<div class="stat-chip${spent ? ' stat-neg' : ''}"><span class="stat-label">Free transfers</span><span class="stat-value">${remaining}</span></div>`;
 }
@@ -1076,8 +1090,19 @@ function resolveTransfer(inp) {
     if (!performTransfer(out.id, inp)) return;   // blocked (e.g. club limit) — keep it queued
     pendingOuts = pendingOuts.filter(o => o.id !== out.id);
     updateTransferBanner();
+    refreshTransferTags();
     playerSearch.refresh();
     renderPitch();
+}
+
+// Redraw the recommendation tags after anything that spends or restores a free
+// transfer. Cheap - it re-renders three cards from a list already in memory -
+// and it is what keeps "free" honest once a transfer has been made somewhere
+// else on the pitch.
+function refreshTransferTags() {
+    if (teamView && teamView.transfer_recs && teamView.transfer_recs.length) {
+        renderTransfers(teamView.transfer_recs);
+    }
 }
 
 // Predicted GW points, with the captain counting double, minus any
@@ -1474,11 +1499,25 @@ function closeKofiModal() {
 }());
 
 // ---- Recommended transfers ----
+// The free/-4 tag is computed HERE rather than read off the recommendation.
+//
+// computeTransfers used to stamp `free` onto each rec when the list was built,
+// and nothing recomputed it afterwards. So the tags described the squad as it
+// stood at build time: make one transfer of your own anywhere on the pitch and
+// the list still offered the first three as free, having quietly spent the
+// allowance they were counting on. The recommendation that said "free" then
+// cost four points.
+//
+// Position in the list is what decides it - the first `remaining` are free and
+// the rest are hits - so the tags renumber themselves every time the list is
+// re-rendered, which now happens whenever a transfer is made.
 function renderTransfers(recs) {
     const el = document.getElementById('transferRecs');
     if (!recs.length) { el.innerHTML = '<p class="text-muted small">No upgrades found within budget.</p>'; return; }
+    const remaining = freeTransfersLeft();
     el.innerHTML = recs.map((r, i) => {
-        const tag = r.free ? '<span class="ft-tag free">free</span>' : '<span class="ft-tag hit">-4 hit</span>';
+        const isFree = i < remaining;
+        const tag = isFree ? '<span class="ft-tag free">free</span>' : '<span class="ft-tag hit">-4 hit</span>';
         const cost = r.cost_change === 0 ? '\u00b10.0' : (r.cost_change > 0 ? '+' : '') + r.cost_change.toFixed(1);
         return `<div class="transfer-rec">
             <div class="transfer-line">
@@ -2091,8 +2130,11 @@ function computeTransfers(squad, pool, bank, freeTransfers, maxRecs) {
             if (owned.has(c.id)) continue;
             if (c.rating <= w.rating) break;
             if (c.cost <= afford) {
+                // No `free` flag: renderTransfers decides that from the
+                // allowance remaining when it draws, which is the only moment
+                // the answer is current.
                 recs.push({ out: w, in: c, rating_gain: +(c.rating - w.rating).toFixed(1),
-                            cost_change: +(c.cost - w.cost).toFixed(1), free: recs.length < freeTransfers });
+                            cost_change: +(c.cost - w.cost).toFixed(1) });
                 owned.add(c.id); budget -= (c.cost - w.cost); break;
             }
         }

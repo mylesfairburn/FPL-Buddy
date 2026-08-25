@@ -2761,6 +2761,162 @@ def test_form_blend():
                current, empty).loc[1, "total_points_roll3"]))
 
 
+def test_manager_points_backfill():
+    """The AI Manager's gameweek score, which sat at "pending" all week.
+
+    Two independent faults kept it there. `backfill_manager_actuals` wrote
+    every pick's real score and never touched `manager_team.points` - the
+    column the history API serves and the cumulative total is summed from - so
+    the squad view showed real returns beside a track record that said nothing.
+    And in the nightly job the manager backfill was nested inside the Best XI's
+    success branch, on a loop that skipped any gameweek the Best XI had already
+    settled: one attempt, never retried.
+    """
+    group("manager points backfill", "high")
+
+    import manager_history as mh
+
+    class FakeConn:
+        """Just enough of a connection for the two pure helpers."""
+        def __init__(self, rows, hits=0):
+            self.rows, self.hits = rows, hits
+
+        def execute(self, sql, args=()):
+            if "ai_transfer_log" in sql:
+                return _FakeCursor([[self.hits]])
+            return _FakeCursor(self.rows)
+
+    class _FakeCursor:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+        def fetchone(self):
+            return self.rows[0] if self.rows else None
+
+    # Eleven starters on 3 points, the captain doubled: 12 units x 3 = 36.
+    picks = [{"actual_points": 3, "multiplier": 2 if i == 0 else 1} for i in range(11)]
+    expect("a captain's double is counted once, not twice", "11 starters, 1 captain",
+           36, mh._team_points_from_picks(FakeConn(picks), 1))
+
+    expect("a points hit comes off the total", "36 scored, one -4 hit",
+           32, mh._team_points_from_picks(FakeConn(picks), 1, hits=4))
+
+    check("an un-backfilled gameweek stays pending rather than reading zero",
+          "no pick has an actual score", None,
+          mh._team_points_from_picks(FakeConn(
+              [{"actual_points": None, "multiplier": 1}]), 1),
+          lambda v: v is None,
+          note="0 would look like a real score of nothing")
+
+    partial = [{"actual_points": 5, "multiplier": 1},
+               {"actual_points": None, "multiplier": 1}]
+    expect("a partly-settled gameweek counts what it has", "one of two scored",
+           5, mh._team_points_from_picks(FakeConn(partial), 1))
+
+    check("a triple captain is carried by the stored multiplier", "multiplier 3",
+          18, mh._team_points_from_picks(FakeConn(
+              [{"actual_points": 6, "multiplier": 3}]), 1),
+          lambda v: v == 18)
+
+
+def test_performance_gap_season():
+    """Under/overperformers describe the season being played.
+
+    They used to fall back to last season per player for anyone under a
+    180-minute floor - a floor nobody can clear until the third gameweek. So
+    for the opening fortnight every row came from a season that had finished,
+    under a heading about the one that had started.
+    """
+    group("performance gap season", "high")
+
+    def frame(minutes):
+        return pd.DataFrame([{
+            "id": 1, "code": 101, "web_name": "Test", "element_type": 4,
+            "team": 1, "team_code": 3, "now_cost": 70, "minutes": minutes,
+            "expected_goals": 2.0, "goals_scored": 0.0,
+            "expected_goals_conceded": 0.0, "goals_conceded": 0.0,
+            "next_gameweeks": [],
+        }])
+
+    started = team_service.get_performance_gap_players({"Forward": frame(90)})
+    expect("once the season starts the table is about this season",
+           "90 minutes played", "this season", started["season"])
+    check("and a player with one match qualifies", "90 minutes", 1,
+          len(started["results"]), lambda n: n == 1)
+    if started["results"]:
+        expect("the row is labelled this season", "90 minutes", "this season",
+               started["results"][0]["season"])
+
+    thin = team_service.get_performance_gap_players({"Forward": frame(20)})
+    check("a cameo is still excluded", "20 minutes", 0, len(thin["results"]),
+          lambda n: n == 0,
+          note="the floor drops to 60, it does not disappear")
+
+    preseason = team_service.get_performance_gap_players({"Forward": frame(0)})
+    expect("before a ball is kicked, last season is the honest answer",
+           "0 minutes across the pool", "last season", preseason["season"])
+
+    check("the floor is one substantial appearance, not two full matches",
+          "MIN_MINUTES_GAP", 60, team_service.MIN_MINUTES_GAP,
+          lambda v: v == 60)
+
+
+def test_prev_season_totals():
+    """Last season's totals, for the comparison column on a player page.
+
+    The aggregate previously carried five columns, all of them for the
+    performance-gap table. A player page needs the ones a reader recognises -
+    points, assists, clean sheets, bonus - plus an appearance count, so points
+    per game can be shown on the basis FPL uses.
+    """
+    group("previous season totals", "medium")
+
+    for col in ("total_points", "assists", "clean_sheets", "bonus", "starts",
+                "expected_assists", "minutes", "goals_scored"):
+        check(f"{col} is aggregated", "_PREV_STAT_COLS", "present", col,
+              lambda c: c in team_service._PREV_STAT_COLS)
+
+    totals = team_service._prev_season_stats_by_code()
+    if totals:
+        sample = next(iter(totals.values()))
+        check("an appearance count is derived", "any player", "appearances present",
+              sorted(sample.keys()), lambda k: "appearances" in k)
+        check("points per game comes with it", "any player",
+              "points_per_game present", sorted(sample.keys()),
+              lambda k: "points_per_game" in k)
+
+        # Appearances count matches played, not gameweek rows - an unused
+        # substitute has a row and did not appear. The busiest player last
+        # season has 39 from 47 rows, which is the two things this is checking
+        # at once: the 0-minute rows are excluded, and a double gameweek
+        # legitimately puts a player above the 38 rounds in a season. So the
+        # bound is on matches a club can actually play, not on gameweeks.
+        bad = [c for c, r in totals.items()
+               if r.get("appearances") and r["appearances"] > 46]
+        check("appearances stay within a plausible season",
+              "appearances per player", "<= 46 (38 rounds plus doubles)",
+              len(bad), lambda n: n == 0)
+
+        rows_counted = [c for c, r in totals.items() if r.get("appearances") == 47]
+        check("unused-substitute rows are not counted as appearances",
+              "the busiest player's raw row count is 47", 0, len(rows_counted),
+              lambda n: n == 0)
+
+        ppg_wrong = [
+            c for c, r in totals.items()
+            if r.get("points_per_game") is not None and r.get("appearances")
+            and abs(r["points_per_game"] - r["total_points"] / r["appearances"]) > 0.06]
+        check("points per game reconciles with the totals it came from",
+              "total_points / appearances", 0, len(ppg_wrong), lambda n: n == 0)
+
+    check("the eligibility floor is two full matches",
+          "PREV_SEASON_MIN_MINUTES", 180, team_service.PREV_SEASON_MIN_MINUTES,
+          lambda v: v == 180)
+
+
 SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_a_to_z_grouping, test_draft_validation, test_storage_kind,
           test_horizon_points, test_gw_report_predicted_for,
@@ -2790,4 +2946,6 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_upcoming_fixture_horizon, test_rotation_difficulty_spread,
           test_flat_difficulty_renders_neutral, test_fixture_runs_needs_a_spread,
           test_form_blend_weight, test_form_blend,
-          test_gameweek_stats_schemas]
+          test_gameweek_stats_schemas,
+          test_manager_points_backfill, test_performance_gap_season,
+          test_prev_season_totals]
