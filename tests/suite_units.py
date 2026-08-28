@@ -120,6 +120,55 @@ def test_fixture_label():
           pp.fixture_label({}), lambda v: isinstance(v, str))
 
 
+def test_describe_zero_minutes():
+    """A player with no minutes, before and after the first deadline.
+
+    These are two different facts and the page shipped one sentence for both,
+    which was correct all summer and then wrong on several hundred pages from
+    the moment GW1 kicked off. Nothing caught it because nothing asserted on
+    the sentence - only that the prose contained no 'nan'. So: assert on the
+    claim itself, in both directions."""
+    group("player page prose", "high")
+
+    def rec(prev_minutes=0):
+        return {
+            "full_name": "Illan Meslier", "web_name": "Meslier",
+            "team_name": "Leeds", "pos_name": "goalkeeper", "cost": 5.0,
+            "stats": {"minutes": 0, "total_points": 0,
+                      "selected_by_percent": 0.0},
+            "prev_season": ({"minutes": prev_minutes, "goals_scored": 0}
+                            if prev_minutes else {}),
+            "next_gameweeks": [],
+        }
+
+    for prev, why in ((2000, "with last season to fall back on"),
+                      (0, "with no history at all")):
+        started = " ".join(pp.describe(rec(prev), "2026-27", "2026-27", True))
+        check(f"season under way, no minutes {why} — does not claim the "
+              "season is unstarted", f"prev_minutes={prev}, season_started=True",
+              "says the player has not featured, not that the season has not begun",
+              started,
+              lambda s: "season hasn't started" not in s
+              and "has not played a minute" in s,
+              severity="high",
+              note="wrong from the first deadline onwards, on every player who "
+                   "has yet to appear - roughly half the pool")
+
+        preseason = " ".join(pp.describe(rec(prev), "2026-27", "2026-27", False))
+        check(f"preseason, no minutes {why} — still says so",
+              f"prev_minutes={prev}, season_started=False",
+              "the preseason sentence is unchanged", preseason,
+              lambda s: "season hasn't started" in s,
+              severity="medium")
+
+    # The fallback tail is the same either side of the deadline, and it is the
+    # only place last season's numbers appear for a player with no minutes.
+    with_prev = " ".join(pp.describe(rec(2000), "2026-27", "2026-27", True))
+    check("last season's totals survive the rewrite", "prev_minutes=2000",
+          "'Last season: 2,000 minutes' appears", with_prev,
+          lambda s: "Last season: 2,000 minutes" in s, severity="medium")
+
+
 def test_a_to_z_grouping():
     group("A-Z index", "medium")
     def rec(code, web_name, full_name, slug, pos):
@@ -2918,6 +2967,7 @@ def test_prev_season_totals():
 
 
 SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
+          test_describe_zero_minutes,
           test_a_to_z_grouping, test_draft_validation, test_storage_kind,
           test_horizon_points, test_gw_report_predicted_for,
           test_gw_report_availability, test_gw_report_sections,

@@ -115,18 +115,29 @@
                             {% if show_prev %}<td class="num">{{ then }}</td>{% endif %}
                         </tr>
                         {%- endmacro -%}
-                        {{ row('Points', s.total_points | int, p.total_points | int if p.total_points is not none else '—') }}
-                        {{ row('Points per game', s.points_per_game, p.points_per_game if p.points_per_game is not none else '—') }}
-                        {{ row('Minutes', s.minutes | int, p.minutes | int if p.minutes is not none else '—') }}
-                        {{ row('Starts', s.starts | int if s.starts is defined else '—', p.starts | int if p.starts is not none else '—') }}
-                        {{ row('Goals', s.goals_scored | int if s.goals_scored is defined else 0, p.goals_scored | int if p.goals_scored is not none else '—') }}
-                        {{ row('Assists', s.assists | int if s.assists is defined else 0, p.assists | int if p.assists is not none else '—') }}
-                        {{ row('Clean sheets', s.clean_sheets | int if s.clean_sheets is defined else 0, p.clean_sheets | int if p.clean_sheets is not none else '—') }}
-                        {{ row('Bonus', s.bonus | int if s.bonus is defined else 0, p.bonus | int if p.bonus is not none else '—') }}
-                        {{ row('Expected goals', s.expected_goals if s.expected_goals is defined else '—', '%.2f'|format(p.expected_goals) if p.expected_goals is not none else '—') }}
-                        {{ row('Expected assists', s.expected_assists if s.expected_assists is defined else '—', '%.2f'|format(p.expected_assists) if p.expected_assists is not none else '—') }}
-                        {{ row('Yellow cards', s.yellow_cards | int if s.yellow_cards is defined else 0, p.yellow_cards | int if p.yellow_cards is not none else '—') }}
-                        {{ row('Red cards', s.red_cards | int if s.red_cards is defined else 0, p.red_cards | int if p.red_cards is not none else '—') }}
+                        {#- Prev-season values go through .get() rather than
+                            p.foo. `p` is a plain dict and a player with no
+                            previous season is an EMPTY one, where p.foo is
+                            Jinja's Undefined - and `Undefined is not none` is
+                            True, so an `is not none` guard lets it straight
+                            through into `| int` and raises. `show_prev` does
+                            not save it: a macro's arguments are evaluated
+                            before its body decides whether to print them. That
+                            is what took 75 player pages to a 500 the night the
+                            season's totals zeroed. .get() returns a real None,
+                            which the guards below then handle correctly. -#}
+                        {{ row('Points', s.total_points | int, p.get('total_points') | int if p.get('total_points') is not none else '—') }}
+                        {{ row('Points per game', s.points_per_game, p.get('points_per_game') if p.get('points_per_game') is not none else '—') }}
+                        {{ row('Minutes', s.minutes | int, p.get('minutes') | int if p.get('minutes') is not none else '—') }}
+                        {{ row('Starts', s.starts | int if s.starts is defined else '—', p.get('starts') | int if p.get('starts') is not none else '—') }}
+                        {{ row('Goals', s.goals_scored | int if s.goals_scored is defined else 0, p.get('goals_scored') | int if p.get('goals_scored') is not none else '—') }}
+                        {{ row('Assists', s.assists | int if s.assists is defined else 0, p.get('assists') | int if p.get('assists') is not none else '—') }}
+                        {{ row('Clean sheets', s.clean_sheets | int if s.clean_sheets is defined else 0, p.get('clean_sheets') | int if p.get('clean_sheets') is not none else '—') }}
+                        {{ row('Bonus', s.bonus | int if s.bonus is defined else 0, p.get('bonus') | int if p.get('bonus') is not none else '—') }}
+                        {{ row('Expected goals', s.expected_goals if s.expected_goals is defined else '—', '%.2f'|format(p.get('expected_goals')) if p.get('expected_goals') is not none else '—') }}
+                        {{ row('Expected assists', s.expected_assists if s.expected_assists is defined else '—', '%.2f'|format(p.get('expected_assists')) if p.get('expected_assists') is not none else '—') }}
+                        {{ row('Yellow cards', s.yellow_cards | int if s.yellow_cards is defined else 0, p.get('yellow_cards') | int if p.get('yellow_cards') is not none else '—') }}
+                        {{ row('Red cards', s.red_cards | int if s.red_cards is defined else 0, p.get('red_cards') | int if p.get('red_cards') is not none else '—') }}
                     </tbody>
                 </table>
             </div>

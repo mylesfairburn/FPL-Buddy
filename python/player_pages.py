@@ -210,8 +210,10 @@ def describe(rec, season_label, stats_season=None, season_started=True):
     numbers are attributed to `stats_season` instead.
 
     (Once a rollover has happened and the totals really are zeroed, the
-    minutes == 0 branch takes over and says the season hasn't started rather
-    than reporting a player as having scored nothing.)"""
+    minutes == 0 branch takes over rather than reporting a player as having
+    scored nothing. That branch reads `season_started` too: before the first
+    deadline it says the season has not started, after it that this particular
+    player has not featured.)"""
     s = rec["stats"]
     name = rec["full_name"]
     short = _short(rec)
@@ -275,16 +277,24 @@ def describe(rec, season_label, stats_season=None, season_started=True):
                 f"{_plural(prev_points, 'point')} from {_fmt(prev_minutes)} "
                 f"minutes last season{rate}.")
     else:
+        # A blank line has two quite different causes: the season has not begun,
+        # or it has and this player has not featured in it. This used to print
+        # the preseason sentence for both, which is wrong from the first
+        # deadline onwards and stays wrong for as long as a player sits on the
+        # bench - several hundred pages telling a reader the season had not
+        # started while the gameweek archive listed rounds already played.
+        if season_started:
+            opening = f"{name} has not played a minute of {season_label} yet"
+        else:
+            opening = (f"The season hasn't started yet, so {name} has no "
+                       f"{season_label} returns to show")
         prev = rec.get("prev_season") or {}
         if prev.get("minutes"):
             goals = prev.get("goals_scored") or 0
-            paras.append(
-                f"The season hasn't started yet, so {name} has no {season_label} "
-                f"returns to show. Last season: {_fmt(prev['minutes'])} minutes "
-                f"and {_fmt(goals)} {_plural(goals, 'goal')}.")
+            paras.append(f"{opening}. Last season: {_fmt(prev['minutes'])} "
+                         f"minutes and {_fmt(goals)} {_plural(goals, 'goal')}.")
         else:
-            paras.append(f"The season hasn't started yet, so there are no "
-                         f"{season_label} returns for {name} to show.")
+            paras.append(opening + ".")
 
     # --- underlying numbers ---
     # Skipped when both are effectively nil. Every goalkeeper and most defenders

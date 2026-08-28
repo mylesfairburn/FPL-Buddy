@@ -630,6 +630,43 @@ def test_player_pages():
               "no Python None in sentences", "checked",
               lambda _, b=body: not re.search(r"\bNone\b", b), severity="medium")
 
+    # EVERY page, not a sample. The five above are the first five records -
+    # established players with a full previous season behind them - and that is
+    # the shape this template has always handled. The shape it did not handle
+    # was a player with an EMPTY prev_season dict who has played minutes: from
+    # the first deadline of 2026-27, 75 of 574 pages answered 500, and a sample
+    # of five could not see it because none of the five was that shape.
+    #
+    # 574 in-process requests, a few seconds. Worth it for a fault that took the
+    # site's Search Console impressions from 416 a day to 7.
+    broken = []
+    for rec in index.values():
+        code = c.get(rec["path"]).status_code
+        if code != 200:
+            broken.append(f"{code} {rec['path']}")
+    check("every player page renders", f"GET all {len(index)} player pages",
+          "200 on all of them",
+          f"{len(broken)} failed" + (f": {', '.join(broken[:5])}" if broken else ""),
+          lambda _: not broken, severity="critical",
+          note="a 5xx on a crawled URL removes it from the index and makes "
+               "Google back off the whole host")
+
+    # The shape itself, stated directly, so the reason is legible even if the
+    # pool one day happens not to contain such a player.
+    victim = dict(next(iter(index.values())))
+    victim["prev_season"] = {}
+    victim["stats"] = dict(victim["stats"], minutes=90.0)
+    saved = main.player_page_index()[victim["code"]]
+    main.player_page_index()[victim["code"]] = victim
+    try:
+        expect("a player with no previous season but minutes played renders",
+               "prev_season={}, stats.minutes=90", 200,
+               c.get(victim["path"]).status_code, severity="critical",
+               note="Jinja's `Undefined is not none` is True, so an "
+                    "`is not none` guard does not catch a missing dict key")
+    finally:
+        main.player_page_index()[victim["code"]] = saved
+
     # Canonicalisation: the words are decoration, the number identifies.
     rec = sample[0]
     r = c.get(f"/player/wrong-words-{rec['code']}", follow_redirects=False)
