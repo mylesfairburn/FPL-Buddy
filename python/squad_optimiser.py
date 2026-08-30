@@ -323,6 +323,10 @@ def optimise_squad(players, gameweek, budget=DEFAULT_BUDGET,
         squad.append({
             "element_id": p["id"],
             "id": p["id"],
+            # The stable cross-season player code. `id` is FPL's element id and
+            # is reissued every August; the profile pages are keyed on the code,
+            # so without it a card on an AI pitch has no way to link to one.
+            "code": p.get("code"),
             "web_name": p.get("web_name"),
             "pos": p["pos"],
             "team": p.get("team"),

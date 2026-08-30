@@ -392,6 +392,55 @@ def bench_build_weight(chips, gameweek):
     return None
 
 
+def squad_changes(before, after, gameweek, chip=None):
+    """The transfer log a chip week leaves behind.
+
+    A wildcard and a free hit both replace the squad wholesale rather than
+    nudging it, so neither goes anywhere near evaluate_transfers - and
+    evaluate_transfers is the only thing that was producing `moves`. The tab
+    consequently reported "no transfer was worth making" on the two weeks the
+    bot changed the most players it will change all season, which reads as the
+    bot doing nothing on precisely the week it did everything.
+
+    Departures and arrivals are paired by position so each line reads as a
+    swap. That pairing is presentational and nothing else: a wildcard is one
+    decision about fifteen players, not eleven independent ones, and where a
+    club sold two midfielders and bought two others there is no fact of the
+    matter about which replaced which. Within a position the pairing is by
+    horizon value, best-for-best, which at least makes the gain on each line the
+    honest difference between the two ends of it.
+
+    Costs nothing in points either way - a chip week takes no hits - so `hit` is
+    0 and `free` is True on every line.
+    """
+    kept = {p["id"] for p in after}
+    out_by_pos, in_by_pos = {}, {}
+    for p in before:
+        if p["id"] not in kept:
+            out_by_pos.setdefault(p.get("pos"), []).append(p)
+    held = {p["id"] for p in before}
+    for p in after:
+        if p["id"] not in held:
+            in_by_pos.setdefault(p.get("pos"), []).append(p)
+
+    label = {"wildcard": "Wildcard", "freehit": "Free Hit"}.get(chip, "Chip")
+    moves = []
+    for pos, leaving in out_by_pos.items():
+        arriving = in_by_pos.get(pos, [])
+        key = lambda p: -horizon_value(p, gameweek)
+        for out, into in zip(sorted(leaving, key=key), sorted(arriving, key=key)):
+            gain = round(horizon_value(into, gameweek) - horizon_value(out, gameweek), 2)
+            moves.append({
+                "out": out, "in": into, "gain": gain, "hit": 0, "free": True,
+                "rationale": (f"{label}: {into['web_name']} projects "
+                              f"{gain:+.2f} over the next {HORIZON} gameweeks "
+                              f"against {out['web_name']}."),
+            })
+    # Biggest upgrade first: fifteen lines in squad order is a list, in gain
+    # order it is an argument.
+    return sorted(moves, key=lambda m: -m["gain"])
+
+
 def free_hit_squad(pool, gameweek, budget):
     """The best team money can buy for one gameweek, ignoring who's owned.
 
@@ -436,7 +485,12 @@ def _persist(gameweek, squad, bank, lineup, chip, moves, predicted):
             lp = order.get(p["id"], {})
             rows.append((team_id, p["id"], lp.get("position", 15),
                          int(bool(lp.get("is_captain"))), int(bool(lp.get("is_vice_captain"))),
-                         2 if lp.get("is_captain") else 1,
+                         # A record of what the armband was worth that week, so
+                         # the row reads correctly on its own. Nothing scores
+                         # from it - see manager_history._team_points_from_picks
+                         # for why the chip and the substitutions have to be
+                         # applied at read time instead.
+                         (3 if chip == "3xc" else 2) if lp.get("is_captain") else 1,
                          p.get("cost"), lp.get("predicted", p.get("predicted"))))
         conn.executemany(
             """INSERT INTO manager_team_picks
@@ -496,8 +550,10 @@ def run_gameweek(pool, gameweek, budget=DEFAULT_BUDGET, persist=True):
         if chip == "wildcard":
             rebuilt = build_squad(pool, gameweek, budget + bank,
                                   bench_weight=bench_build_weight(chips, gameweek))
+            before = squad
             squad = [{**p, "id": p["element_id"]} for p in rebuilt["squad"]]
             bank = round(budget + bank - rebuilt["squad_cost"], 1)
+            moves = squad_changes(before, squad, gameweek, chip="wildcard")
         elif chip == "freehit":
             # A Free Hit is a rental: the best team money can buy for one week,
             # reverting to the real squad afterwards. So the squad carried
@@ -514,6 +570,10 @@ def run_gameweek(pool, gameweek, budget=DEFAULT_BUDGET, persist=True):
         if rental is not None:
             lineup, fielded = rental, [{**p, "id": p["element_id"]}
                                        for p in rental["squad"]]
+            # Against the squad it still owns, not against last week's fielded
+            # side: a free hit is a one-week loan, and what it is worth reading
+            # is which of its own players the bot benched to take it.
+            moves = squad_changes(squad, fielded, gameweek, chip="freehit")
 
     predicted = (lineup or {}).get("predicted_points", 0.0)
     if chip == "bboost" and lineup:
@@ -580,15 +640,20 @@ def get_gameweek(gameweek, pool=None):
         picks = conn.execute(
             "SELECT * FROM manager_team_picks WHERE manager_team_id = ? ORDER BY position",
             (head["id"],)).fetchall()
+        # Transfers only. The same table also holds one 'chip' row per chip
+        # week, with no player at either end of it, and reading the lot meant
+        # every chip week ended with a blank line in the moves list where a
+        # swap should be. Which chip was played is already on the head row.
         log = conn.execute(
-            "SELECT * FROM ai_transfer_log WHERE gameweek = ? ORDER BY id", (int(gameweek),)
-        ).fetchall()
+            "SELECT * FROM ai_transfer_log WHERE gameweek = ? AND kind = 'transfer' "
+            "ORDER BY id", (int(gameweek),)).fetchall()
 
     squad = []
     for r in picks:
         p = pool_by_id.get(r["element_id"], {})
         squad.append({
-            "id": r["element_id"], "web_name": p.get("web_name") or f"#{r['element_id']}",
+            "id": r["element_id"], "code": p.get("code"),
+            "web_name": p.get("web_name") or f"#{r['element_id']}",
             "pos": p.get("pos"), "team_code": p.get("team_code"),
             "team_name": p.get("team_name"), "cost": r["cost"],
             "predicted": r["predicted_points"], "actual_points": r["actual_points"],
@@ -607,6 +672,11 @@ def get_gameweek(gameweek, pool=None):
         })
     transfers = [{
         "kind": r["kind"], "chip": r["chip"], "hit": r["cost_hit"],
+        # Derived, because the log stores what a move COST and the tab prints
+        # whether it was free - and with the key absent the front end read
+        # `undefined` as "not free" and captioned every stored transfer as a -4
+        # hit, including the ones taken with a free transfer in hand.
+        "free": not r["cost_hit"],
         "out": (pool_by_id.get(r["out_element_id"], {}) or {}).get("web_name"),
         "in": (pool_by_id.get(r["in_element_id"], {}) or {}).get("web_name"),
         "rationale": r["rationale"],

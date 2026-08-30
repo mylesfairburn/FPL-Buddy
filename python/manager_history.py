@@ -11,8 +11,10 @@ which can't be reconstructed later once ratings move on. That's what makes
 "what we predicted vs what happened" answerable.
 """
 
+import autosubs
 from db import AI_MANAGER_FPL_ID, connect, utcnow
-from gameweek import get_event_live, gameweek_is_finished
+from gameweek import (element_index, event_minutes, get_event_live,
+                      gameweek_is_finished)
 
 
 def save_manager_gameweek(fpl_id, gameweek, squad, gw_meta=None):
@@ -73,25 +75,49 @@ def _ai_hits(conn, gameweek):
     return int(row[0] or 0)
 
 
-def _team_points_from_picks(conn, manager_team_id, hits=0):
+def _team_points_from_picks(conn, manager_team_id, hits=0, chip=None,
+                            minutes=None, index=None):
     """A gameweek score summed from the picks that have just been backfilled.
 
-    Starting eleven only, each pick multiplied by its own multiplier - which is
-    what carries the captain's double, the triple captain, and a bench boost
-    (where the bench players are stored with a multiplier of 1 rather than 0).
+    Scored by the rules a real entry is scored by rather than by the stored
+    multipliers, because the stored multipliers cannot express either of the two
+    things that actually decide the total.
+
+    The first is the bench. This used to read `WHERE position <= 11` and lean on
+    a comment saying a Bench Boost worked because its bench was stored with a
+    multiplier of 1 - which it is, and which that WHERE clause then threw away
+    before the multiplier was ever looked at. Every Bench Boost the bot played
+    was scored as an ordinary week, the chip spent for nothing.
+
+    The second is automatic substitutions. A starter who did not play is
+    replaced by the first bench player who did, and the armband moves to the
+    vice-captain if the captain was among them - none of which is knowable from
+    a row written before the round was played. See autosubs.
 
     Returns None when no pick has an actual score yet, so an un-backfilled
     gameweek stays visibly pending rather than being written down as a zero.
     """
     rows = conn.execute(
-        """SELECT actual_points, multiplier FROM manager_team_picks
-           WHERE manager_team_id = ? AND position <= 11""",
+        "SELECT * FROM manager_team_picks WHERE manager_team_id = ?",
         (int(manager_team_id),)).fetchall()
-    scored = [r for r in rows if r["actual_points"] is not None]
+    scored = {r["element_id"]: int(r["actual_points"]) for r in rows
+              if r["actual_points"] is not None}
     if not scored:
         return None
-    return sum(int(r["actual_points"]) * int(r["multiplier"] or 1)
-               for r in scored) - int(hits or 0)
+
+    index = index if index is not None else {}
+    squad = [{
+        "id": r["element_id"],
+        "pos": index.get(r["element_id"], {}).get("pos"),
+        "team": index.get(r["element_id"], {}).get("team"),
+        "position": r["position"],
+        "starting": (r["position"] or 99) <= 11,
+        "is_captain": bool(r["is_captain"]),
+        "is_vice_captain": bool(r["is_vice_captain"]),
+    } for r in rows]
+
+    result = autosubs.apply(squad, minutes or {}, chip=chip)
+    return autosubs.score(squad, scored, result, chip=chip) - int(hits or 0)
 
 
 def _fpl_gameweek_points(fpl_id, gameweek):
@@ -172,10 +198,16 @@ def backfill_manager_actuals(gameweek, events=None):
     if not live:
         return {"updated": 0, "reason": "no live data available"}
 
+    # Both only needed by the picks fallback below, and both are one call each,
+    # so they are fetched once for the whole sweep rather than per manager.
+    minutes = event_minutes(gw)
+    index = element_index()
+
     updated = totals = 0
     with connect() as conn:
         teams = conn.execute(
-            "SELECT id, fpl_id FROM manager_team WHERE gameweek = ?", (gw,)).fetchall()
+            "SELECT id, fpl_id, active_chip FROM manager_team WHERE gameweek = ?",
+            (gw,)).fetchall()
         for t in teams:
             picks = conn.execute(
                 "SELECT id, element_id FROM manager_team_picks WHERE manager_team_id = ?",
@@ -198,7 +230,9 @@ def backfill_manager_actuals(gameweek, events=None):
                     points = None
             if points is None:
                 hits = _ai_hits(conn, gw) if t["fpl_id"] == AI_MANAGER_FPL_ID else 0
-                points = _team_points_from_picks(conn, t["id"], hits)
+                points = _team_points_from_picks(
+                    conn, t["id"], hits, chip=t["active_chip"],
+                    minutes=minutes, index=index)
 
             if points is not None:
                 conn.execute("UPDATE manager_team SET points = ? WHERE id = ?",

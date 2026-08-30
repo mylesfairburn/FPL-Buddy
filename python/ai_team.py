@@ -10,8 +10,10 @@ from it, every "AI predicted X, actually scored Y" comparison in the history
 would retroactively change - which would make the tab worthless as a record.
 """
 
+import autosubs
 from db import connect, utcnow
-from gameweek import get_event_live, gameweek_is_finished, started_teams
+from gameweek import (element_index, event_minutes, finished_teams,
+                      get_event_live, gameweek_is_finished, started_teams)
 from squad_optimiser import (DEFAULT_BUDGET, OptimisationError, optimise_squad,
                              verify)
 
@@ -64,6 +66,9 @@ def _enrich(picks, pool_by_id):
         out.append({
             "id": row["element_id"],
             "element_id": row["element_id"],
+            # The stable cross-season player code, which is what the profile
+            # pages are keyed on. Carried so the card can offer a link to one.
+            "code": p.get("code"),
             "web_name": p.get("web_name") or f"#{row['element_id']}",
             "pos": p.get("pos"),
             "team": p.get("team"),
@@ -122,13 +127,41 @@ def list_snapshots():
                FROM ai_team_snapshot ORDER BY gameweek DESC""")]
 
 
+def _scoring_squad(picks, index=None):
+    """The minimum a stored pick row needs to be run through the sub rules.
+
+    Position and club aren't in either picks table - they were never needed to
+    add up an eleven that always played - so they come from bootstrap-static
+    rather than from the rated pool. See gameweek.element_index for why: this
+    runs on the hourly watcher, which has no pool and shouldn't build one.
+    """
+    index = index if index is not None else element_index()
+    out = []
+    for row in picks:
+        meta = index.get(row["element_id"], {})
+        out.append({
+            "id": row["element_id"],
+            "pos": meta.get("pos"),
+            "team": meta.get("team"),
+            "position": row["position"],
+            "starting": row["position"] <= 11,
+            "is_captain": bool(row["is_captain"]),
+            "is_vice_captain": bool(row["is_vice_captain"]),
+        })
+    return out
+
+
 def backfill_actuals(gameweek, events=None):
     """Write real scores onto a frozen snapshot once the gameweek is settled.
 
     Gated on `data_checked`, not just `finished`: FPL's bonus points aren't
     final until that flag flips, so backfilling earlier records provisional
-    totals that later change. Captain's double counts, and only starters score,
-    matching how the predicted figure was built."""
+    totals that later change.
+
+    Scored the way a real entry is: automatic substitutions first, then the
+    captain's double on whoever ended up wearing the armband. The round is
+    settled by the time this runs, so every fixture is decided and no
+    substitution here is a guess."""
     gw = int(gameweek)
     if not gameweek_is_finished(gw, events):
         return {"updated": False, "reason": "gameweek not finished / stats not yet checked"}
@@ -136,6 +169,11 @@ def backfill_actuals(gameweek, events=None):
     live = get_event_live(gw)
     if not live:
         return {"updated": False, "reason": "no live data available"}
+
+    # Both HTTP calls, both made before the connection is opened rather than
+    # inside it - there is no reason to hold a write connection open across two
+    # network round trips.
+    minutes, index = event_minutes(gw), element_index()
 
     with connect() as conn:
         head = conn.execute(
@@ -146,14 +184,11 @@ def backfill_actuals(gameweek, events=None):
             "SELECT * FROM ai_team_snapshot_picks WHERE snapshot_id = ?",
             (head["id"],)).fetchall()
 
-        total, updates = 0, []
-        for row in picks:
-            pts = live.get(row["element_id"])
-            if pts is None:
-                continue
-            updates.append((pts, row["id"]))
-            if row["position"] <= 11:
-                total += pts * (2 if row["is_captain"] else 1)
+        squad = _scoring_squad(picks, index)
+        result = autosubs.apply(squad, minutes)
+        total = autosubs.score(squad, live, result)
+        updates = [(live[row["element_id"]], row["id"]) for row in picks
+                   if row["element_id"] in live]
 
         conn.executemany(
             "UPDATE ai_team_snapshot_picks SET actual_points = ? WHERE id = ?", updates)
@@ -161,7 +196,8 @@ def backfill_actuals(gameweek, events=None):
                      (total, head["id"]))
 
     return {"updated": True, "gameweek": gw, "actual_points": total,
-            "predicted_points": head["predicted_points"], "players_scored": len(updates)}
+            "predicted_points": head["predicted_points"],
+            "players_scored": len(updates), "auto_subs": len(result["subs"])}
 
 
 def live_overlay(squad, gameweek, events=None, chip=None):
@@ -187,12 +223,17 @@ def live_overlay(squad, gameweek, events=None, chip=None):
     keeps `actual_points: None`, which is what the front end reads as "show me
     his fixture, not a nought".
 
-    Scoring matches backfill_actuals: starters only, captain doubled. Chips
-    extend that where the caller passes one - the AI Manager plays them, the
-    Best XI does not. Auto-subs are not modelled, exactly as they are not in the
-    backfill, so a squad with a non-playing starter reads a little low until the
-    round settles. Guessing at substitutions from an unfinished match would
-    produce a number that moves for reasons nobody watching could explain.
+    Scoring matches backfill_actuals: automatic substitutions, then the
+    captain's double on whoever the armband ended up with. Chips extend that
+    where the caller passes one - the AI Manager plays them, the Best XI does
+    not.
+
+    Substitutions are only applied for clubs whose fixtures have FINISHED, which
+    is the difference between modelling them and guessing at them. Nought
+    minutes at half time is a substitute who may yet come on; nought minutes at
+    full time is a player who did not play. Waiting for the whistle means the
+    eleven on screen changes once, when the reason for the change is visible,
+    rather than shuffling itself all afternoon.
     """
     if gameweek_is_finished(gameweek, events):
         return None
@@ -203,25 +244,42 @@ def live_overlay(squad, gameweek, events=None, chip=None):
     if not live:
         return None
 
-    out, total = [], 0
+    result = autosubs.apply(squad, event_minutes(gameweek),
+                            decided_teams=finished_teams(gameweek), chip=chip)
+    total = 0
+    subbed_in = {autosubs.player_id(s["in"]) for s in result["subs"]}
+    subbed_out = {autosubs.player_id(s["out"]) for s in result["subs"]}
+
+    out = []
     for p in squad:
         pid = p.get("id", p.get("element_id"))
         team = p.get("team")
         kicked_off = team is None or int(team) in started
         pts = live.get(pid) if kicked_off else None
-        out.append({**p, "actual_points": pts if pts is not None
-                                          else p.get("actual_points")})
+        out.append({**p,
+                    "actual_points": pts if pts is not None
+                                     else p.get("actual_points"),
+                    # Flagged rather than reordered. Moving a substitute onto
+                    # the pitch would redraw the formation under the reader
+                    # mid-round; saying which two swapped leaves the squad they
+                    # picked recognisable and still explains the total.
+                    "auto_sub_in": pid in subbed_in,
+                    "auto_sub_out": pid in subbed_out,
+                    "wore_armband": pid == result["captain_id"]})
         if pts is None:
             continue
-        counts = p.get("starting") or chip == "bboost"
+        counts = chip == "bboost" or pid in {autosubs.player_id(s)
+                                             for s in result["starters"]}
         if not counts:
             continue
         multiplier = 1
-        if p.get("is_captain"):
+        if pid == result["captain_id"]:
             multiplier = 3 if chip == "3xc" else 2
         total += pts * multiplier
 
-    return {"squad": out, "points": total, "provisional": True}
+    return {"squad": out, "points": total, "provisional": True,
+            "auto_subs": [{"out": s["out"].get("web_name"),
+                           "in": s["in"].get("web_name")} for s in result["subs"]]}
 
 
 def generate_and_store(players, gameweek, budget=DEFAULT_BUDGET):

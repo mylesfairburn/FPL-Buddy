@@ -299,7 +299,18 @@ table th { color: var(--accent-dark); }
 .gw-nav { display: inline-flex; align-items: center; gap: 6px; }
 .gw-label { font-weight: 600; min-width: 52px; text-align: center; }
 
-.stat-chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+/* align-items, and it is load-bearing. The AI tabs give this row a min-height
+   to reserve its final size before the data lands (see the .stat-chips rule
+   further down), and a flex container's default `align-items: stretch` handed
+   that whole reserved height to the chips themselves - so three containers
+   holding "33" and "37.4" were drawn 108px tall on a phone, most of it empty.
+   Reserving space for a row and stretching the row's contents to fill it are
+   different things; this asks for the first. align-content does the same job
+   for the second line once the chips wrap. */
+.stat-chips {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px;
+    align-items: flex-start; align-content: flex-start;
+}
 .stat-chip {
     display: flex; flex-direction: column;
     padding: 6px 12px;
@@ -341,6 +352,23 @@ table th { color: var(--accent-dark); }
     border: 1px solid #fff;
 }
 .cap-badge.vice { background: #6c757d; }
+
+/* Automatic substitutions on the AI pitches. Top LEFT, because the armband
+   badge already owns the top right and a card can carry both - a captain who
+   didn't play is substituted and hands the armband on in the same breath. */
+.auto-sub {
+    position: absolute; top: -4px; left: 2px;
+    width: 17px; height: 17px;
+    border-radius: 50%; border: 1px solid #fff;
+    font-size: 0.5rem; line-height: 1; color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 4;
+}
+.auto-sub.in { background: #1d8a4e; }
+.auto-sub.out { background: #b02a37; }
+/* Only a cursor. The AI cards are read-only, so anything more emphatic would
+   promise an interaction the pop-up doesn't offer. */
+.player-tappable { cursor: pointer; }
 .injury-dot {
     position: absolute; bottom: 0; left: 4px;
     width: 11px; height: 11px;
@@ -1856,7 +1884,11 @@ a.navbar-brand.brand:focus-visible {
    that genuinely start empty: the stat chips above, the chip strip, and the two
    text panels beside the AI Manager's pitch. Left unreserved they each grew
    from nothing after their fetch and pushed the track-record tables down. */
-.stat-chips { min-height: 58px; }
+/* Scoped to the two AI rows, not to every .stat-chips on the site. The
+   reservation exists because those two are drawn from a fetch into an
+   otherwise empty block - which is not true of My Team, where it was only
+   ever reserving blank space under a row that had already rendered. */
+#mgrChips, #aiChips { min-height: 58px; }
 .chips-bar { min-height: 92px; }
 #mgrMoves { min-height: 180px; }
 #mgrChipPlan { min-height: 96px; }
@@ -1926,7 +1958,7 @@ a.navbar-brand.brand:focus-visible {
     /* The chips wrap to more rows on a narrow screen, and the two AI Manager
        text panels sit under the pitch rather than beside it, so both settle
        taller here than on a desktop. */
-    .stat-chips { min-height: 108px; }
+    #mgrChips, #aiChips { min-height: 108px; }
     .chips-bar { min-height: 80px; }
     #mgrChipPlan { min-height: 80px; }
     /* The one block here whose height genuinely varies with its content: the

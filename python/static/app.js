@@ -275,6 +275,11 @@ let liveMeta = null;        // { provisional, in_progress }
 // played \u2014 the old behaviour, and the safe one: it shows a real score
 // where the alternative would blank the whole pitch on a fixtures outage.
 let liveStarted = null;
+// { [team_id]: [{opponent, was_home, difficulty, started, finished}] } for the
+// gameweek in play. The projection horizon starts at the round whose deadline
+// hasn't passed, so a round under way is in nobody's next_gameweeks and this is
+// the only place the pitch can learn who anyone is playing. See fixtureForEvent.
+let liveFixtures = null;
 let livePollTimer = null;
 const LIVE_POLL_MS = 60000; // matches finish in minutes, not seconds
 
@@ -310,10 +315,14 @@ function loadLiveScores(gameweek, opts) {
         .then(r => r.json())
         .then(d => {
             if (selectedEvent !== gameweek) return null;   // user moved on mid-flight
-            if (!d.available) { liveScores = null; liveMeta = null; liveStarted = null; return null; }
+            if (!d.available) {
+                liveScores = null; liveMeta = null; liveStarted = null; liveFixtures = null;
+                return null;
+            }
             liveScores = d.points || {};
             liveMeta = { provisional: d.provisional, in_progress: d.in_progress };
             liveStarted = Array.isArray(d.started_teams) ? new Set(d.started_teams) : null;
+            liveFixtures = d.fixtures || null;
             renderPitch();
             renderLiveBanner();
             // Only poll while matches are actually being played.
@@ -348,17 +357,26 @@ function renderLiveBanner() {
         banner.classList.add('d-none');
         return;
     }
+    // Who is scoring this week. Ordinarily the starting eleven; under a Bench
+    // Boost all fifteen, which is the entire point of the chip and which this
+    // used to ignore - so the one week the bench counted was the one week the
+    // banner left it out, and the headline read several players short of the
+    // score in the official app.
+    const chip = (teamView && teamView.gw && teamView.gw.active_chip) || null;
+    const counting = (workingSquad || []).filter(p => p.starting || chip === 'bboost');
+    const capMult = captainMultiplier();
     // Only players whose match has begun, so the banner and the pitch add up
     // to the same thing \u2014 a starter kicking off tomorrow contributes his
     // eventual score to neither.
-    const started = (workingSquad || []).filter(p => p.starting && hasKickedOff(p));
+    const started = counting.filter(hasKickedOff);
     const total = started
-        .reduce((sum, p) => sum + (liveScores[p.id] || 0) * (p.id === captainId ? 2 : 1), 0);
-    const waiting = (workingSquad || []).filter(p => p.starting).length - started.length;
+        .reduce((sum, p) => sum + (liveScores[p.id] || 0) * (p.id === captainId ? capMult : 1), 0);
+    const waiting = counting.length - started.length;
+    const label = chip === 'bboost' ? 'Your fifteen have' : 'Starting XI has';
     banner.innerHTML =
         `<strong>GW${selectedEvent}</strong> &mdash; your team is locked. `
-        + `Starting XI has scored <strong>${total}</strong> pts`
-        + (waiting > 0 ? ` from ${started.length} of 11 \u2014 ${waiting} still to play.` : '')
+        + `${label} scored <strong>${total}</strong> pts`
+        + (waiting > 0 ? ` from ${started.length} of ${counting.length} \u2014 ${waiting} still to play.` : '')
         + (liveMeta && liveMeta.provisional
             ? ' <span class="live-prov">(provisional &mdash; bonus points aren\u2019t final yet)</span>'
             : '')
@@ -602,10 +620,9 @@ function transferHitPoints() {
 // already spent. Infinity in a preseason/draft team, where transfers are
 // unlimited and nothing can be a hit.
 //
-// Extracted because three things need the same answer and two of them used to
-// work it out for themselves: the chip below, the -4 accounting in
-// transferHitPoints, and - the one that was wrong - the free/hit tag on each
-// recommended transfer.
+// Extracted because two things need the same answer: the chip below and the -4
+// accounting in transferHitPoints. It once fed a free/hit tag on each
+// recommended transfer as well; see renderTransfers for why that tag is gone.
 function freeTransfersLeft() {
     if (teamView && teamView.built) return Infinity;
     const free = (teamView && teamView.gw && typeof teamView.gw.free_transfers_est === 'number')
@@ -697,11 +714,18 @@ function ratingChip(rating) {
 }
 
 // ---- Pitch ----
-function fixtureTile(g) {
+function fixtureTile(g, opts) {
+    opts = opts || {};
     const color = g.difficulty != null ? colorFor(g.difficulty, 1, 5) : '#eee';
     const ha = haTag(g);
-    const pts = g.points != null ? Number(g.points).toFixed(1) : '-';
-    return `<span class="mini-gw" style="background:${color}" title="GW${g.event}">`
+    // The number under the opponent is a PROJECTION, and a round that has
+    // kicked off no longer has one - it has a result, which the card shows
+    // instead the moment there is one. So a live tile keeps the opponent and
+    // holds the second line open with a non-breaking space rather than
+    // printing a dash, which would read as "nothing expected of him".
+    const pts = opts.live ? '&nbsp;'
+              : (g.points != null ? Number(g.points).toFixed(1) : '-');
+    return `<span class="mini-gw" style="background:${color}" title="${opts.title || ('GW' + g.event)}">`
         // No space before the bracket: these tiles are ~21px wide while
         // "ARS (H)" needs ~24px, so the separator is the one character
         // that can go without shrinking the label below legibility.
@@ -721,9 +745,27 @@ function miniFixtures(p) {
 // A blank gameweek gets a neutral tile rather than an empty string: an element
 // with no content has no line box, so the card would lose ~18px of height and
 // sit out of line with the ten around it.
+// A gameweek under way is never in `next_gameweeks`. Every projection on the
+// site runs from the round whose deadline has NOT passed, so the moment this
+// one kicked off it left that list - and this function, which only ever looked
+// there, had nothing to find for the one round the pitch was showing. Every
+// player still waiting to play got the no-fixture tile: a dash, on a Saturday
+// morning, for eleven players who all had a match that afternoon.
+//
+// So the round in play is read from `liveFixtures`, which /api/live serves
+// alongside the scores and which the pitch is already polling. `next_gameweeks`
+// remains the source for every other gameweek, where it is the only one.
 function fixtureForEvent(p, event) {
-    const g = (p.next_gameweeks || []).find(x => x.event === event);
-    if (g) return fixtureTile(g);
+    const planned = (p.next_gameweeks || []).find(x => x.event === event);
+    if (planned) return fixtureTile(planned);
+    // A double gameweek gives a club two of these. The one still to be played
+    // is the one worth naming; if both are done the player has a score and this
+    // branch was never reached.
+    const live = liveFixtures && p.team != null
+        ? (liveFixtures[p.team] || []).find(f => !f.finished) : null;
+    if (live) return fixtureTile(live, { live: true, title: `GW${event}` });
+    // A blank gameweek gets the neutral tile it always did - by here it really
+    // is a player with no match, not one we simply couldn't look up.
     return `<span class="mini-gw" style="background:#eee" title="No fixture this gameweek">`
         + `<b>\u2013</b>&nbsp;</span>`;
 }
@@ -737,6 +779,12 @@ function fixtureForEvent(p, event) {
 // from the first match is worth more than a fixture tile for the second.
 function hasKickedOff(p) {
     return !liveStarted || p.team == null || liveStarted.has(p.team);
+}
+// What the armband is worth this week. Two, unless a Triple Captain is on -
+// in which case the card and the banner both have to say three, or they
+// disagree with each other and with the official app.
+function captainMultiplier() {
+    return (teamView && teamView.gw && teamView.gw.active_chip === '3xc') ? 3 : 2;
 }
 function playerCard(p, opts) {
     opts = opts || {};
@@ -784,7 +832,7 @@ function playerCard(p, opts) {
     const showLive = liveScores && liveScores[p.id] != null && hasKickedOff(p);
     const gws = showLive
         ? `<span class="live-pts${p.id === captainId ? ' live-cap' : ''}">`
-          + `${liveScores[p.id] * (p.id === captainId ? 2 : 1)}</span>`
+          + `${liveScores[p.id] * (p.id === captainId ? captainMultiplier() : 1)}</span>`
         : (locked ? fixtureForEvent(p, selectedEvent) : miniFixtures(p));
     const live = `<div class="player-gws">${gws}</div>`;
     return `<div class="${cls}" data-id="${p.id}" style="position:relative">
@@ -831,7 +879,11 @@ function onPlayerClick(id) {
     // can't actually make in the real game.
     if (gameweekIsLocked()) {
         const p = workingSquad.find(x => x.id === id);
-        if (p) openPlayerModal(p, false);
+        // Read-only, not merely unowned. `false` here meant "a player from the
+        // search table", which is the branch that offers "Transfer in" - so
+        // tapping one of your own locked players offered to buy him, into a
+        // gameweek whose deadline has already gone.
+        if (p) openPlayerModal(p, false, { readOnly: true });
         return;
     }
     if (subSource != null) {
@@ -931,7 +983,12 @@ function closeModal() { document.getElementById('playerModal').classList.add('d-
 document.getElementById('pmClose').addEventListener('click', closeModal);
 document.getElementById('pmBackdrop').addEventListener('click', closeModal);
 
-function openPlayerModal(p, owned) {
+// `opts.readOnly` opens the pop-up with no action buttons at all, for a player
+// on somebody else's pitch - the AI squads. Without it a card on the AI Manager
+// tab offered "Transfer in", which would have quietly edited YOUR team from a
+// page about the bot's.
+function openPlayerModal(p, owned, opts) {
+    opts = opts || {};
     document.getElementById('pmKit').innerHTML = shirtImg(p.team_code, p.pos, 'shirt');
     document.getElementById('pmName').textContent = p.web_name;
     document.getElementById('pmSub').textContent =
@@ -940,7 +997,9 @@ function openPlayerModal(p, owned) {
         + `${p.rating != null ? ' \u00b7 rating ' + Math.round(p.rating) : ''}`;
 
     const actions = document.getElementById('pmActions');
-    if (owned) {
+    if (opts.readOnly) {
+        actions.innerHTML = '';
+    } else if (owned) {
         const capBtns = p.starting
             ? `<button class="btn btn-sm btn-primary pm-btn" id="pmCap">Captain</button>
                <button class="btn btn-sm btn-outline-primary pm-btn" id="pmVice">Vice</button>` : '';
@@ -1499,25 +1558,24 @@ function closeKofiModal() {
 }());
 
 // ---- Recommended transfers ----
-// The free/-4 tag is computed HERE rather than read off the recommendation.
+// No free/-4 tag on these, deliberately.
 //
-// computeTransfers used to stamp `free` onto each rec when the list was built,
-// and nothing recomputed it afterwards. So the tags described the squad as it
-// stood at build time: make one transfer of your own anywhere on the pitch and
-// the list still offered the first three as free, having quietly spent the
-// allowance they were counting on. The recommendation that said "free" then
-// cost four points.
+// It used to carry one, decided by position in the list: the first few were
+// captioned "free" and the rest "-4 hit". That is not a property of a
+// recommendation, it is a property of the ORDER YOU HAPPEN TO MAKE THEM IN -
+// these are three independent upgrades, not a sequence, and the third one is
+// free if it is the only one you make. Worse, the list is not a plan the reader
+// has agreed to: captioning the bottom entry "-4 hit" told someone about to
+// make one transfer that it would cost them four points, which was simply
+// untrue.
 //
-// Position in the list is what decides it - the first `remaining` are free and
-// the rest are hits - so the tags renumber themselves every time the list is
-// re-rendered, which now happens whenever a transfer is made.
+// What the allowance actually is stays on screen: the header carries the free
+// transfer count, and the pitch charges a hit as soon as spending one would
+// really incur it.
 function renderTransfers(recs) {
     const el = document.getElementById('transferRecs');
     if (!recs.length) { el.innerHTML = '<p class="text-muted small">No upgrades found within budget.</p>'; return; }
-    const remaining = freeTransfersLeft();
     el.innerHTML = recs.map((r, i) => {
-        const isFree = i < remaining;
-        const tag = isFree ? '<span class="ft-tag free">free</span>' : '<span class="ft-tag hit">-4 hit</span>';
         const cost = r.cost_change === 0 ? '\u00b10.0' : (r.cost_change > 0 ? '+' : '') + r.cost_change.toFixed(1);
         return `<div class="transfer-rec">
             <div class="transfer-line">
@@ -1526,7 +1584,7 @@ function renderTransfers(recs) {
                 <span class="tr-in">${shirtImg(r.in.team_code, r.in.pos, 'shirt-sm')}${r.in.web_name}</span>
             </div>
             <div class="transfer-meta">
-                ${tag}<span>rating +${r.rating_gain}</span><span>\u00a3${cost}m</span>
+                <span>rating +${r.rating_gain}</span><span>\u00a3${cost}m</span>
             </div>
             <button class="btn btn-sm btn-primary make-tr w-100 mt-1" data-i="${i}">Make transfer</button>
         </div>`;
@@ -2481,6 +2539,12 @@ function aiPlayerCard(p, onBench, gameweek, opts) {
     const badge = p.is_captain ? '<span class="cap-badge">C</span>'
                 : (p.is_vice_captain ? '<span class="cap-badge vice">V</span>' : '');
     const posLabel = onBench ? `<div class="bench-pos">${p.pos || ''}</div>` : '';
+    // Who came on for whom. Flagged rather than reordered - see live_overlay:
+    // moving the substitute up onto the pitch would redraw the formation under
+    // the reader mid-round, where a mark on both cards explains the total and
+    // leaves the squad the bot picked still recognisable.
+    const sub = p.auto_sub_in ? '<span class="auto-sub in" title="Came on as an automatic substitute">&#9650;</span>'
+              : (p.auto_sub_out ? '<span class="auto-sub out" title="Didn’t play — substituted automatically">&#9660;</span>' : '');
     // Availability only means something for a squad that hasn't played yet, and
     // it's the more interesting number here than on My Team: it shows whether
     // the AI knowingly picked someone doubtful. Stored snapshots don't carry a
@@ -2488,8 +2552,13 @@ function aiPlayerCard(p, onBench, gameweek, opts) {
     // fitness would say nothing true about a squad that already played.
     const band = (p.status !== undefined && p.actual_points == null)
         ? availabilityBandHtml(p) : '';
-    return `<div class="player" style="position:relative">
-        ${posLabel}${badge}
+    // Tappable, for the same reason the My Team pitch is: these are the same
+    // players, and "who is that and what sort of form is he in" is the first
+    // question the bot's squad provokes. The skeleton placeholders carry a
+    // negative id and are deliberately left inert.
+    const clickable = p.id > 0 ? ` data-ai-id="${p.id}"` : '';
+    return `<div class="player${clickable ? ' player-tappable' : ''}"${clickable} style="position:relative">
+        ${posLabel}${badge}${sub}
         <div class="player-kit">${shirtImg(p.team_code, p.pos, 'kit')}</div>
         ${band}
         <div class="player-name-pill">${p.web_name}</div>
@@ -2553,6 +2622,19 @@ function renderAiPitchInto(pitchId, benchId, squad, gameweek, opts) {
     document.getElementById(benchId).innerHTML =
         `<div class="bench-label">Bench</div>
          <div class="bench-row">${bench.map(p => aiPlayerCard(p, true, gameweek, opts)).join('')}</div>`;
+
+    // Read-only: the modal opens with `owned` false and no squad to transfer
+    // into, so it shows fixtures, form and the profile link and offers no
+    // buttons. That is exactly the right pop-up here - the AI's team isn't
+    // yours to edit.
+    const byId = {};
+    squad.forEach(p => { byId[p.id] = p; });
+    [pitchId, benchId].forEach(id =>
+        document.getElementById(id).querySelectorAll('.player[data-ai-id]').forEach(el =>
+            el.addEventListener('click', () => {
+                const p = byId[+el.dataset.aiId];
+                if (p) openPlayerModal(p, false, { readOnly: true });
+            })));
 }
 
 function renderAiSquadTable(squad) {
@@ -2736,15 +2818,60 @@ function ensureAi() {
 // =====================================================================
 let mgrGw = null, mgrBounds = { min: 1, max: null }, mgrLoaded = false, mgrSeq = 0;
 
+// Is this gameweek's decision still provisional? A stored week has been
+// committed by the deadline watcher and cannot change; a simulated one is
+// re-solved on every data refresh, so everything on the page - the chip, the
+// transfers, the eleven - is what the bot WOULD do if the deadline were now.
+function mgrIsPreview(d) {
+    return d && d.stored === false;
+}
+
+function renderMgrPreview(d) {
+    const el = document.getElementById('mgrPreview');
+    if (!el) return;
+    if (!mgrIsPreview(d)) { el.classList.add('d-none'); return; }
+    // The deadline in the reader's own timezone. Absent when the season clock
+    // couldn't be reached, in which case the sentence still works without it.
+    let when = '';
+    if (d.deadline) {
+        const dt = new Date(d.deadline);
+        if (!isNaN(dt)) {
+            when = ' the GW' + d.gameweek + ' deadline (' + dt.toLocaleString([], {
+                weekday: 'short', day: 'numeric', month: 'short',
+                hour: '2-digit', minute: '2-digit' }) + ')';
+        }
+    }
+    el.innerHTML = `<strong>GW${d.gameweek} preview.</strong> Nothing here is committed yet. `
+        + `The bot re-runs this every time the projections are rebuilt, and the squad `
+        + `it actually plays is the one it commits shortly before${when || ' the deadline'} `
+        + `&mdash; so the chip and the transfers below can still change.`;
+    el.classList.remove('d-none');
+}
+
+const CHIP_MOVE_LABEL = { wildcard: 'Wildcard rebuild', freehit: 'Free Hit side' };
+
 function renderMgrMoves(d) {
     const el = document.getElementById('mgrMoves');
     const moves = d.transfers || [];
+    // A chip week is not a quiet week. A wildcard replaces the squad outright
+    // and a free hit fields a rented one, so neither goes through the transfer
+    // evaluator - which is where `transfers` used to come from, and why the
+    // busiest weeks of the bot's season reported that it had done nothing.
+    const chip = d.active_chip || d.chip;
+    const heading = CHIP_MOVE_LABEL[chip];
     if (!moves.length) {
-        el.innerHTML = '<p class="text-muted small mb-0">No transfer was worth making &mdash; '
-            + 'nothing cleared the projected-gain threshold, so the free transfer is banked.</p>';
+        el.innerHTML = heading
+            ? `<p class="text-muted small mb-0">${heading}: the squad came back unchanged &mdash; `
+              + 'nothing in the pool beat what it already owns.</p>'
+            : '<p class="text-muted small mb-0">No transfer was worth making &mdash; '
+              + 'nothing cleared the projected-gain threshold, so the free transfer is banked.</p>';
         return;
     }
-    el.innerHTML = moves.map(t => `
+    const intro = heading
+        ? `<p class="text-muted small mb-2">${heading} &mdash; ${moves.length} change`
+          + `${moves.length === 1 ? '' : 's'}, no hit taken.</p>`
+        : '';
+    el.innerHTML = intro + moves.map(t => `
         <div class="transfer-rec">
             <div class="transfer-line">
                 <span class="tr-out">${t.out}</span>
@@ -2754,7 +2881,8 @@ function renderMgrMoves(d) {
             <div class="transfer-meta">
                 ${t.free ? '<span class="ft-tag free">free</span>'
                          : '<span class="ft-tag hit">-4 hit</span>'}
-                <span>+${t.gain} projected</span>
+                ${t.gain != null
+                    ? `<span>${t.gain > 0 ? '+' : ''}${t.gain} projected</span>` : ''}
             </div>
             <div class="mgr-why">${t.rationale || ''}</div>
         </div>`).join('');
@@ -2825,6 +2953,7 @@ function loadMgr(gw) {
             if (seq !== mgrSeq) return;
             if (!d.available) {
                 content.classList.add('d-none');
+                document.getElementById('mgrPreview').classList.add('d-none');
                 stateEl.textContent = d.detail || 'No AI Manager data.';
                 stateEl.classList.remove('d-none');
                 if (d.gameweek) { mgrGw = d.gameweek; updateMgrNav(); }
@@ -2857,6 +2986,7 @@ function loadMgr(gw) {
             renderAiPitchInto('mgrPitch', 'mgrBench', d.squad || [], d.gameweek,
                               { upcoming: aiGwIsUpcoming(d.gameweek, mgrBounds, d),
                                 chip: d.active_chip || d.chip });
+            renderMgrPreview(d);
             renderMgrMoves(d);
             renderMgrChipPlan(d);
         })

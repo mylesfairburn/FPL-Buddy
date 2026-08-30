@@ -784,11 +784,24 @@ def get_team_view(team_id, event, position_dfs, next_event=None,
     recommended = {"captain": ranked[0]["id"] if ranked else None,
                    "vice": ranked[1]["id"] if len(ranked) > 1 else None}
 
-    # Predicted GW points = sum of starters' predictions, current captain doubled.
+    # Predicted GW points, under the chip that is actually active.
+    #
+    # This summed the starting eleven and doubled the captain, full stop, which
+    # is right for an ordinary week and wrong for the two chips that change the
+    # arithmetic. A Bench Boost scores all fifteen, so the headline projection
+    # for the one week the bench matters was the only week it left the bench
+    # out; a Triple Captain trebles rather than doubles. `multiplier` from FPL
+    # already carries both - it is 1 for a boosted bench player and 3 for a
+    # tripled captain - so the chip is read off the picks rather than
+    # special-cased here, which is also what makes it right for any chip FPL
+    # adds later.
+    active_chip = None if carried_from else picks_data.get("active_chip")
     predicted_gw = 0.0
     for p in squad:
-        if p["starting"]:
-            predicted_gw += p["predicted"] * (2 if p["is_captain"] else 1)
+        multiplier = p["multiplier"] if active_chip else (2 if p["is_captain"] else 1)
+        if not p["starting"] and active_chip != "bboost":
+            continue
+        predicted_gw += p["predicted"] * (multiplier or 1)
 
     return {
         "available": True,
@@ -812,7 +825,7 @@ def get_team_view(team_id, event, position_dfs, next_event=None,
             "transfers_made": 0 if carried_from else eh.get("event_transfers"),
             "transfers_cost": 0 if carried_from else eh.get("event_transfers_cost"),
             "free_transfers_est": free_transfers,
-            "active_chip": None if carried_from else picks_data.get("active_chip"),
+            "active_chip": active_chip,
             "chips_used": chips_used,
             "chips_available": chips_available,
             # What each held chip is worth to this squad this week, measured

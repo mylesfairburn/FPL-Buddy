@@ -948,6 +948,30 @@ async def warmup_gate(request: Request, call_next):
         status_code=503, headers=headers)
 
 
+def _attach_paths(players):
+    """Stamp each player dict with its canonical profile URL, in place.
+
+    /api/all_players has done this for a while and the player pop-up reads it to
+    decide whether to offer a "Full profile" link at all - so the one place the
+    link was never offered was a player on your own pitch, which is the pitch
+    people are actually looking at. Same lookup, same slug, so the link matches
+    the canonical URL instead of 301-ing on every click.
+
+    Never fatal: a missing index costs the links, not the payload.
+    """
+    if not players:
+        return players
+    try:
+        paths = {code: rec["path"] for code, rec in player_page_index().items()}
+    except Exception as e:
+        print(f"couldn't attach player page paths: {e}")
+        return players
+    for p in players:
+        if isinstance(p, dict):
+            p["path"] = paths.get(p.get("code"))
+    return players
+
+
 def _player_pool():
     """Flat rated player pool from the in-memory state, for DB read-joins."""
     if state["position_dfs"] is None:
@@ -1892,6 +1916,9 @@ def team(team_id: int, event: int = None):
     view = get_team_view(team_id, event, state["position_dfs"],
                          next_event=next_event)
     view["next_event"] = next_event
+    _attach_paths(view.get("squad"))
+    for rec in view.get("transfer_recs") or []:
+        _attach_paths([rec.get("out"), rec.get("in")])
     # Remember ids that resolve to a real manager, so the snapshot job has a
     # finite list to walk instead of all ~11M FPL entries. Never fatal.
     if view.get("header"):
@@ -1929,12 +1956,7 @@ def all_players(response: Response):
     # browser: the slug is an accent-folded version of the full name, and the
     # server is the only place that knows the whole name. Building it twice in
     # two languages is how you end up with links that 301 on every click.
-    try:
-        paths = {code: rec["path"] for code, rec in player_page_index().items()}
-        for p in data["players"]:
-            p["path"] = paths.get(p.get("code"))
-    except Exception as e:
-        print(f"couldn't attach player page paths: {e}")
+    _attach_paths(data["players"])
     return data
 
 
@@ -1995,9 +2017,25 @@ def live_scores(gameweek: int, response: Response = None):
     except Exception as e:
         print(f"couldn't read started fixtures for GW{gameweek}: {e}")
         started = None
+    # The gameweek's own fixture list, keyed by club.
+    #
+    # Every projection on the site runs from the round whose deadline has NOT
+    # passed, so the moment a gameweek kicks off it leaves each player's
+    # `next_gameweeks` - and the pitch showing that round lost the only thing it
+    # could still say about a player yet to play. Cards fell back to a blank
+    # tile with a dash in it, for the whole of the round anyone is watching.
+    #
+    # Served from here rather than from the pool because by kickoff it is a
+    # fact, not a forecast, and this is the call the pitch is already polling.
+    try:
+        fixtures = gw_clock.event_fixtures(gameweek, get_team_short_map())
+    except Exception as e:
+        print(f"couldn't read the GW{gameweek} fixture list: {e}")
+        fixtures = {}
     return {"available": True, "gameweek": gameweek, "points": points,
             "provisional": not settled, "in_progress": in_progress,
-            "started_teams": sorted(started) if started is not None else None}
+            "started_teams": sorted(started) if started is not None else None,
+            "fixtures": fixtures}
 
 
 # =========================================================================
@@ -2097,7 +2135,8 @@ def _with_live_points(stored):
     if live is None:
         return stored
 
-    out = {**stored, "squad": live["squad"], "provisional": True}
+    out = {**stored, "squad": live["squad"], "provisional": True,
+           "auto_subs": live.get("auto_subs") or []}
     # Two different keys for the same idea, because the two tabs were built at
     # different times: the Best XI head calls it actual_points, the AI Manager
     # calls it points. Both are filled rather than renaming one, which would
@@ -2136,7 +2175,9 @@ def ai_manager_gameweek(gameweek: int = None):
     except Exception as e:
         db_error = str(e)
     if stored:
-        return {"available": True, "stored": True, **_with_live_points(stored)}
+        payload = _with_live_points(stored)
+        _attach_paths(payload.get("squad"))
+        return {"available": True, "stored": True, **payload}
 
     started = gw_clock.started_gameweeks()
     if started and target <= started[-1]:
@@ -2152,7 +2193,19 @@ def ai_manager_gameweek(gameweek: int = None):
     except Exception as e:
         return {"available": False, "gameweek": target,
                 "detail": f"Couldn't simulate GW{target}: {e}"}
-    return {"available": True, "stored": False, "db_error": db_error, **preview}
+    _attach_paths(preview.get("squad"))
+    # When the decision actually gets taken. A simulated gameweek is the bot
+    # thinking aloud against today's prices and team news - it is re-solved on
+    # every data refresh and only the deadline watcher commits one - so the tab
+    # has to be able to say so, and say when. See the note on _persist: a page
+    # view must never freeze a half-formed squad.
+    deadline = None
+    try:
+        deadline = gw_clock.deadline_for(target)
+    except Exception as e:
+        print(f"couldn't read the GW{target} deadline: {e}")
+    return {"available": True, "stored": False, "db_error": db_error,
+            "deadline": deadline, **preview}
 
 
 @app.get("/api/ai/manager/history")
@@ -2190,7 +2243,9 @@ def ai_best_xi(gameweek: int = None, budget: float = DEFAULT_BUDGET):
     except Exception as e:
         db_error = str(e)
     if stored:
-        return {"available": True, **_with_live_points(stored)}
+        payload = _with_live_points(stored)
+        _attach_paths(payload.get("squad"))
+        return {"available": True, **payload}
 
     started = gw_clock.started_gameweeks()
     if started and target <= started[-1]:
@@ -2207,6 +2262,7 @@ def ai_best_xi(gameweek: int = None, budget: float = DEFAULT_BUDGET):
         return {"available": False, "gameweek": target, "detail": str(e)}
     # Live preview: deliberately not persisted. The deadline watcher owns
     # writing snapshots, so a page view can't freeze a half-formed squad.
+    _attach_paths(result.get("squad"))
     return {"available": True, "stored": False, "actual_points": None,
             "db_error": db_error, **result}
 

@@ -2845,30 +2845,86 @@ def test_manager_points_backfill():
         def fetchone(self):
             return self.rows[0] if self.rows else None
 
-    # Eleven starters on 3 points, the captain doubled: 12 units x 3 = 36.
-    picks = [{"actual_points": 3, "multiplier": 2 if i == 0 else 1} for i in range(11)]
+    # A legal fifteen: 1-4-4-2 starting, GK/DEF/MID/FWD on the bench. The
+    # stored multiplier is deliberately left at 1 throughout - the total is
+    # derived from the chip and the substitution rules now, not read off a
+    # column written before the round was played. See _team_points_from_picks.
+    LAYOUT = (["GK"] + ["DEF"] * 4 + ["MID"] * 4 + ["FWD"] * 2
+              + ["GK", "DEF", "MID", "FWD"])
+
+    def squad(points=3, captain=1, bench_points=None, blanks=()):
+        """Fifteen picks, and the position/club index that goes with them."""
+        rows, index = [], {}
+        for i, pos in enumerate(LAYOUT, start=1):
+            scored = 0 if i in blanks else (
+                points if i <= 11 else
+                (points if bench_points is None else bench_points))
+            rows.append({"element_id": i, "position": i,
+                         "actual_points": scored, "multiplier": 1,
+                         "is_captain": i == captain,
+                         "is_vice_captain": i == captain + 1})
+            # Every player at his own club, so nothing collides on the pitch.
+            index[i] = {"pos": pos, "team": i}
+        # Everyone played 90 unless named in `blanks`.
+        minutes = {i: (0 if i in blanks else 90) for i in range(1, 16)}
+        return rows, index, minutes
+
+    rows, index, minutes = squad()
     expect("a captain's double is counted once, not twice", "11 starters, 1 captain",
-           36, mh._team_points_from_picks(FakeConn(picks), 1))
+           36, mh._team_points_from_picks(FakeConn(rows), 1, minutes=minutes,
+                                          index=index))
 
     expect("a points hit comes off the total", "36 scored, one -4 hit",
-           32, mh._team_points_from_picks(FakeConn(picks), 1, hits=4))
+           32, mh._team_points_from_picks(FakeConn(rows), 1, hits=4,
+                                          minutes=minutes, index=index))
 
+    none_yet = [{"element_id": 1, "position": 1, "actual_points": None,
+                 "multiplier": 1, "is_captain": 0, "is_vice_captain": 0}]
     check("an un-backfilled gameweek stays pending rather than reading zero",
           "no pick has an actual score", None,
-          mh._team_points_from_picks(FakeConn(
-              [{"actual_points": None, "multiplier": 1}]), 1),
+          mh._team_points_from_picks(FakeConn(none_yet), 1),
           lambda v: v is None,
           note="0 would look like a real score of nothing")
 
-    partial = [{"actual_points": 5, "multiplier": 1},
-               {"actual_points": None, "multiplier": 1}]
+    partial = [dict(r, actual_points=(5 if r["element_id"] == 2 else None))
+               for r in rows]
     expect("a partly-settled gameweek counts what it has", "one of two scored",
-           5, mh._team_points_from_picks(FakeConn(partial), 1))
+           5, mh._team_points_from_picks(FakeConn(partial), 1, minutes=minutes,
+                                         index=index))
 
-    check("a triple captain is carried by the stored multiplier", "multiplier 3",
-          18, mh._team_points_from_picks(FakeConn(
-              [{"actual_points": 6, "multiplier": 3}]), 1),
-          lambda v: v == 18)
+    # The chip, not the stored multiplier. The column says 1 in every row here
+    # and the answers below still come out right, which is the whole point:
+    # a multiplier is written at capture time and the chip is what the round
+    # was actually played under.
+    expect("a triple captain trebles the armband", "3xc, 11 x 3 with one tripled",
+           39, mh._team_points_from_picks(FakeConn(rows), 1, chip="3xc",
+                                          minutes=minutes, index=index))
+
+    # The regression this pair exists for. The old query read
+    # `WHERE position <= 11`, so a Bench Boost was scored as an ordinary week
+    # and the chip was spent for nothing.
+    boosted, bindex, bminutes = squad(points=3, bench_points=2)
+    expect("a bench boost scores the bench too", "11 x 3 + captain, plus 4 x 2",
+           44, mh._team_points_from_picks(FakeConn(boosted), 1, chip="bboost",
+                                          minutes=bminutes, index=bindex))
+    expect("and without the chip the same bench scores nothing", "no chip",
+           36, mh._team_points_from_picks(FakeConn(boosted), 1,
+                                          minutes=bminutes, index=bindex))
+
+    # The other regression: an unused starter is replaced by the first bench
+    # player who played, exactly as FPL does it. Here the keeper blanks, so the
+    # bench keeper comes on - a bench outfielder cannot, whatever he scored.
+    subbed, sindex, sminutes = squad(points=3, captain=2, blanks=(1,))
+    expect("a starter who didn't play is substituted", "GK blanked, bench GK on",
+           36, mh._team_points_from_picks(FakeConn(subbed), 1, minutes=sminutes,
+                                          index=sindex))
+
+    # And the armband goes with it: captain blanks, vice takes over and is the
+    # one doubled.
+    capless, cindex, cminutes = squad(points=3, captain=1, blanks=(1,))
+    expect("the armband moves to the vice-captain", "captain blanked",
+           36, mh._team_points_from_picks(FakeConn(capless), 1,
+                                          minutes=cminutes, index=cindex))
 
 
 def test_performance_gap_season():

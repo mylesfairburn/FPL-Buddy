@@ -159,6 +159,19 @@ def imminent_deadlines(events=None, now=None, window_minutes=COMMIT_WINDOW_MINUT
 PREVIEW_WINDOW_HOURS = (22, 26)
 
 
+def deadline_for(gameweek, events=None):
+    """One gameweek's deadline as FPL states it, or None if it isn't listed.
+
+    Handed to the front end so a page describing a decision that has not been
+    committed yet can say when it will be, rather than leaving the reader to
+    work out whether what they are looking at is final."""
+    events = events if events is not None else get_events()
+    for e in events:
+        if e.get("id") == int(gameweek):
+            return e.get("deadline_time")
+    return None
+
+
 def deadlines_within(events=None, now=None, window_hours=(0, 24)):
     """Gameweeks whose deadline falls inside a window of hours from now.
 
@@ -323,6 +336,112 @@ def started_teams(gameweek):
         for side in ("team_h", "team_a"):
             if fixture.get(side) is not None:
                 out.add(int(fixture[side]))
+    return out
+
+
+def finished_teams(gameweek):
+    """Team ids with no unfinished fixture left in `gameweek`.
+
+    The counterpart to started_teams, and the one automatic substitutions need.
+    A starter on nought minutes is only definitely not playing once his match is
+    over - before that he is a substitute who might still come on, and
+    replacing him would move the score for a reason nobody watching could see.
+
+    A club with a double gameweek only counts once BOTH fixtures are done, which
+    is the conservative direction: it delays a substitution rather than making
+    one that the second match then contradicts.
+
+    Returns None when the fixtures call fails - "can't tell", which the callers
+    read as "substitute nobody".
+    """
+    data = _get(f"{BASE}/fixtures/?event={int(gameweek)}")
+    if data is None:
+        return None
+    playing, seen = set(), set()
+    for fixture in data:
+        for side in ("team_h", "team_a"):
+            team = fixture.get(side)
+            if team is None:
+                continue
+            seen.add(int(team))
+            if not fixture.get("finished"):
+                playing.add(int(team))
+    return seen - playing
+
+
+def event_minutes(gameweek):
+    """{element_id: minutes} for a gameweek.
+
+    Auto-substitutions turn on minutes, not points: a starter who came on for
+    ten minutes and did nothing scored the same nought as one who never left
+    the bench, and only the second is replaced.
+    """
+    out = {}
+    for element, stats in get_event_live_stats(gameweek).items():
+        minutes = stats.get("minutes")
+        if minutes is not None:
+            out[element] = int(minutes)
+    return out
+
+
+# FPL's element_type ids, in the order bootstrap-static lists them.
+_POSITION_BY_TYPE = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
+
+
+def element_index():
+    """{element_id: {"pos": 'GK'|…, "team": id}} straight from bootstrap-static.
+
+    Deliberately not the rated player pool. The backfill jobs that need a
+    player's position in order to apply substitutions run hourly and are cheap
+    by design - building the rated pool to learn that Dubravka is a goalkeeper
+    would make the cheapest job on the schedule one of the most expensive.
+    """
+    data = _get(f"{BASE}/bootstrap-static/")
+    out = {}
+    for el in (data or {}).get("elements") or []:
+        if el.get("id") is None:
+            continue
+        out[int(el["id"])] = {
+            "pos": _POSITION_BY_TYPE.get(el.get("element_type")),
+            "team": el.get("team"),
+        }
+    return out
+
+
+def event_fixtures(gameweek, team_short=None):
+    """{team_id: [{"opponent", "was_home", "difficulty", "started", "finished"}]}
+    for one gameweek.
+
+    The projection horizon starts at the round whose deadline has NOT passed, so
+    the moment a gameweek kicks off it drops out of every player's
+    `next_gameweeks` list - and the pitch showing that gameweek lost the one
+    thing it could still say about a player yet to play: who he is playing.
+    Every such card fell back to a blank tile. This is that gameweek's fixture
+    list, asked for directly, because by then it is a fact rather than a
+    forecast.
+
+    Returns {} if the call fails - the tiles go back to being blank, which is
+    where they were.
+    """
+    data = _get(f"{BASE}/fixtures/?event={int(gameweek)}")
+    if not data:
+        return {}
+    short = team_short or {}
+    out = {}
+    for fixture in data:
+        home, away = fixture.get("team_h"), fixture.get("team_a")
+        if home is None or away is None:
+            continue
+        for team, opponent, is_home, difficulty in (
+                (home, away, True, fixture.get("team_h_difficulty")),
+                (away, home, False, fixture.get("team_a_difficulty"))):
+            out.setdefault(int(team), []).append({
+                "opponent": short.get(int(opponent)) or str(opponent),
+                "was_home": is_home,
+                "difficulty": difficulty,
+                "started": bool(fixture.get("started")),
+                "finished": bool(fixture.get("finished")),
+            })
     return out
 
 

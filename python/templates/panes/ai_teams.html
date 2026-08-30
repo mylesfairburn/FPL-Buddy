@@ -25,6 +25,13 @@
 
             <div id="mgrState" class="alert alert-secondary d-none"></div>
 
+            {# A gameweek the deadline hasn't reached is the bot thinking aloud,
+               not a decision. It is re-solved on every data refresh and only
+               the deadline watcher commits one, so a page showing a wildcard
+               five days out is showing an intention that can still change -
+               which the tab had no way of saying. #}
+            <div id="mgrPreview" class="live-banner d-none mt-2"></div>
+
             {# Not d-none. This block used to be hidden until /api/ai/manager
                answered, and then appeared all at once - six hundred pixels of
                pitch and chips shoving "Track record" down the page after first
