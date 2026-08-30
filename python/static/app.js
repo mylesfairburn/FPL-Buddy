@@ -344,6 +344,28 @@ function renderLiveBanner() {
     const banner = document.getElementById('liveBanner');
     if (!banner) return;
     if (!liveScores || !gameweekIsLocked()) {
+        // Your own saved team takes precedence over the carry-forward note:
+        // once you have saved, this is no longer last week's squad, it is
+        // yours, and the one thing worth saying about it is that it may now
+        // differ from what the official app holds.
+        if (teamView && teamView.from_draft && !gameweekIsLocked()) {
+            const when = teamView.draft_saved_at
+                ? new Date(teamView.draft_saved_at) : null;
+            const stamp = when && !isNaN(when)
+                ? ' on ' + when.toLocaleString([], { day: 'numeric', month: 'short',
+                                                     hour: '2-digit', minute: '2-digit' })
+                : '';
+            banner.innerHTML =
+                `<strong>GW${selectedEvent}</strong> — showing the team you saved here${stamp}. `
+                + `It stays put while you look around, and it is a preview only — apply the `
+                + `changes in the official app. `
+                + `<button type="button" class="btn btn-sm btn-outline-primary ms-1" `
+                + `id="discardDraftBtn">Use my actual FPL team</button>`;
+            banner.classList.remove('d-none');
+            const discard = document.getElementById('discardDraftBtn');
+            if (discard) discard.addEventListener('click', discardSavedTeam);
+            return;
+        }
         const from = teamView && teamView.carried_from;
         if (from && !gameweekIsLocked()) {
             banner.innerHTML =
@@ -382,6 +404,19 @@ function renderLiveBanner() {
             : '')
         + (liveMeta && liveMeta.in_progress ? ' <span class="live-dot"></span>updating' : '');
     banner.classList.remove('d-none');
+}
+
+// Throw the saved preview away and go back to whatever FPL holds. The only way
+// back: with a draft stored, every load of this gameweek shows it, which is the
+// entire point - so there has to be one deliberate action that says "forget it".
+// Confirmed, because it is the one control here that destroys work.
+function discardSavedTeam() {
+    const id = getSavedId();
+    if (!id) return;
+    if (!confirm('Discard the team you saved and go back to your actual FPL squad?')) return;
+    fetch(`/api/draft/${id}`, { method: 'DELETE' })
+        .then(() => { savedDraft = null; loadTeam(); })
+        .catch(() => alert('Couldn’t discard the saved team. Try again in a moment.'));
 }
 
 function getSavedId() { return localStorage.getItem(FPL_ID_KEY); }
@@ -640,7 +675,15 @@ function freeTransfersChip(gw) {
     // separate deductions.
     const remaining = freeTransfersLeft();
     const spent = remaining === 0;
-    return `<div class="stat-chip${spent ? ' stat-neg' : ''}"><span class="stat-label">Free transfers</span><span class="stat-value">${remaining}</span></div>`;
+    // Flagged as derived, because it is the one figure on this row that FPL
+    // does not publish. Every other number here is read straight out of the
+    // API; this one is replayed from the transfers and chips in your history,
+    // by the same rule the game uses. It has matched in every case tested, but
+    // "we worked it out" and "they told us" are different claims and the chip
+    // should not make them look alike.
+    return `<div class="stat-chip${spent ? ' stat-neg' : ''}" title="${FT_TIP}">`
+         + `<span class="stat-label">Free transfers</span>`
+         + `<span class="stat-value">${remaining}</span></div>`;
 }
 // What this gameweek has cost in points, which is a different question from
 // how many transfers were made \u2014 and the only one of the two that moves
@@ -705,6 +748,10 @@ function teamRating(squad) {
 // shown mid-Saturday genuinely will move.
 const PROVISIONAL_TIP = 'Provisional \u2014 the gameweek is still being played '
     + 'and bonus points are not final until FPL checks the round.';
+const FT_TIP = 'Estimated. The public FPL API doesn’t publish your free '
+    + 'transfer count, so this is replayed from your transfer and chip history '
+    + 'using the game’s own rule: one a week, banked up to five, and a '
+    + 'wildcard or free hit week costs none.';
 const RATING_TIP = 'Squad quality, not a points forecast. Each rating is a '
     + "player's projected points ranked within his own position, so the best "
     + 'keeper and the best forward both read 100. Predicted points is the '
@@ -1429,6 +1476,11 @@ document.getElementById('saveTeamBtn').addEventListener('click', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+            // Stamped with the gameweek on screen rather than left to default
+            // server-side. A draft only applies to the round it was built for,
+            // so which round that was is part of the save, not something to be
+            // re-derived from the clock afterwards.
+            gameweek: selectedEvent || null,
             bank: teamView.gw ? teamView.gw.bank : null,
             picks: snap.map(p => ({
                 element_id: p.id, position: p.position,
@@ -1441,8 +1493,13 @@ document.getElementById('saveTeamBtn').addEventListener('click', () => {
     .then(({ ok, d }) => {
         if (!ok) throw new Error(d.detail || 'save failed');
         savedDraft = null;   // force a re-read next time the team loads
-        // The saved state becomes the new "actual" that Reset reverts to.
+        // The saved state becomes the new "actual" that Reset reverts to, and
+        // the banner has to switch over to saying so - from here on this
+        // gameweek loads your team rather than FPL's.
         teamView.squad = snap.map(p => ({ ...p }));
+        teamView.from_draft = true;
+        teamView.draft_saved_at = new Date().toISOString();
+        renderLiveBanner();   // from_draft outranks the carry-forward note
         if (teamView.gw) teamView._gw0 = { ...teamView.gw };
         teamView._recs0 = (teamView.transfer_recs || []).slice();
         document.getElementById('resetBtn').classList.add('d-none');
@@ -2536,6 +2593,8 @@ function aiFixtureBox(p, gameweek, opts) {
 }
 
 function aiPlayerCard(p, onBench, gameweek, opts) {
+    // is_captain has already been moved onto whoever actually wore the armband
+    // for a scored gameweek - see effectiveLineup.
     const badge = p.is_captain ? '<span class="cap-badge">C</span>'
                 : (p.is_vice_captain ? '<span class="cap-badge vice">V</span>' : '');
     const posLabel = onBench ? `<div class="bench-pos">${p.pos || ''}</div>` : '';
@@ -2609,7 +2668,35 @@ function clearAiSkeleton(id) {
 // tripled by the chip. live_overlay applies the same multiplier when it totals
 // the squad, so the pitch and the points container agree by construction rather
 // than by coincidence.
-function renderAiPitchInto(pitchId, benchId, squad, gameweek, opts) {
+// The eleven that actually counted, which is not always the eleven that was
+// picked. A starter who recorded no minutes is replaced by the first bench
+// player who did, so the pitch shows him ON it and the man he replaced below -
+// the same swap the total was built from, and the same one the official app
+// shows once a round settles.
+//
+// Only ever applied to a substitution that is already FINAL: the server marks
+// one only once the club's fixtures are over (see live_overlay), so this never
+// shuffles the formation around mid-match. The arrows on both cards stay, so
+// the change is explained rather than just silently applied.
+// The armband is normalised here too, and only once the round has been scored.
+// `wore_armband` is set on exactly one player then, and it is the vice-captain
+// on any week the captain didn't play - so the C moves to whoever's points were
+// actually doubled. Decided for the squad rather than per card, because a card
+// cannot see that someone else has the armband: a captain who blanked without
+// being substituted still looks like the captain from inside his own card, and
+// judging it there put a C on him AND on the vice who really wore it.
+function effectiveLineup(squad) {
+    const armband = squad.find(p => p.wore_armband);
+    return squad.map(p => ({
+        ...p,
+        starting: p.auto_sub_in ? true : (p.auto_sub_out ? false : p.starting),
+        is_captain: armband ? p === armband : p.is_captain,
+        is_vice_captain: armband ? false : p.is_vice_captain,
+    }));
+}
+
+function renderAiPitchInto(pitchId, benchId, rawSquad, gameweek, opts) {
+    const squad = effectiveLineup(rawSquad);
     const starters = squad.filter(p => p.starting);
     const bench = squad.filter(p => !p.starting);
     document.getElementById(pitchId).innerHTML =

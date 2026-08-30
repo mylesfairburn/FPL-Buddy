@@ -1913,8 +1913,18 @@ def team(team_id: int, event: int = None):
         next_event = gw_clock.next_gameweek()
     except Exception:
         next_event = None
+    # The squad this manager last saved here. Read before the view rather than
+    # merged after it, because it has to be in place BEFORE the projection, the
+    # optimised XI and the transfer suggestions are derived - all three describe
+    # a squad, and it should be the one on screen. Never fatal: a database fault
+    # costs the preview, not the tab.
+    saved = None
+    try:
+        saved = drafts.get_draft(team_id, _player_pool())
+    except Exception as e:
+        print(f"couldn't read the saved team for {team_id}: {e}")
     view = get_team_view(team_id, event, state["position_dfs"],
-                         next_event=next_event)
+                         next_event=next_event, draft=saved)
     view["next_event"] = next_event
     _attach_paths(view.get("squad"))
     for rec in view.get("transfer_recs") or []:

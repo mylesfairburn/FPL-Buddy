@@ -61,6 +61,22 @@ CREATE TABLE IF NOT EXISTS manager_team_picks (
     cost             REAL,                      -- frozen at capture time
     predicted_points REAL,                      -- frozen at capture time
     actual_points    INTEGER,
+    -- What this pick was ACTUALLY multiplied by once the round was scored, in
+    -- the same encoding FPL uses on its own picks: 0 for a player whose points
+    -- didn't count, 1 for one whose did, 2 or 3 for whoever ended up wearing
+    -- the armband.
+    --
+    -- Separate from `multiplier` above because they answer different questions.
+    -- That one is written at CAPTURE time and records the plan; this one is
+    -- written by the backfill and records what happened - which is not the same
+    -- thing the moment a starter fails to play and a substitute takes his
+    -- place. Without it a settled gameweek could state a total that included an
+    -- automatic substitution while the pitch above it still showed the eleven
+    -- that were picked, and nothing on the page explained the difference.
+    --
+    -- NULL means the round hasn't been scored yet, which is also the signal the
+    -- rescue pass in jobs.py looks for - see rescore_settled.
+    effective_multiplier INTEGER,
     UNIQUE (manager_team_id, position)
 );
 CREATE INDEX IF NOT EXISTS idx_picks_team ON manager_team_picks (manager_team_id);
@@ -90,6 +106,10 @@ CREATE TABLE IF NOT EXISTS ai_team_snapshot_picks (
     cost             REAL NOT NULL,
     predicted_points REAL NOT NULL,
     actual_points    INTEGER,
+    -- As on manager_team_picks above: what the pick was actually multiplied by
+    -- once the round settled, so the pitch can show the substitutions the total
+    -- was built from. NULL until the round is scored.
+    effective_multiplier INTEGER,
     UNIQUE (snapshot_id, position)
 );
 CREATE INDEX IF NOT EXISTS idx_ai_picks_snapshot ON ai_team_snapshot_picks (snapshot_id);
@@ -416,6 +436,41 @@ def _schema_present(conn):
     return all(t in have for t in _SCHEMA_TABLES)
 
 
+# Columns added to tables that already existed in the wild.
+#
+# The schema script is all CREATE TABLE IF NOT EXISTS, which makes adding a
+# TABLE free and adding a COLUMN a silent no-op: the statement is skipped
+# entirely on any database that already has the table, so a new column exists on
+# a fresh install and nowhere else. That reads as "works on my machine and
+# nowhere the data actually is", which is the worst shape a schema change can
+# have.
+#
+# So new columns are listed here as well as in SCHEMA, and added if missing.
+# Both, deliberately: SCHEMA stays the readable definition of the table with the
+# comments explaining each column, and this is the catch-up for files that
+# predate it. ALTER TABLE ADD COLUMN is O(1) in SQLite and only runs once, since
+# the second call finds the column already there.
+_ADDED_COLUMNS = (
+    ("manager_team_picks", "effective_multiplier", "INTEGER"),
+    ("ai_team_snapshot_picks", "effective_multiplier", "INTEGER"),
+)
+
+
+def _apply_added_columns(conn):
+    """Add any column in _ADDED_COLUMNS the file doesn't have yet.
+
+    Cheap enough for the same every-connection treatment the table check gets:
+    PRAGMA table_info reads the connection's cached schema, and the ALTER only
+    fires the once. Never destructive - it only ever adds, and only nullable
+    columns with no default, so an existing row is untouched.
+    """
+    for table, column, decl in _ADDED_COLUMNS:
+        have = {r["name"] for r in conn.execute(f"PRAGMA table_info('{table}')")}
+        if not have or column in have:
+            continue    # table absent (the schema script will make it) or done
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+
+
 def _open(path):
     conn = sqlite3.connect(path, timeout=15)
     conn.row_factory = sqlite3.Row
@@ -459,6 +514,7 @@ def connect():
     try:
         if not _schema_present(conn):
             _apply_schema(conn)
+        _apply_added_columns(conn)
         yield conn
         conn.commit()
     except Exception:

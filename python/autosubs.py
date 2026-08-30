@@ -119,6 +119,33 @@ def apply(squad, minutes, decided_teams=None, chip=None):
     return {"starters": lineup, "subs": subs, "captain_id": captain_id}
 
 
+def multipliers(squad, result, chip=None):
+    """{element_id: what this pick was actually multiplied by}.
+
+    FPL's own encoding, so a stored row reads the same way its picks API does:
+    0 for a player whose points did not count, 1 for one whose did, 2 or 3 for
+    whoever ended up with the armband.
+
+    The reason to persist this rather than recompute it is that a settled
+    gameweek is read far more often than it is scored, and recomputing would
+    mean fetching a whole round's minutes on every page view. It is also the
+    only record of WHY the total is what it is: without it the pitch shows the
+    eleven that were picked, the container shows a score built from a different
+    eleven, and nothing on the page connects the two.
+    """
+    counting = {player_id(p) for p in result["starters"]}
+    out = {}
+    for p in squad:
+        pid = player_id(p)
+        if chip != "bboost" and pid not in counting:
+            out[pid] = 0
+        elif pid == result.get("captain_id"):
+            out[pid] = 3 if chip == "3xc" else 2
+        else:
+            out[pid] = 1
+    return out
+
+
 def score(squad, points, result, chip=None):
     """Total a squad from `result`, the dict `apply()` returned.
 

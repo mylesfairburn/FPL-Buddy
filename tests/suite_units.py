@@ -2810,6 +2810,167 @@ def test_form_blend():
                current, empty).loc[1, "total_points_roll3"]))
 
 
+def test_settled_lineup_flags():
+    """What a settled gameweek says about substitutions, on the pitch.
+
+    The score being right is only half of it. The AI Manager's GW1 keeper
+    recorded no minutes and the bench keeper replaced him, and once that was
+    reflected in the total the page still drew the eleven that were PICKED - so
+    the container said one thing and the squad above it showed another, with
+    nothing connecting the two.
+
+    `effective_multiplier` is the connection: FPL's own encoding, written by the
+    backfill, and everything the pitch needs is derivable from it.
+    """
+    group("settled lineup flags", "high")
+
+    import ai_team
+    import autosubs
+
+    class Row(dict):
+        """A stand-in for sqlite3.Row, which the flags reader probes with
+        .keys() so it stays safe on a database that predates the column."""
+
+    starter_out = Row(position=1, effective_multiplier=0)
+    bench_in = Row(position=12, effective_multiplier=1)
+    armband = Row(position=2, effective_multiplier=2)
+    ordinary = Row(position=3, effective_multiplier=1)
+
+    expect("a starter multiplied by nothing was substituted off", "position 1, x0",
+           True, ai_team.settled_flags(starter_out)["auto_sub_out"])
+    expect("a bench player multiplied by anything came on", "position 12, x1",
+           True, ai_team.settled_flags(bench_in)["auto_sub_in"])
+    expect("a doubled pick wore the armband", "x2",
+           True, ai_team.settled_flags(armband)["wore_armband"])
+    check("an ordinary starter is flagged as nothing at all", "position 3, x1",
+          "no flags", ai_team.settled_flags(ordinary),
+          lambda f: not any(f.values()))
+
+    check("an unscored round claims nothing", "multiplier NULL",
+          "no flags", ai_team.settled_flags(Row(position=1, effective_multiplier=None)),
+          lambda f: not any(f.values()),
+          note="the squad as picked, which is all there is to show")
+
+    check("and neither does a database that predates the column", "no such key",
+          "no flags", ai_team.settled_flags(Row(position=1)),
+          lambda f: not any(f.values()),
+          note="the migration adds it, but a read must not depend on having run")
+
+    # The multipliers themselves, against the rules that produce them.
+    LAYOUT = ["GK"] + ["DEF"] * 4 + ["MID"] * 4 + ["FWD"] * 2 + ["GK", "DEF", "MID", "FWD"]
+    squad = [{"id": i, "pos": pos, "position": i, "starting": i <= 11,
+              "is_captain": i == 2, "is_vice_captain": i == 3}
+             for i, pos in enumerate(LAYOUT, start=1)]
+    minutes = {i: 90 for i in range(1, 16)}
+
+    mults = autosubs.multipliers(squad, autosubs.apply(squad, minutes))
+    check("a normal week doubles one player and benches four", "everyone played",
+          "1 captain, 4 zeros", mults,
+          lambda m: m[2] == 2 and sum(1 for v in m.values() if v == 0) == 4)
+
+    subbed = autosubs.apply(squad, {**minutes, 1: 0})
+    smults = autosubs.multipliers(squad, subbed)
+    check("the keeper who didn't play is zeroed and his cover counted",
+          "GK on 0 minutes", "1 -> 0, 12 -> 1", smults,
+          lambda m: m[1] == 0 and m[12] == 1)
+
+    cmults = autosubs.multipliers(squad, autosubs.apply(squad, {**minutes, 2: 0}))
+    check("and the armband moves by the same arithmetic", "captain on 0 minutes",
+          "3 -> 2", cmults, lambda m: m[3] == 2 and m[2] != 2)
+
+    boosted = autosubs.multipliers(
+        squad, autosubs.apply(squad, minutes, chip="bboost"), chip="bboost")
+    check("a bench boost leaves nobody on nought", "bboost",
+          "no zeros", boosted, lambda m: all(v > 0 for v in m.values()))
+
+
+def test_draft_applies_to_one_gameweek():
+    """A saved team is shown back, and only where it belongs.
+
+    Saving worked; showing it back did not. Every load rebuilt the squad from
+    FPL, so stepping to another gameweek and returning silently discarded the
+    changes - the team you had just saved was the one thing the page would not
+    show you.
+
+    The conditions on when a draft applies are each a way of showing somebody
+    the wrong team, so each is tested rather than assumed.
+    """
+    group("saved team applies", "high")
+
+    from team_service import _draft_picks
+
+    squad = [{"id": 100 + i, "position": i, "is_captain": i == 1,
+              "is_vice_captain": i == 2} for i in range(1, 16)]
+    draft = {"gameweek": 3, "source": "user", "squad": squad}
+
+    picks = _draft_picks(draft, 3, current_event=2)
+    check("the saved team is used for the round it was saved for",
+          "GW3 draft, viewing GW3, GW2 in play", "15 picks", picks,
+          lambda p: p is not None and len(p) == 15)
+    check("and carries the armband and the bench with it", "same draft",
+          "captain x2, bench x0", picks,
+          lambda p: p[0]["multiplier"] == 2 and p[14]["multiplier"] == 0)
+
+    check("a draft for another gameweek is ignored", "GW3 draft, viewing GW1",
+          None, _draft_picks(draft, 1, current_event=2), lambda v: v is None,
+          note="showing it would present a squad the manager never had")
+
+    check("a settled gameweek ignores it too", "GW2 draft, viewing GW2, GW2 played",
+          None, _draft_picks({**draft, "gameweek": 2}, 2, current_event=2),
+          lambda v: v is None,
+          note="what happened is not a matter of preference")
+
+    check("the deadline snapshot is not treated as a preview", "source 'official'",
+          None, _draft_picks({**draft, "source": "official"}, 3, current_event=2),
+          lambda v: v is None,
+          note="FPL's own copy is fresher and includes any real transfer since")
+
+    check("a squad that isn't fifteen is refused", "14 picks",
+          None, _draft_picks({**draft, "squad": squad[:14]}, 3, current_event=2),
+          lambda v: v is None)
+
+    check("and no draft at all is simply no draft", "None",
+          None, _draft_picks(None, 3, current_event=2), lambda v: v is None)
+
+
+def test_rescore_queue():
+    """Gameweeks the backfill still owes work to.
+
+    "points IS NULL" was the only condition, which meant a round scored under
+    rules that were later corrected could never be revisited - the round most in
+    need of rescoring was precisely the one this would never look at again. The
+    marker is `effective_multiplier`, written by the same pass that writes the
+    total, so a round heals once and then leaves the queue for good.
+    """
+    group("rescore queue", "high")
+
+    import inspect
+    import re
+
+    import ai_team
+    import manager_history
+
+    for name, fn in (("manager", manager_history.gameweeks_awaiting_actuals),
+                     ("Best XI", ai_team.snapshots_awaiting_actuals)):
+        sql = " ".join(inspect.getsource(fn).split())
+        check(f"the {name} queue looks for an unscored round", "the query",
+              "IS NULL on the total", sql,
+              lambda q: re.search(r"(?:^|\.|\s)(?:points|actual_points) IS NULL", q)
+                        is not None)
+        check(f"and for one scored by an older build", "the query",
+              "IS NULL on effective_multiplier", sql,
+              lambda q: "effective_multiplier IS NULL" in q,
+              note="without this a scoring fix can never reach a settled round")
+
+    # The manual escape hatch, for a change that lands after every round has
+    # already been re-scored and the marker is present everywhere.
+    src = " ".join(inspect.getsource(ai_team.clear_settled_scoring).split())
+    check("clearing resets only the derived figures", "clear_settled_scoring",
+          "no DELETE, predictions untouched", src,
+          lambda q: "DELETE" not in q.upper() and "predicted_points" not in q,
+          note="the frozen predictions are what make the track record a record")
+
+
 def test_manager_points_backfill():
     """The AI Manager's gameweek score, which sat at "pending" all week.
 
@@ -3054,4 +3215,6 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_form_blend_weight, test_form_blend,
           test_gameweek_stats_schemas,
           test_manager_points_backfill, test_performance_gap_season,
+          test_settled_lineup_flags, test_draft_applies_to_one_gameweek,
+          test_rescore_queue,
           test_prev_season_totals]

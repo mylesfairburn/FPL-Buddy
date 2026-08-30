@@ -780,8 +780,14 @@ def backfill_actual_points(events):
 
     Cheap - a handful of API reads and UPDATEs, no rated pool - which is what
     lets the hourly watcher run it as well as the nightly refresh. Idempotent:
-    a snapshot that already has its actuals is skipped, and one whose round
-    isn't settled yet reports a reason and is retried next time.
+    a snapshot already scored under the CURRENT rules is skipped, and one whose
+    round isn't settled yet reports a reason and is retried next time.
+
+    "Under the current rules" is doing real work in that sentence. The two
+    queries driving the loops below look for a missing total OR a missing
+    `effective_multiplier`, so a round scored by an older build - before
+    automatic substitutions were modelled, say - is picked up once and rescored,
+    then leaves the queue for good. See gameweeks_awaiting_actuals.
 
     Must run BEFORE the roundup. The roundup's scorecard prints the AI squad's
     actual score, and this is the only thing that writes it.
@@ -797,14 +803,13 @@ def backfill_actual_points(events):
     #
     # Each now decides for itself whether it has work to do, and both are
     # idempotent, so a missed night costs nothing.
-    for snap in ai_team.list_snapshots():
-        gw = snap["gameweek"]
-        if snap["actual_points"] is not None:
-            continue
+    for gw in ai_team.snapshots_awaiting_actuals():
         res = ai_team.backfill_actuals(gw, events)
         if res.get("updated"):
+            subs = res.get("auto_subs") or 0
             log(f"GW{gw}: AI Best XI scored {res['actual_points']} "
-                f"(predicted {res['predicted_points']})")
+                f"(predicted {res['predicted_points']})"
+                + (f", {subs} auto-sub{'' if subs == 1 else 's'}" if subs else ""))
         else:
             log(f"GW{gw}: Best XI not backfilled - {res.get('reason')}")
 
@@ -815,6 +820,41 @@ def backfill_actual_points(events):
                 f"{m.get('totals', 0)} team total(s)")
         else:
             log(f"GW{gw}: manager totals not backfilled - {m.get('reason')}")
+        # FPL's own figure is what gets stored, so a mismatch changes nothing on
+        # the site - which is exactly why it has to be said out loud. It means
+        # our reconstruction of a gameweek disagrees with the game's, and the
+        # only place that reconstruction is the ONLY answer is the AI Manager,
+        # which has no entry to check against. A quiet divergence here is a
+        # scoring bug already affecting the bot's record.
+        for bad in m.get("mismatches") or []:
+            log(f"  GW{gw} SCORING MISMATCH for entry {bad['fpl_id']}: "
+                f"FPL says {bad['fpl']}, we derive {bad['ours']} "
+                f"(FPL's figure stored)")
+
+
+def rescore_settled(gameweek=None):
+    """Re-score settled gameweeks under the current rules.
+
+    A deliberate, hand-run operation, and it has to be: the automatic path
+    (`effective_multiplier IS NULL`) heals each round exactly once and then goes
+    quiet, which is what stops the hourly watcher re-fetching every week of the
+    season forever. That is the right default and it leaves one gap - a scoring
+    change made after every round has already been re-scored, where the marker
+    is present everywhere and nothing is left to notice. This is that gap.
+
+    Clearing then backfilling rather than a separate recompute path, so there is
+    exactly one piece of code that knows how a gameweek is scored. Only the
+    derived figures are cleared; the frozen predictions the track record rests
+    on are never touched.
+    """
+    db.init_db()
+    events = gw_clock.get_events()
+    target = "every settled gameweek" if gameweek is None else f"GW{gameweek}"
+    log(f"Re-scoring {target} under the current rules")
+    ai_team.clear_settled_scoring(gameweek)
+    backfill_actual_points(events)
+    ping_refresh()
+    return 0
 
 
 def publish_settled_roundup(events):
@@ -1105,6 +1145,16 @@ def main(argv=None):
     purge.add_argument("--dry-run", action="store_true",
                        help="list what would be removed and remove nothing")
 
+    rescore = sub.add_parser(
+        "rescore",
+        help="re-score settled gameweeks under the current rules. Normally "
+             "unnecessary - the backfill already picks up any round scored by "
+             "an older build, once. This is for a scoring change that lands "
+             "after every round has already been re-scored, when nothing is "
+             "left for it to notice.")
+    rescore.add_argument("--gameweek", type=int, default=None,
+                         help="just this one. Defaults to every settled round.")
+
     status = sub.add_parser("status",
                             help="print the job heartbeat and what is overdue")
     status.add_argument("--alert", action="store_true",
@@ -1191,6 +1241,8 @@ def _dispatch(args):
         for line in retention.sweep(dry_run=args.dry_run)["log"]:
             log(line)
         return 0
+    if args.command == "rescore":
+        return rescore_settled(gameweek=args.gameweek)
     if args.command == "status":
         if args.test_alert:
             return send_test_alert()

@@ -25,6 +25,7 @@ simulation whose picks are recorded so its record can be compared against the
 Best XI and against real managers.
 """
 
+import ai_team
 import chip_model
 import fixture_structure
 from db import AI_MANAGER_FPL_ID, connect, utcnow
@@ -669,6 +670,10 @@ def get_gameweek(gameweek, pool=None):
             "next_gameweeks": p.get("next_gameweeks") or [],
             "position": r["position"], "starting": (r["position"] or 99) <= 11,
             "is_captain": bool(r["is_captain"]), "is_vice_captain": bool(r["is_vice_captain"]),
+            # Which of these fifteen actually counted, and who ended up with the
+            # armband. Written by the backfill; every flag is False until then,
+            # which is the squad as picked - see ai_team.settled_flags.
+            **ai_team.settled_flags(r),
         })
     transfers = [{
         "kind": r["kind"], "chip": r["chip"], "hit": r["cost_hit"],

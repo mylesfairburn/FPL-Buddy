@@ -105,19 +105,48 @@ def _team_points_from_picks(conn, manager_team_id, hits=0, chip=None,
     if not scored:
         return None
 
-    index = index if index is not None else {}
-    squad = [{
+    squad = _pick_squad(rows, index)
+
+    result = autosubs.apply(squad, minutes or {}, chip=chip)
+    return autosubs.score(squad, scored, result, chip=chip) - int(hits or 0)
+
+
+def _record_effective_multipliers(conn, manager_team_id, rows, chip, minutes, index):
+    """Store which of the fifteen counted, and what the armband was worth.
+
+    Written for EVERY stored team, not just the ones scored from their picks. A
+    real manager's total comes from their own FPL entry - the better source, and
+    the one that already includes their substitutions - but the total is not the
+    only thing the round has to say. The squad view still has to show which
+    eleven produced it, and that is knowable here whichever number won.
+    """
+    squad = _pick_squad(rows, index)
+    result = autosubs.apply(squad, minutes or {}, chip=chip)
+    mults = autosubs.multipliers(squad, result, chip=chip)
+    conn.executemany(
+        "UPDATE manager_team_picks SET effective_multiplier = ? "
+        "WHERE manager_team_id = ? AND element_id = ?",
+        [(m, int(manager_team_id), pid) for pid, m in mults.items()])
+    return result
+
+
+def _pick_squad(rows, index):
+    """Stored pick rows in the shape the substitution rules read.
+
+    Position and club come from bootstrap-static rather than the rated pool -
+    see gameweek.element_index. An index that could not be fetched leaves both
+    None, which fails the formation check and so substitutes nobody: the old
+    behaviour, which is the safe direction to fail in.
+    """
+    return [{
         "id": r["element_id"],
-        "pos": index.get(r["element_id"], {}).get("pos"),
-        "team": index.get(r["element_id"], {}).get("team"),
+        "pos": (index or {}).get(r["element_id"], {}).get("pos"),
+        "team": (index or {}).get(r["element_id"], {}).get("team"),
         "position": r["position"],
         "starting": (r["position"] or 99) <= 11,
         "is_captain": bool(r["is_captain"]),
         "is_vice_captain": bool(r["is_vice_captain"]),
     } for r in rows]
-
-    result = autosubs.apply(squad, minutes or {}, chip=chip)
-    return autosubs.score(squad, scored, result, chip=chip) - int(hits or 0)
 
 
 def _fpl_gameweek_points(fpl_id, gameweek):
@@ -166,16 +195,31 @@ def _fpl_gameweek_points(fpl_id, gameweek):
 
 
 def gameweeks_awaiting_actuals():
-    """Gameweeks with a stored team whose total is still missing.
+    """Gameweeks with a stored team the backfill still has work to do on.
 
-    Asked of the manager tables rather than inferred from the Best XI's
-    snapshots, so this backfill's work is defined by its own data. Oldest
-    first: an older gap is more likely to be a permanent one worth logging.
+    Two conditions, not one, and the second is what stops a scoring FIX from
+    being unreachable. A gameweek with no total has obviously never been
+    scored. But a gameweek that WAS scored under rules that have since been
+    corrected also needs revisiting, and "points IS NULL" can never say so - it
+    was the only condition here, so the round that most needed rescoring was
+    precisely the one this would never look at again.
+
+    `effective_multiplier` is the marker. It is written by the same pass that
+    writes the total, so a row missing it was scored by a build that predates
+    the substitution rules - and once written it is never NULL again, which is
+    what keeps this from re-fetching every settled round of the season on every
+    hourly run. Self-healing exactly once per gameweek.
+
+    Oldest first: an older gap is more likely to be a permanent one worth
+    logging.
     """
     with connect() as conn:
         return [int(r["gameweek"]) for r in conn.execute(
-            """SELECT DISTINCT gameweek FROM manager_team
-               WHERE points IS NULL ORDER BY gameweek""")]
+            """SELECT DISTINCT m.gameweek
+               FROM manager_team m
+               LEFT JOIN manager_team_picks p ON p.manager_team_id = m.id
+               WHERE m.points IS NULL OR p.effective_multiplier IS NULL
+               ORDER BY m.gameweek""")]
 
 
 def backfill_manager_actuals(gameweek, events=None):
@@ -198,19 +242,22 @@ def backfill_manager_actuals(gameweek, events=None):
     if not live:
         return {"updated": 0, "reason": "no live data available"}
 
-    # Both only needed by the picks fallback below, and both are one call each,
-    # so they are fetched once for the whole sweep rather than per manager.
+    # One call each, fetched once for the whole sweep rather than per manager.
+    # Needed by every team, not just the ones scored from their picks: the
+    # substitutions are recorded for all of them - see
+    # _record_effective_multipliers.
     minutes = event_minutes(gw)
     index = element_index()
 
     updated = totals = 0
+    mismatches = []
     with connect() as conn:
         teams = conn.execute(
             "SELECT id, fpl_id, active_chip FROM manager_team WHERE gameweek = ?",
             (gw,)).fetchall()
         for t in teams:
             picks = conn.execute(
-                "SELECT id, element_id FROM manager_team_picks WHERE manager_team_id = ?",
+                "SELECT * FROM manager_team_picks WHERE manager_team_id = ?",
                 (t["id"],)).fetchall()
             rows = [(live[p["element_id"]], p["id"]) for p in picks
                     if p["element_id"] in live]
@@ -218,21 +265,36 @@ def backfill_manager_actuals(gameweek, events=None):
                 "UPDATE manager_team_picks SET actual_points = ? WHERE id = ?", rows)
             updated += len(rows)
 
+            _record_effective_multipliers(conn, t["id"], picks, t["active_chip"],
+                                          minutes, index)
+
             # The bot has no FPL entry to ask - fpl_id 0 is synthetic - so its
             # score is its own picks plus the hits it recorded taking. A real
-            # manager's own entry is the better source; the picks are the
-            # fallback when it can't be reached.
-            points = None
+            # manager's own entry is the better source and is always preferred:
+            # it is the number on their own team page, and where the two can
+            # disagree the API is right by definition.
+            reported = None
             if t["fpl_id"] != AI_MANAGER_FPL_ID:
                 try:
-                    points = _fpl_gameweek_points(t["fpl_id"], gw)
+                    reported = _fpl_gameweek_points(t["fpl_id"], gw)
                 except Exception:
-                    points = None
-            if points is None:
-                hits = _ai_hits(conn, gw) if t["fpl_id"] == AI_MANAGER_FPL_ID else 0
-                points = _team_points_from_picks(
-                    conn, t["id"], hits, chip=t["active_chip"],
-                    minutes=minutes, index=index)
+                    reported = None
+
+            hits = _ai_hits(conn, gw) if t["fpl_id"] == AI_MANAGER_FPL_ID else 0
+            derived = _team_points_from_picks(
+                conn, t["id"], hits, chip=t["active_chip"],
+                minutes=minutes, index=index)
+
+            # Both computed, so the two can be compared rather than only one of
+            # them existing. Our sum is a reconstruction - it re-derives the
+            # substitutions and the chip from stored picks - and a
+            # reconstruction that disagrees with the source is worth surfacing
+            # even though the source is the one we keep. Silently taking the
+            # API number would hide a scoring bug for the whole season.
+            if reported is not None and derived is not None and reported != derived:
+                mismatches.append({"fpl_id": t["fpl_id"], "gameweek": gw,
+                                   "fpl": reported, "ours": derived})
+            points = reported if reported is not None else derived
 
             if points is not None:
                 conn.execute("UPDATE manager_team SET points = ? WHERE id = ?",
@@ -240,4 +302,4 @@ def backfill_manager_actuals(gameweek, events=None):
                 totals += 1
 
     return {"updated": updated, "totals": totals, "gameweek": gw,
-            "teams": len(teams)}
+            "teams": len(teams), "mismatches": mismatches}

@@ -676,14 +676,57 @@ def get_player_summary(player_id, n=6):
     return {"available": True, "history": rows, "history_past": past}
 
 
+def _draft_picks(draft, event, current_event):
+    """A saved draft, in FPL's own pick shape, if it applies to this gameweek.
+
+    Three conditions, and each one is a way this could otherwise show somebody
+    the wrong team.
+
+    It has to be for THIS gameweek. A draft is stamped with the round it was
+    built for, and showing a GW3 preview under a GW1 heading would present a
+    squad the manager never had.
+
+    It has to be a USER draft. The deadline watcher also writes a row here, with
+    source 'official' - last week's real picks, re-pointed at the coming round as
+    a starting point. That row is a copy of something FPL will hand over itself,
+    fresher, including any transfer made in the official app since. Preferring
+    our copy would mean a real transfer silently failing to appear.
+
+    And the round has to still be editable. A gameweek whose deadline has gone
+    is a result: what happened is not a matter of preference, and a preview
+    drawn over it would be fiction with a score attached.
+    """
+    if not draft or draft.get("source") != "user":
+        return None
+    if draft.get("gameweek") != event:
+        return None
+    if current_event is not None and event <= current_event:
+        return None
+    squad = draft.get("squad") or []
+    if len(squad) != 15:
+        return None
+    return [{"element": p["id"], "position": p["position"],
+             "is_captain": bool(p.get("is_captain")),
+             "is_vice_captain": bool(p.get("is_vice_captain")),
+             "multiplier": 2 if p.get("is_captain") else (1 if p["position"] <= 11 else 0)}
+            for p in squad]
+
+
 def get_team_view(team_id, event, position_dfs, next_event=None,
-                  carry_forward=True):
+                  carry_forward=True, draft=None):
     """Assemble the whole Team tab payload for a manager id + gameweek.
 
     `next_event` is the gameweek being picked for, from the season clock. It is
     the default target rather than `current_event`, because the round you can
     still change is the one you came here to change - see the carry-forward note
     further down for why that view has to be assembled rather than fetched.
+
+    `draft` is the squad this manager last SAVED here, and it wins over FPL's
+    picks for the one round it applies to. Without it the tab could store a
+    preview and never show it again: every load rebuilt the squad from FPL, so
+    stepping back a gameweek and forward again silently discarded the changes -
+    the team you had just saved was the one thing the page would not show you.
+    See _draft_picks for the three conditions on when it applies.
 
     `carry_forward` is the switch on that behaviour, and callers that are
     RECORDING rather than displaying must turn it off. The deadline watcher is
@@ -753,6 +796,31 @@ def get_team_view(team_id, event, position_dfs, next_event=None,
     eh = picks_data.get("entry_history", {})
     bank = round((eh.get("bank") or 0) / 10, 1)
 
+    # A saved preview replaces the picks and nothing else. Everything below -
+    # the projection, the optimised XI, the transfer suggestions, the team
+    # rating - is derived from `picks` further down, so substituting here is
+    # enough to make the whole tab describe the squad the manager actually has
+    # on screen rather than the one FPL last saw.
+    picks = picks_data["picks"]
+    saved = _draft_picks(draft, event, current_event)
+    if saved is not None:
+        picks = saved
+        # `carried_from` is deliberately LEFT SET. It records that the FPL
+        # response underneath these picks is last week's, and half a dozen
+        # fields below are guarded on it - the gameweek score, the transfers
+        # made, their cost, and the chip. Clearing it here to mean "this is
+        # your own team now" quietly un-guarded all of them, and last week's
+        # Bench Boost came back through: the projection for a round with no
+        # chip declared was computed over all fifteen players, reading 15 points
+        # high. Which squad is on screen and which round FPL answered for are
+        # two different facts; `from_draft` carries the first, this carries the
+        # second, and the banner prefers the first.
+        #
+        # Their bank as at the last save, because a preview transfer moves it
+        # and FPL's figure knows nothing about a transfer that hasn't been made.
+        if draft.get("bank") is not None:
+            bank = round(float(draft["bank"]), 1)
+
     # Merge each pick with its rated player info.
     #
     # `predicted` is re-read for the gameweek actually on screen rather than
@@ -765,7 +833,7 @@ def get_team_view(team_id, event, position_dfs, next_event=None,
     # (a past round; its fixtures are long gone), and the index value is the
     # best available answer there.
     squad = []
-    for pk in picks_data["picks"]:
+    for pk in picks:
         info = index.get(pk["element"])
         if info is None:
             continue
@@ -854,6 +922,12 @@ def get_team_view(team_id, event, position_dfs, next_event=None,
         # standing between a carried-forward squad and being read as a
         # confirmed team - so it is stated in the payload, not inferred.
         "carried_from": carried_from,
+        # And set when they are the manager's own saved preview rather than
+        # anything FPL holds. Stated for the same reason: this squad may not be
+        # the one in the official app, and the page has to be able to say which
+        # of the two it is showing.
+        "from_draft": saved is not None,
+        "draft_saved_at": (draft or {}).get("updated_at") if saved is not None else None,
     }
 
 

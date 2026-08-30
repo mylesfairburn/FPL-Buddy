@@ -82,8 +82,33 @@ def _enrich(picks, pool_by_id):
             "starting": row["position"] <= 11,
             "is_captain": bool(row["is_captain"]),
             "is_vice_captain": bool(row["is_vice_captain"]),
+            **settled_flags(row),
         })
     return out
+
+
+def settled_flags(row):
+    """The substitution marks a scored pick carries, from its stored multiplier.
+
+    Same three keys live_overlay produces mid-round, so the front end has one
+    vocabulary for "this player came on" whether the gameweek is still being
+    played or was settled back in August.
+
+    Derived rather than given its own column because the multiplier already says
+    it: a starter multiplied by nothing was substituted off, a bench player
+    multiplied by anything came on, and whoever was multiplied by two or three
+    wore the armband. NULL means the round has not been scored, and every flag
+    is False - the squad as picked, which is all there is to show.
+    """
+    mult = row["effective_multiplier"] if "effective_multiplier" in row.keys() else None
+    if mult is None:
+        return {"auto_sub_in": False, "auto_sub_out": False, "wore_armband": False}
+    started = (row["position"] or 99) <= 11
+    return {
+        "auto_sub_in": not started and mult > 0,
+        "auto_sub_out": started and mult == 0,
+        "wore_armband": mult >= 2,
+    }
 
 
 def get_snapshot(gameweek, pool=None):
@@ -125,6 +150,55 @@ def list_snapshots():
             """SELECT gameweek, formation, budget, squad_cost, predicted_points,
                       actual_points, generated_at
                FROM ai_team_snapshot ORDER BY gameweek DESC""")]
+
+
+def snapshots_awaiting_actuals():
+    """Snapshot gameweeks the backfill still has work to do on.
+
+    The Best XI half of manager_history.gameweeks_awaiting_actuals, and it
+    exists for the same reason: the nightly loop skipped any snapshot that
+    already had a total, so a snapshot scored by a build that predates the
+    substitution rules could never be revisited. `effective_multiplier` is the
+    marker - written by the same pass that writes the total, never NULL
+    afterwards - so this heals a gameweek exactly once and then leaves it alone.
+    """
+    with connect() as conn:
+        return [int(r["gameweek"]) for r in conn.execute(
+            """SELECT DISTINCT s.gameweek
+               FROM ai_team_snapshot s
+               LEFT JOIN ai_team_snapshot_picks p ON p.snapshot_id = s.id
+               WHERE s.actual_points IS NULL OR p.effective_multiplier IS NULL
+               ORDER BY s.gameweek""")]
+
+
+def clear_settled_scoring(gameweek=None):
+    """Forget that a gameweek was ever scored, so the next backfill redoes it.
+
+    The manual counterpart to the two `*_awaiting_actuals` queries above, for
+    the case they deliberately don't cover: a scoring change that lands AFTER
+    every settled round already carries an `effective_multiplier`. The marker
+    has done its job by then and those rounds are quiet, which is what it is
+    for - so re-running them has to be something a person asks for, not
+    something the schedule decides.
+
+    Only nulls the derived figures. Picks, costs and the frozen predictions are
+    untouched, so nothing that makes the track record a record is at risk.
+    """
+    where, args = ("", [])
+    if gameweek is not None:
+        where, args = " WHERE gameweek = ?", [int(gameweek)]
+    with connect() as conn:
+        conn.execute(f"UPDATE ai_team_snapshot SET actual_points = NULL{where}", args)
+        conn.execute(
+            "UPDATE ai_team_snapshot_picks SET effective_multiplier = NULL"
+            + (" WHERE snapshot_id IN (SELECT id FROM ai_team_snapshot WHERE gameweek = ?)"
+               if gameweek is not None else ""), args)
+        conn.execute(f"UPDATE manager_team SET points = NULL{where}", args)
+        conn.execute(
+            "UPDATE manager_team_picks SET effective_multiplier = NULL"
+            + (" WHERE manager_team_id IN (SELECT id FROM manager_team WHERE gameweek = ?)"
+               if gameweek is not None else ""), args)
+    return {"cleared": True, "gameweek": gameweek}
 
 
 def _scoring_squad(picks, index=None):
@@ -187,17 +261,24 @@ def backfill_actuals(gameweek, events=None):
         squad = _scoring_squad(picks, index)
         result = autosubs.apply(squad, minutes)
         total = autosubs.score(squad, live, result)
-        updates = [(live[row["element_id"]], row["id"]) for row in picks
-                   if row["element_id"] in live]
+        mults = autosubs.multipliers(squad, result)
+        # The multiplier is written for every pick, the score only for the ones
+        # FPL reported. A player absent from the live feed still has a place in
+        # the lineup that was scored, and stating it is what lets the pitch
+        # explain the total; inventing a nought for him would not.
+        updates = [(live.get(row["element_id"]), mults.get(row["element_id"]),
+                    row["id"]) for row in picks]
 
         conn.executemany(
-            "UPDATE ai_team_snapshot_picks SET actual_points = ? WHERE id = ?", updates)
+            "UPDATE ai_team_snapshot_picks SET actual_points = COALESCE(?, actual_points), "
+            "effective_multiplier = ? WHERE id = ?", updates)
         conn.execute("UPDATE ai_team_snapshot SET actual_points = ? WHERE id = ?",
                      (total, head["id"]))
 
     return {"updated": True, "gameweek": gw, "actual_points": total,
             "predicted_points": head["predicted_points"],
-            "players_scored": len(updates), "auto_subs": len(result["subs"])}
+            "players_scored": sum(1 for row in picks if row["element_id"] in live),
+            "auto_subs": len(result["subs"])}
 
 
 def live_overlay(squad, gameweek, events=None, chip=None):
