@@ -17,7 +17,7 @@ jinja2==3.1.6
 # Starlette is FastAPI's own dependency and FastAPI's pin governs it. Named
 # here anyway because the app imports Starlette types directly, and because
 # the 1.0 release is expected to move things this code touches.
-starlette==0.52.1
+starlette==1.6.0
 # Imported directly by main.py (Markup, escape) and NOT only through Jinja.
 # It has always been installed here as a dependency of jinja2, which is why
 # nothing has broken - but a direct import satisfied by somebody else's
