@@ -31,7 +31,7 @@ markupsafe==3.0.3
 # change is not guaranteed. rating_model.py has a version guard that turns a
 # mismatch into a StaleModelError rather than into wrong numbers, and the
 # suite exercises it - but the fix is still a retrain, so the PR should say so.
-pandas==3.0.0
+pandas==3.0.5
 numpy==2.4.1
 scikit-learn==1.8.0
 joblib==1.5.3
