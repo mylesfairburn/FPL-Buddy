@@ -316,6 +316,53 @@ CREATE TABLE IF NOT EXISTS job_run (
 );
 CREATE INDEX IF NOT EXISTS idx_job_run_job ON job_run (job, id);
 
+-- Players someone is keeping an eye on, keyed on FPL id.
+--
+-- Player column is `code`, not `element_id`: everything else in this file
+-- describes one season, but a watchlist is meant to survive the summer, and
+-- FPL reassigns ids every August.
+--
+-- Unauthenticated in both directions like manager_draft - see drafts.py.
+CREATE TABLE IF NOT EXISTS watchlist (
+    fpl_id     INTEGER NOT NULL,
+    code       INTEGER NOT NULL,          -- FPL's season-stable player code
+    note       TEXT,                      -- optional, the reader's own words
+    added_at   TEXT NOT NULL,
+    PRIMARY KEY (fpl_id, code)
+);
+CREATE INDEX IF NOT EXISTS idx_watchlist_fpl ON watchlist (fpl_id, added_at);
+
+-- One row per player per night: what he cost, and the cumulative transfer
+-- counters at that moment.
+--
+-- A diff engine. FPL publishes the inputs to a price change and never the
+-- mechanism, and its counters are cumulative for the season, so a single row
+-- here says nothing - the signal is the difference between two nights.
+--
+-- Keyed on `code`: FPL reassigns `id` every summer, so an id-keyed history
+-- would splice two footballers together each August.
+--
+-- `snapshot_date` is a date, not a timestamp: prices move once a night, so a
+-- second capture on the same day replaces the first rather than
+-- double-counting the transfers between them.
+CREATE TABLE IF NOT EXISTS player_price_snapshot (
+    snapshot_date TEXT    NOT NULL,          -- YYYY-MM-DD
+    code          INTEGER NOT NULL,          -- FPL's season-stable player code
+    now_cost      INTEGER NOT NULL,          -- tenths of a million, as FPL stores it
+    transfers_in  INTEGER NOT NULL,          -- cumulative, season to date
+    transfers_out INTEGER NOT NULL,          -- cumulative, season to date
+    selected_by   REAL,                      -- ownership %, as FPL displayed it
+    -- Owners that night, resolved at CAPTURE time. Stored rather than derived
+    -- on read: the page would otherwise need `total_players` per request, and
+    -- that only comes from bootstrap-static. It is also the more correct
+    -- number, since ownership and the size of the game both drift.
+    owners        INTEGER,
+    captured_at   TEXT    NOT NULL,
+    PRIMARY KEY (snapshot_date, code)
+);
+CREATE INDEX IF NOT EXISTS idx_price_snapshot_code
+    ON player_price_snapshot (code, snapshot_date);
+
 -- What has already been pushed to Discord.
 --
 -- Every notification this app sends is triggered by a WINDOW rather than an
@@ -567,10 +614,50 @@ def record_known_manager(fpl_id):
             (int(fpl_id), now, now))
 
 
-def known_managers():
+# Distinct from RETENTION_MONTHS, which is the privacy promise about a
+# person's data. This bounds a WORK QUEUE: every row is walked at every
+# deadline at two or three FPL calls apiece, and the endpoint that inserts them
+# is anonymous. Someone using the site moves `last_seen` most weeks and is
+# never eligible; an id looked up once in March is a scan or a curiosity.
+IDLE_MANAGER_DAYS = 90
+
+
+def known_managers(limit=None):
+    """The ids to snapshot, most recently active first, so `limit` keeps the
+    people actually using the site rather than the lowest id numbers."""
+    sql = "SELECT fpl_id FROM known_manager ORDER BY last_seen DESC, fpl_id ASC"
+    params = ()
+    if limit is not None:
+        sql += " LIMIT ?"
+        params = (int(limit),)
     with connect() as conn:
-        return [r["fpl_id"] for r in conn.execute(
-            "SELECT fpl_id FROM known_manager ORDER BY fpl_id")]
+        return [r["fpl_id"] for r in conn.execute(sql, params)]
+
+
+def count_known_managers():
+    """How many ids are on file. Its own query rather than
+    len(known_managers()), which stops being free exactly when it matters."""
+    with connect() as conn:
+        return conn.execute("SELECT COUNT(*) FROM known_manager").fetchone()[0]
+
+
+def prune_idle_managers(days=IDLE_MANAGER_DAYS, now=None):
+    """Forget ids nobody came back to, so the deadline job stays bounded.
+
+    Exempts anything with a stored gameweek or draft - those are governed by
+    purge_expired instead. What is left is "looked up once, never again".
+    """
+    from datetime import datetime, timedelta, timezone
+    now = now or datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=int(days))).isoformat()
+    with connect() as conn:
+        removed = conn.execute(
+            """DELETE FROM known_manager
+               WHERE last_seen < ?
+                 AND fpl_id NOT IN (SELECT fpl_id FROM manager_team)
+                 AND fpl_id NOT IN (SELECT fpl_id FROM manager_draft)""",
+            (cutoff,)).rowcount
+    return {"cutoff": cutoff, "removed": removed}
 
 
 # ---- deadline ledger ------------------------------------------------------

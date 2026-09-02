@@ -32,6 +32,20 @@ jobs:
           python-version: "3.13"
           cache: pip
 
+      # The front-end suites run under Node - see tests/suite_js.py, which
+      # shells out to tests/js/run.js and folds the results into the same
+      # report. ubuntu-latest already ships a Node, so this is not strictly
+      # required today; it is here because the alternative is depending on a
+      # runner image detail, and the failure if that ever changed would be
+      # SILENT. suite_js.py records a skip rather than a failure when Node is
+      # missing, precisely so a developer without it can still run the Python
+      # suite - which means CI losing Node would quietly stop testing the
+      # front end rather than going red.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       # Both files. tests/requirements.txt carries what the suite needs and the
       # app does not - httpx, which fastapi.testclient is built on and which
       # plain `fastapi` does not install. Missing it is an import-time crash

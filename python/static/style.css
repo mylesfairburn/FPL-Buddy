@@ -2206,3 +2206,68 @@ a.navbar-brand.brand:focus-visible {
     .gw-status { margin-left: 0; }
     .gw-news-owned { margin-left: 0; }
 }
+
+/* =====================================================================
+   New pages: accuracy, price changes, captain picks, compare, watchlist
+   =====================================================================
+   Every table below sits inside .table-responsive and carries a min-width
+   rather than a fluid one. Same trick .underperf-table uses: below the floor
+   the columns squeeze a sentence to one word per line, and scrolling the
+   table sideways beats that. The page itself never scrolls horizontally. */
+.accuracy-table { min-width: 620px; }
+.accuracy-table th[scope="row"] { min-width: 190px; }
+.accuracy-gw-table { min-width: 480px; }
+
+.price-table { min-width: 400px; }
+.price-table th[scope="row"] { min-width: 140px; }
+.price-table th[scope="row"] .text-muted { margin-left: 4px; }
+.price-recent-table { min-width: 420px; }
+
+.captain-table { min-width: 720px; }
+.captain-table th[scope="row"] { min-width: 130px; }
+.captain-table .gw-fixtures { margin: 0; }
+
+.wl-table { font-size: 0.82rem; min-width: 640px; }
+.wl-table td, .wl-table th { vertical-align: middle; }
+.wl-note { color: #555; font-style: italic; max-width: 220px; }
+.wl-fixtures { white-space: nowrap; }
+.wl-fixtures .mini-gw { margin-right: 2px; }
+.wl-remove { color: #999; font-size: 1.1rem; line-height: 1; }
+.wl-remove:hover { color: #e03131; }
+
+/* Comparison: the players are the COLUMNS, so it reads down. */
+.cmp-pickers { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.cmp-picker { flex: 1 1 200px; min-width: 170px; }
+.cmp-picker-label { display: block; font-size: 0.8rem; font-weight: 600;
+                    color: var(--accent-dark); margin-bottom: 3px; }
+.compare-table { min-width: 460px; }
+.compare-table th[scope="row"] { width: 34%; font-weight: 600; color: #555; }
+.compare-table thead th { color: var(--accent-dark); font-size: 1rem; }
+.compare-table td { vertical-align: middle; }
+/* Tinted rather than bolded: the claim is about the pair of cells, and colour
+   says that where weight would only say "important". */
+.compare-table td.cmp-best {
+    background: #effafa;
+    font-weight: 700;
+    box-shadow: inset 2px 0 0 var(--accent);
+}
+.compare-table .mini-gw { margin-right: 2px; }
+
+/* Status strip under a tool-page heading: when this locks, and whether the
+   numbers are today's. Wraps rather than scrolls - two short items fit two
+   lines, and a scroller for eight words would be worse. */
+.status-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 18px;
+    margin: -4px 0 14px;
+    font-size: 0.82rem;
+    color: #666;
+}
+.status-item { display: inline-flex; align-items: baseline; gap: 5px; }
+.status-label { color: #888; }
+.status-item time { font-weight: 600; color: var(--accent-dark); }
+.status-countdown { color: #888; font-weight: 400; }
+@media (max-width: 575.98px) {
+    .status-strip { gap: 2px 14px; font-size: 0.78rem; }
+}

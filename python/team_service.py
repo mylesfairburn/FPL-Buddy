@@ -81,9 +81,14 @@ _TEAM_SHORT = None
 
 
 def _team_short_map():
-    """team id -> short name (e.g. 1 -> 'ARS'), fetched once and cached."""
+    """team id -> short name (e.g. 1 -> 'ARS'), fetched once and cached.
+
+    Only a NON-EMPTY result is remembered. Guarding on `is None` instead made a
+    single failed fetch permanent: an unreachable API yields `{}`, which is
+    falsy but not None, so every club stayed nameless until restart.
+    """
     global _TEAM_SHORT
-    if _TEAM_SHORT is None:
+    if not _TEAM_SHORT:
         data = _get(f"{BASE}/bootstrap-static/")
         _TEAM_SHORT = {t["id"]: t["short_name"] for t in (data or {}).get("teams", [])}
     return _TEAM_SHORT or {}
@@ -100,7 +105,9 @@ def team_name_map():
     pitch tile, but a page that says "a their club midfielder" is not something
     to serve to a reader."""
     global _TEAM_NAMES
-    if _TEAM_NAMES is None:
+    # `not` rather than `is None` - see _team_short_map: an empty map is a
+    # failed fetch, not an answer.
+    if not _TEAM_NAMES:
         data = get_bootstrap_data() or {}
         _TEAM_NAMES = {t["id"]: t["name"] for t in data.get("teams", [])}
     return _TEAM_NAMES or {}

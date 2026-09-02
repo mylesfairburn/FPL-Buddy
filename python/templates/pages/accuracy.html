@@ -1,0 +1,223 @@
+{% extends "pages/_layout.html" %}
+
+{% block content %}
+<h1 class="page-title">How accurate are the predictions?</h1>
+<p class="page-lede">
+    Every prediction on this site is written down before the deadline and never
+    recalculated. This page is what happened next: what the model said, what the
+    players actually scored, and how far apart the two were.
+</p>
+
+{% if not acc.available %}
+<h2>Nothing has settled yet</h2>
+<p>
+    There are no finished gameweeks with scores backfilled onto a frozen squad,
+    so there is nothing here to report. That is a real answer rather than a
+    fault — the numbers appear on their own once the first gameweek is settled
+    and Fantasy Premier League has confirmed its bonus points.
+</p>
+<p>
+    Until then, the honest summary is the one on the
+    <a href="/faq">FAQ</a>: the projections are useful for comparing players
+    against each other and poor as a forecast of any single score.
+</p>
+
+{% else %}
+
+{% set h = acc.headline %}
+{% if h %}
+<h2>The short version</h2>
+{% if h.sufficient %}
+<p>
+    Across <strong>{{ h.n }}</strong> settled player-gameweeks, the projections
+    were out by <strong>{{ h.mae }} points</strong> on average.
+    {% if h.improvement_pct is not none and h.improvement_pct > 0 %}
+    That is <strong>{{ h.improvement_pct }}%</strong> better than the best you
+    could do knowing nothing about the players — predicting the same score for
+    everybody, which would be out by {{ h.baseline_mae }}.
+    {% elif h.improvement_pct is not none %}
+    That is <em>no better</em> than predicting the same score for everybody,
+    which would be out by {{ h.baseline_mae }}. On this sample the model is not
+    earning its keep, and saying so is the point of publishing the number.
+    {% endif %}
+    {% if h.spearman is not none %}
+    Ranked against each other rather than scored absolutely, the correlation
+    between projection and outcome is <strong>{{ h.spearman }}</strong>.
+    {% endif %}
+</p>
+{% else %}
+<p>
+    Only <strong>{{ h.n }}</strong> player-gameweeks have settled so far. The
+    figures below are printed because hiding them would be worse, but they are
+    not yet worth leaning on — the rank correlation in particular swings about
+    considerably until there are {{ acc.min_predictions }} or so behind it.
+</p>
+{% endif %}
+{% endif %}
+
+<h2>What is being measured</h2>
+<p>
+    Each row below is one squad, and each squad contributes fifteen predictions
+    a gameweek — one per player. A prediction counts only once its gameweek is
+    settled and Fantasy Premier League has confirmed the bonus points, so
+    nothing here is provisional.
+</p>
+
+<div class="table-responsive">
+    <table class="table table-sm align-middle accuracy-table">
+        <thead>
+            <tr>
+                <th scope="col">Sample</th>
+                <th scope="col" class="text-end">Predictions</th>
+                <th scope="col" class="text-end">Avg error</th>
+                <th scope="col" class="text-end">No-model baseline</th>
+                <th scope="col" class="text-end">Better by</th>
+                <th scope="col" class="text-end">Bias</th>
+                <th scope="col" class="text-end">Rank corr.</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for s in acc.sources %}
+            <tr>
+                <th scope="row">
+                    {{ s.label }}
+                    <div class="text-muted small fw-normal">{{ s.note }}</div>
+                </th>
+                <td class="text-end">{{ s.n }}</td>
+                <td class="text-end">{{ s.mae }}</td>
+                <td class="text-end text-muted">{{ s.baseline_mae }}</td>
+                <td class="text-end">
+                    {%- if s.improvement_pct is not none %}{{ s.improvement_pct }}%
+                    {%- else %}&ndash;{% endif -%}
+                </td>
+                <td class="text-end">
+                    {%- if s.bias > 0 %}+{% endif %}{{ s.bias }}
+                </td>
+                <td class="text-end">
+                    {%- if s.spearman is not none and s.sufficient %}{{ s.spearman }}
+                    {%- elif s.spearman is not none %}<span class="text-muted" title="too few predictions to rely on">{{ s.spearman }}*</span>
+                    {%- else %}&ndash;{% endif -%}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<p class="text-muted small">
+    <strong>Avg error</strong> is the mean absolute difference between predicted
+    and actual points. <strong>Bias</strong> is the average signed difference: a
+    positive number means the model projects more than players deliver.
+    <strong>Rank correlation</strong> is Spearman's — whether the model puts
+    players in the right order, which is the claim this site actually makes.
+    A figure marked * has fewer than {{ acc.min_predictions }} predictions
+    behind it.
+</p>
+
+{% if acc.per_gameweek %}
+<h2>Gameweek by gameweek</h2>
+<p>
+    One averaged number hides the shape of the thing. The model has good weeks
+    and bad ones, and the spread is more use than the average when you are
+    deciding how much to trust a projection.
+</p>
+<div class="table-responsive">
+    <table class="table table-sm accuracy-gw-table">
+        <thead>
+            <tr>
+                <th scope="col">Gameweek</th>
+                <th scope="col" class="text-end">Predictions</th>
+                <th scope="col" class="text-end">Avg error</th>
+                <th scope="col" class="text-end">Bias</th>
+                <th scope="col" class="text-end">Avg predicted</th>
+                <th scope="col" class="text-end">Avg actual</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in acc.per_gameweek %}
+            <tr>
+                <th scope="row"><a href="/gameweek/{{ r.gameweek }}">GW{{ r.gameweek }}</a></th>
+                <td class="text-end">{{ r.n }}</td>
+                <td class="text-end">{{ r.mae }}</td>
+                <td class="text-end">{% if r.bias > 0 %}+{% endif %}{{ r.bias }}</td>
+                <td class="text-end text-muted">{{ r.mean_predicted }}</td>
+                <td class="text-end text-muted">{{ r.mean_actual }}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if acc.squad_totals %}
+<h2>The squads themselves</h2>
+<p>
+    A different question, and worth keeping separate: the table above asks
+    whether the projections are any good, this one asks whether the squad built
+    out of them worked. A squad can score well in a week the individual
+    projections were poor, and often does — it only needs the order to be
+    roughly right, not the numbers.
+</p>
+<div class="table-responsive">
+    <table class="table table-sm accuracy-gw-table">
+        <thead>
+            <tr>
+                <th scope="col">Gameweek</th>
+                <th scope="col" class="text-end">Projected</th>
+                <th scope="col" class="text-end">Actual</th>
+                <th scope="col" class="text-end">Difference</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in acc.squad_totals %}
+            <tr>
+                <th scope="row"><a href="/gameweek/{{ r.gameweek }}">GW{{ r.gameweek }}</a></th>
+                <td class="text-end">{{ r.predicted }}</td>
+                <td class="text-end">{{ r.actual }}</td>
+                <td class="text-end">
+                    {%- set d = (r.actual - r.predicted) | round(1) -%}
+                    {% if d > 0 %}+{% endif %}{{ d }}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endif %}
+
+<h2>How to read all this</h2>
+<p>
+    <strong>The sample is picked, not random.</strong> These are squads somebody
+    chose, and mostly squads the model chose for itself. Scoring well on players
+    it rated highly is easier than scoring well on the whole pool, because most
+    of the pool is players who never get near a pitch and are trivially
+    projected at nearly nothing. So read these figures as
+    <em>how good are the projections for players worth considering</em> — which
+    is the useful question, but is not the same as a score over every player
+    in the game.
+</p>
+<p>
+    <strong>The predictions are risk-adjusted.</strong> What gets stored against
+    a pick is the chance the player features multiplied by what he would score
+    if he did, so a doubtful player who sat out and scored nothing was partly
+    anticipated. That is the fair comparison to make, and it is also why these
+    numbers sit a little below the raw projections on a player's own page.
+</p>
+<p>
+    <strong>An average error of two points is not a small number</strong> when
+    most players score between two and six. That is the honest state of
+    predicting football over ninety minutes from a handful of inputs, and it is
+    why the <a href="/faq">FAQ</a> says the projections answer "who is the
+    better pick" rather than "how many will he get". The rank correlation is the
+    figure that speaks to the first question; the average error speaks to the
+    second, and it is the weaker of the two.
+</p>
+<p>
+    Nothing on this page is recomputed when you load it. The predictions were
+    frozen at their deadline and the actuals were written once the round
+    settled, which is what makes the comparison worth publishing at all — see
+    <a href="/about">how the model works</a> for why that freeze matters.
+</p>
+{% endblock %}

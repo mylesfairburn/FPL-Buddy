@@ -211,6 +211,17 @@ def get_clubelo_ratings(cache_path=None, on_date=None):
         return cached
 
     try:
+        # Plain HTTP, and it has to be. api.clubelo.com does not answer on 443
+        # at all - a request there does not get a certificate error, it hangs
+        # until the timeout - so switching to https means every fetch silently
+        # falls through to the except below and the ratings quietly freeze at
+        # whatever is in the cache. Checked 2026-08-31; if they ever do offer
+        # TLS this should move, but confirm it responds first.
+        #
+        # What is actually at risk: an on-path attacker could change the Elo
+        # numbers feeding team strength. That is a wrong fixture-difficulty
+        # column, not code execution, and nothing here is trusted enough to be
+        # worth more than this note.
         response = requests.get(f"http://api.clubelo.com/{on_date}",
                                 timeout=CLUBELO_TIMEOUT)
         response.raise_for_status()

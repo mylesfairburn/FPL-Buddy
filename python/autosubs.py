@@ -27,10 +27,13 @@ which is a separate rule and applies even under a Bench Boost - the one chip
 where no substitutions happen at all, because all fifteen are already scoring.
 """
 
-# Legal starting formations: one keeper, and the outfield minimums FPL enforces.
-# Maximums are implied - eleven players with these minimums met cannot exceed
-# 5 DEF / 5 MID / 3 FWD - so only the floors are stated.
+# Both ends, and the maximums are not decoration. This carried only the floors,
+# on the reasoning that meeting them cannot exceed 5/5/3. False in all three
+# directions - ten outfielders with two floors held down leaves room for 6 MID,
+# 7 DEF or 5 FWD - and reachable: a 3-5-2 whose forward blanked was substituted
+# into a 3-6-1 and the round SCORED on it.
 FORMATION_MIN = {"GK": 1, "DEF": 3, "MID": 2, "FWD": 1}
+FORMATION_MAX = {"GK": 1, "DEF": 5, "MID": 5, "FWD": 3}
 
 
 def player_id(player):
@@ -45,11 +48,11 @@ def _minutes(player, minutes):
 
 
 def _legal_xi(players):
-    """Eleven players meeting FPL's positional minimums.
+    """Eleven players in a formation FPL would actually allow.
 
-    A missing `pos` counts as nothing, so a squad we can't classify fails this
-    and no substitution is made - which is the safe direction: an unmade sub
-    leaves the score as it was, an illegal one invents a lineup.
+    An unclassifiable `pos` fails this, so no substitution is made - the safe
+    direction: an unmade sub leaves the score alone, an illegal one invents a
+    lineup.
     """
     if len(players) != 11:
         return False
@@ -58,8 +61,12 @@ def _legal_xi(players):
         counts[p.get("pos")] = counts.get(p.get("pos"), 0) + 1
     if counts.get("GK", 0) != 1:
         return False
-    return all(counts.get(pos, 0) >= need
-               for pos, need in FORMATION_MIN.items() if pos != "GK")
+    # An unrecognised position would otherwise be invisible below while still
+    # occupying one of the eleven shirts.
+    if sum(counts.get(pos, 0) for pos in FORMATION_MIN) != 11:
+        return False
+    return all(FORMATION_MIN[pos] <= counts.get(pos, 0) <= FORMATION_MAX[pos]
+               for pos in FORMATION_MIN)
 
 
 def _decided(player, decided_teams):
@@ -99,7 +106,15 @@ def apply(squad, minutes, decided_teams=None, chip=None):
             if _minutes(out, minutes) > 0 or not _decided(out, decided_teams):
                 continue
             for cand in bench:
-                if player_id(cand) in used or _minutes(cand, minutes) <= 0:
+                if player_id(cand) in used:
+                    continue
+                # "Has not played yet" is not "did not play". STOP rather
+                # than skip: FPL fills the slot in bench order, so passing over
+                # a man who may yet play picks a different substitute than the
+                # game will - and the pitch would reshuffle itself twice.
+                if not _decided(cand, decided_teams):
+                    break
+                if _minutes(cand, minutes) <= 0:
                     continue
                 trial = [p for p in lineup if player_id(p) != player_id(out)] + [cand]
                 if _legal_xi(trial):

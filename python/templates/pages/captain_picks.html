@@ -1,0 +1,150 @@
+{% extends "pages/_layout.html" %}
+
+{% block content %}
+<h1 class="page-title">FPL captain picks{% if gameweek %} — Gameweek {{ gameweek }}{% endif %}</h1>
+<p class="page-lede">
+    The highest projected scorers in the game this gameweek, whoever owns them.
+    Captaincy is the one decision where the question really is just "who scores
+    most this week", so this is ranked on the model's projection alone — not on
+    form, not filtered by ownership.
+</p>
+
+{% if provisional %}
+<h2>Too early to rank</h2>
+<p>
+    Not enough of the season has been played for this to mean anything yet. Until
+    there are a few gameweeks of results, every projection is built mostly on
+    last season's average — which flattens the differences between attackers far
+    more than it touches a defender's appearance-and-clean-sheet floor. The
+    result is a table where the whole pool sits within about two points of itself
+    and cheap defenders drift to the top.
+</p>
+<p>
+    That is not a ranking, it is a shape. So there isn't one here yet: it fills
+    in on its own once the season supplies the numbers. In the meantime the
+    <a href="/players">player ratings</a> carry the same projections with the
+    context to read them properly.
+</p>
+
+{% elif not picks %}
+<h2>Nothing to show</h2>
+<p>
+    No projections are available for the upcoming gameweek at the moment. This
+    usually means the ratings are still being rebuilt; the page fills in once
+    they are. The <a href="/players">player ratings</a> and the
+    <a href="/gameweek">gameweek briefing</a> cover the same ground.
+</p>
+
+{% else %}
+
+<h2>The shortlist</h2>
+<p>
+    Ranked by projected points for Gameweek {{ gameweek }}. Where two players
+    project the same, the more widely owned one is placed first — they are the
+    same bet on points and a different bet on rank, and the more-owned one is the
+    one that does not cost you places when it goes wrong.
+</p>
+
+<div class="gw-cards gw-cards-3">
+{% for p in picks[:3] %}
+    <article class="gw-card gw-card-captain">
+        <div class="gw-card-top">
+            {% with code = p.team_code, label = p.team_name %}{% include 'partials/club_chip.html' %}{% endwith %}
+            <span class="gw-pos">{{ p.pos }}</span>
+        </div>
+        <h3 class="gw-card-name">
+            {% if p.path %}<a href="{{ p.path }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}
+        </h3>
+        <p class="gw-card-figure">{{ p.headline }}</p>
+        <p class="gw-card-why">{{ p.why }}</p>
+        <dl class="gw-stats">
+            {% if p.cost %}<div><dt>Price</dt><dd>&pound;{{ '%.1f'|format(p.cost) }}m</dd></div>{% endif %}
+            {% if p.owned is not none %}<div><dt>Owned</dt><dd>{{ '%.1f'|format(p.owned) }}%</dd></div>{% endif %}
+            {% if p.behind_leader %}<div><dt>Behind</dt><dd>{{ '%.1f'|format(p.behind_leader) }}</dd></div>{% endif %}
+        </dl>
+        {% if p.fixtures %}
+        <p class="gw-fixtures">{% for f in p.fixtures %}<span>{{ f.label }}</span>{% endfor %}</p>
+        {% endif %}
+    </article>
+{% endfor %}
+</div>
+
+{% if picks | length > 3 %}
+<h2>The rest of the shortlist</h2>
+<p>
+    The next {{ picks | length - 3 }} names, in the same order. The
+    <em>behind</em> column is the gap to the top projection: a tenth of a point
+    is the model saying "either", and it is worth reading before treating this as
+    a ranking rather than a group.
+</p>
+<div class="table-responsive">
+    <table class="table table-sm captain-table">
+        <thead>
+            <tr>
+                <th scope="col">#</th>
+                <th scope="col">Player</th>
+                <th scope="col">Club</th>
+                <th scope="col">Pos</th>
+                <th scope="col" class="text-end">Projected</th>
+                <th scope="col" class="text-end">Behind</th>
+                <th scope="col" class="text-end">Price</th>
+                <th scope="col" class="text-end">Owned</th>
+                <th scope="col">Next</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for p in picks[3:] %}
+            <tr>
+                <td class="text-muted">{{ p.rank }}</td>
+                <th scope="row">
+                    {% if p.path %}<a href="{{ p.path }}">{{ p.name }}</a>{% else %}{{ p.name }}{% endif %}
+                </th>
+                <td class="text-muted">{{ p.team_name }}</td>
+                <td>{{ p.pos }}</td>
+                <td class="text-end fw-semibold">
+                    {%- if p.predicted is not none %}{{ '%.1f'|format(p.predicted) }}
+                    {%- else %}&ndash;{% endif -%}
+                </td>
+                <td class="text-end text-muted">
+                    {%- if p.behind_leader %}{{ '%.1f'|format(p.behind_leader) }}{% else %}&ndash;{% endif -%}
+                </td>
+                <td class="text-end">{% if p.cost %}&pound;{{ '%.1f'|format(p.cost) }}m{% endif %}</td>
+                <td class="text-end text-muted">{% if p.owned is not none %}{{ '%.1f'|format(p.owned) }}%{% endif %}</td>
+                <td class="gw-fixtures">{% for f in p.fixtures %}<span>{{ f.label }}</span>{% endfor %}</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endif %}
+
+<h2>How to use this</h2>
+<p>
+    <strong>The gap matters more than the order.</strong> Two players projected
+    within a couple of tenths of each other are, as far as this model is
+    concerned, the same pick. The <em>behind</em> figure is there so that reads
+    as "either of these" rather than as first and second place.
+</p>
+<p>
+    <strong>Ownership is a separate question.</strong> Captaining the most-owned
+    player is the low-variance choice: when he blanks, so does everyone else.
+    Captaining a differential is how you gain rank and how you lose it. This page
+    ranks on points only, so if rank is what you care about, read the ownership
+    column as the other half of the decision.
+</p>
+<p>
+    <strong>The projections are wrong about individuals most weeks.</strong> They
+    are useful for comparing players, poor as a forecast of any single score —
+    and how wrong they have actually been is published on the
+    <a href="/accuracy">accuracy page</a> rather than described.
+</p>
+<p class="text-muted small">
+    Rebuilt nightly from the current squad prices, form and team news{% if updated %},
+    last updated {{ updated }}{% endif %}. Unlike the dated
+    <a href="/gameweek">gameweek briefing</a>, which is frozen at its deadline,
+    this page follows the news: if the top pick is ruled out on a Friday, the
+    shortlist changes.
+</p>
+{% endblock %}

@@ -44,6 +44,7 @@ import ops
 import player_pages
 import player_spotlight
 import rating_model
+import price_changes
 import retention
 import seasons
 import social
@@ -105,6 +106,16 @@ def ping_refresh():
         return False
 
 
+# Really a bound on how long the hourly watcher can take: each manager costs
+# two or three serial FPL calls, and the endpoint that fills the list is
+# anonymous. Without a ceiling, a few minutes of scripted requests turn the
+# next deadline into hundreds of thousands of calls.
+#
+# Ordered most-recently-active first, so if it binds it drops the people who
+# never came back.
+MAX_MANAGERS_PER_RUN = 500
+
+
 def snapshot_managers(gameweek, position_dfs, next_gameweek=None):
     """Capture every known manager's real picks for a gameweek, and replace
     their in-app draft with those picks.
@@ -112,10 +123,15 @@ def snapshot_managers(gameweek, position_dfs, next_gameweek=None):
     This is the deadline reset: until it runs, the draft is whatever the user
     was building here; afterwards it IS their official team, re-pointed at the
     next gameweek so they can start editing again."""
-    ids = db.known_managers()
+    ids = db.known_managers(limit=MAX_MANAGERS_PER_RUN)
     if not ids:
         log("  no known managers to snapshot")
         return 0, 0
+    if len(ids) >= MAX_MANAGERS_PER_RUN:
+        # Logged rather than silently truncated: hitting this early means
+        # somebody is enumerating /api/team, and this is where that shows up.
+        log(f"  capped at {MAX_MANAGERS_PER_RUN} managers "
+            f"({db.count_known_managers()} on file) - most recently active first")
     saved = replaced = 0
     for fpl_id in ids:
         try:
@@ -282,7 +298,8 @@ def deadline_watch(budget=DEFAULT_BUDGET, force_gameweek=None):
          fixed hour; see publish_settled_roundup.
     """
     db.init_db()
-    events = gw_clock.get_events()
+    # force: this caller ACTS on the clock rather than rendering it.
+    events = gw_clock.get_events(force=True)
     if not events:
         log("No events from the FPL API (offline?) - nothing to do.")
         return 1
@@ -987,6 +1004,18 @@ def daily_refresh(skip_stats=False):
     except Exception as e:
         log(f"  retention purge FAILED: {e}")
 
+    # Early and before anything heavy: a missed snapshot is a hole in every
+    # difference that crosses it, so it should not sit behind a stats scrape
+    # that can take minutes and fail. Never fatal.
+    try:
+        snap = price_changes.capture()
+        if snap.get("written"):
+            log(f"  price snapshot: {snap['written']} players on {snap['date']}")
+        else:
+            log(f"  price snapshot skipped: {snap.get('detail')}")
+    except Exception as e:
+        log(f"  price snapshot FAILED: {e}")
+
     if not skip_stats:
         try:
             refresh_season_stats()
@@ -1053,6 +1082,25 @@ def daily_maintenance():
                 f"{', '.join(result['seasons'])}")
     except Exception as e:
         log(f"  pruning old caches FAILED: {e}")
+
+    # Bounds the deadline job's queue. Separate from the retention purge in
+    # daily_refresh, which is about a person's data on a two-year clock.
+    try:
+        idle = db.prune_idle_managers()
+        if idle["removed"]:
+            log(f"  known managers: removed {idle['removed']} id(s) not seen "
+                f"since {idle['cutoff'][:10]}")
+    except Exception as e:
+        log(f"  pruning idle managers FAILED: {e}")
+
+    # The one table that grows on a fixed clock rather than with the season.
+    try:
+        dropped = price_changes.prune()
+        if dropped["removed"]:
+            log(f"  price snapshots: removed {dropped['removed']} row(s) "
+                f"older than {dropped['cutoff']}")
+    except Exception as e:
+        log(f"  pruning price snapshots FAILED: {e}")
 
 
 def check_staleness():

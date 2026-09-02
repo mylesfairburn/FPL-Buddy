@@ -41,9 +41,10 @@ SEV_COLOUR = {
 
 def _load_suites():
     import context  # boots the app  # noqa: F401
-    import suite_units, suite_routes, suite_api, suite_security
+    import suite_units, suite_routes, suite_api, suite_security, suite_js
     return (suite_units.SUITES + suite_routes.SUITES
-            + suite_api.SUITES + suite_security.SUITES), context
+            + suite_api.SUITES + suite_security.SUITES
+            + suite_js.SUITES), context
 
 
 def _md_cell(text):

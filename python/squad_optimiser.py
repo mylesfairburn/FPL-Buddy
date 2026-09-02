@@ -58,6 +58,21 @@ COVER_NEEDED_AT = 0.9
 # A bench player only counts as cover if they're themselves dependable.
 RELIABLE_AT = 0.9
 
+# Wall-clock ceiling on a single solve, in seconds.
+#
+# CBC has no time limit by default, and this solver runs INSIDE a request:
+# cached_best_xi() is called from /api/ai/best_xi whenever the upcoming
+# gameweek has not been snapshotted yet. An unbounded solve there is a request
+# thread that never returns, and uvicorn runs a single worker by design.
+#
+# Thirty seconds is roughly fifty times what a normal solve takes, so it can
+# only ever be reached by something genuinely pathological. Hitting it is
+# treated as failure rather than as "take the best answer so far", because the
+# whole claim this squad makes is that it is provably optimal - a truncated
+# search that happens to be feasible is a different and weaker statement, and
+# the tab says "unavailable" rather than quietly printing it.
+SOLVER_TIME_LIMIT_S = 30
+
 
 class OptimisationError(RuntimeError):
     """Raised when no legal squad exists for the given pool/budget."""
@@ -285,7 +300,7 @@ def optimise_squad(players, gameweek, budget=DEFAULT_BUDGET,
         if len(playing) >= minimum:      # infeasible asks are ignored, not fatal
             prob += pulp.lpSum(pick[i] for i in playing) >= minimum
 
-    status = prob.solve(pulp.PULP_CBC_CMD(msg=False))
+    status = prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=SOLVER_TIME_LIMIT_S))
     if pulp.LpStatus[status] != "Optimal":
         raise OptimisationError(
             f"No legal squad found for GW{gameweek} within £{budget}m "

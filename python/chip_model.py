@@ -49,8 +49,8 @@ import pulp
 
 import fixture_structure
 import seasons
-from squad_optimiser import (DEFAULT_BUDGET, OptimisationError, availability,
-                             optimise_squad)
+from squad_optimiser import (DEFAULT_BUDGET, SOLVER_TIME_LIMIT_S,
+                             OptimisationError, availability, optimise_squad)
 from valuation import (coverage_requirement, gameweek_points, has_fixture,
                        horizon_value, squad_horizon_value,
                        squad_selection_values)
@@ -550,7 +550,13 @@ def schedule_chips(available, now, deadline, matrix, priors=None):
                     prob += x[(c, gw)] == 0
 
     try:
-        status = prob.solve(pulp.PULP_CBC_CMD(msg=False))
+        # Bounded for the same reason the squad solver is - this runs on the
+        # request path through the AI Manager preview. Unlike that one, a
+        # timeout here is not fatal: the greedy fallback below is a complete
+        # answer, just not a provably best one, and a chip schedule that is
+        # merely good beats a tab that cannot render.
+        status = prob.solve(pulp.PULP_CBC_CMD(msg=False,
+                                              timeLimit=SOLVER_TIME_LIMIT_S))
         if pulp.LpStatus[status] != "Optimal":
             raise OptimisationError(pulp.LpStatus[status])
     except (OptimisationError, pulp.PulpSolverError):

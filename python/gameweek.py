@@ -11,6 +11,8 @@ events feed is the only source of truth, and the watcher polls hourly rather
 than trying to predict when to look.
 """
 
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
@@ -36,11 +38,58 @@ def _get(url):
         return None
 
 
-def get_events():
+# bootstrap-static is 1.8 MB and every caller without an events list in hand
+# pulls the whole thing to ask what gameweek it is. /player/<slug> asks on every
+# render - 570 pages, so a crawl once cost about a gigabyte of FPL's bandwidth
+# to learn one boolean - and /api/live/<gw> is polled by every open tab.
+#
+# Two minutes because nothing in the request path needs a deadline to the
+# second; the hourly cron watcher acts on those, and its windows are hours wide.
+_EVENTS_TTL_S = 120
+
+# Sync endpoints run in a threadpool. Held only around the two slots, never
+# across the HTTP call - that would serialise the site behind one slow fetch.
+_EVENTS_LOCK = threading.Lock()
+_EVENTS_CACHE = {"events": None, "at": 0.0}
+
+
+def get_events(force=False):
     """The events[] array from bootstrap-static: one entry per gameweek with
-    deadline_time / is_current / is_next / finished / data_checked."""
+    deadline_time / is_current / is_next / finished / data_checked.
+
+    Cached for _EVENTS_TTL_S; `force` bypasses it for callers that ACT on the
+    clock rather than render it.
+
+    A failed fetch serves the last good list, not []. [] is a real answer -
+    "no gameweek has started" - which the player pages render as "these are
+    last season's numbers". A stale clock beats one that is a year wrong.
+    """
+    now = time.monotonic()
+    if not force:
+        with _EVENTS_LOCK:
+            cached, at = _EVENTS_CACHE["events"], _EVENTS_CACHE["at"]
+        if cached is not None and (now - at) < _EVENTS_TTL_S:
+            return cached
+
     data = _get(f"{BASE}/bootstrap-static/")
-    return (data or {}).get("events") or []
+    events = (data or {}).get("events") or []
+    if not events:
+        # Only a process that has never succeeded returns [].
+        with _EVENTS_LOCK:
+            stale = _EVENTS_CACHE["events"]
+        return stale if stale is not None else []
+
+    with _EVENTS_LOCK:
+        _EVENTS_CACHE["events"] = events
+        _EVENTS_CACHE["at"] = time.monotonic()
+    return events
+
+
+def clear_events_cache():
+    """Drop the cached clock. For tests."""
+    with _EVENTS_LOCK:
+        _EVENTS_CACHE["events"] = None
+        _EVENTS_CACHE["at"] = 0.0
 
 
 def parse_deadline(value):

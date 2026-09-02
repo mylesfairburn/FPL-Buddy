@@ -1,0 +1,72 @@
+{% extends "pages/_layout.html" %}
+
+{% block content %}
+<h1 class="page-title">Compare FPL players</h1>
+<p class="page-lede">
+    Put two or three players next to each other and see where they actually
+    differ — projected points for the next eight gameweeks, form, price,
+    ownership and who they play. The link updates as you pick, so a comparison
+    can be sent to whoever you are arguing with.
+</p>
+
+<div class="cmp-pickers" id="cmpPickers">
+    {# Three slots, rendered by the server so the controls exist before any
+       JavaScript runs and the page is not a blank div to a crawler. The third
+       is optional: two is the comparison people actually make, and a third
+       column is there for the times it is a shortlist rather than a duel. #}
+    {% for slot in [0, 1, 2] %}
+    <div class="cmp-picker">
+        <label class="cmp-picker-label" for="cmpInput{{ slot }}">
+            Player {{ slot + 1 }}{% if slot == 2 %} <span class="text-muted">(optional)</span>{% endif %}
+        </label>
+        <input class="form-control cmp-input" id="cmpInput{{ slot }}" type="search"
+               autocomplete="off" placeholder="Search a name…"
+               data-slot="{{ slot }}" list="cmpOptions{{ slot }}">
+        <datalist id="cmpOptions{{ slot }}"></datalist>
+    </div>
+    {% endfor %}
+</div>
+
+<p id="cmpStatus" class="text-muted small">Loading the player list…</p>
+
+<div id="cmpResult" class="d-none">
+    <div class="table-responsive">
+        <table class="table table-sm compare-table" id="cmpTable">
+            <thead><tr id="cmpHead"></tr></thead>
+            <tbody id="cmpBody"></tbody>
+        </table>
+    </div>
+    <p class="text-muted small" id="cmpNote"></p>
+</div>
+
+<h2>Reading the comparison</h2>
+<p>
+    <strong>The eight-gameweek total is the number to weigh.</strong> A single
+    gameweek's projection is mostly noise; the run is where a difference in
+    fixtures shows up, and it is the figure that answers "who should I own",
+    which is the question a comparison is usually really asking.
+</p>
+<p>
+    <strong>Rating and points are not the same scale.</strong> A rating out of
+    100 ranks a player against others <em>in his position</em>, so the best
+    goalkeeper and the best forward both read 100 while being worth very
+    different scores. Comparing a defender with a midfielder on rating alone
+    will mislead you; compare them on projected points.
+</p>
+<p>
+    <strong>Price is only interesting relative to what else that money buys.</strong>
+    A player half a million more expensive who projects a tenth of a point higher
+    is worse value, not better — the difference has to come from somewhere else
+    in the squad.
+</p>
+<p class="text-muted small">
+    Projections come from the same model as the rest of the site, and how
+    accurate it has actually been is published on the
+    <a href="/accuracy">accuracy page</a>. Data last updated {{ updated or 'recently' }}.
+</p>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}" src="/static/util.js?v={{ asset_version }}"></script>
+<script nonce="{{ csp_nonce }}" src="/static/compare.js?v={{ asset_version }}"></script>
+{% endblock %}

@@ -31,6 +31,26 @@ document.addEventListener('error', (e) => {
     else if (mode === 'invisible') el.style.visibility = 'hidden';
 }, true);
 
+// ---- Escaping ----
+// Every string in this file that came from somewhere else goes through here
+// before it is put into an innerHTML template.
+//
+// Most of them are FPL's own text - player names, injury blurbs - which is not
+// hostile but is not ours either. Three are worse than that: a mini-league
+// name, and the team and manager names in a league table, are free text typed
+// by whoever created them. Rendering another FPL user's chosen string as markup
+// in your browser is the classic stored-injection shape, and it arrives here
+// through an API neither we nor the reader control.
+//
+// The Content-Security-Policy already stops an injected on* handler or <script>
+// from EXECUTING, and that is the layer that matters most - but it is currently
+// the only one, and it does nothing about markup that merely breaks the page
+// apart (`</table><h1>`), which needs no script at all. This is the other half.
+//
+// Note this cannot be tested from the server side: the security suite reads the
+// HTML the server sends, and none of this markup exists until fetch() has
+// returned. See the rendered-league-name case in tests/suite_security.py.
+
 // ---- Tabs ----
 // Each tab is a real URL served by the server, not a fragment of one document.
 // Switching tabs still happens entirely in the browser - nothing is re-fetched -
@@ -51,6 +71,17 @@ const PATH_PANES = {};
 Object.keys(PANE_PATHS).forEach(p => { PATH_PANES[PANE_PATHS[p]] = p; });
 const PANES = Object.keys(PANE_PATHS);
 
+// Which pane a path belongs to, allowing for /my-team/<id>.
+//
+// A plain PATH_PANES lookup returns undefined for the id-carrying form, which
+// is not harmless: it is what popstate consults, so going Back onto a
+// /my-team/<id> entry would change the URL and leave the wrong pane on screen.
+function paneForPath(pathname) {
+    if (PATH_PANES[pathname]) return PATH_PANES[pathname];
+    if (/^\/my-team\/\d+$/.test(pathname)) return 'pane-team';
+    return null;
+}
+
 function activatePane(pane, opts) {
     opts = opts || {};
     if (!PANES.includes(pane)) pane = 'pane-team';
@@ -64,7 +95,15 @@ function activatePane(pane, opts) {
     // should return to the previous tab rather than leaving the site. Skipped
     // when the path already matches - on first load, and when popstate is what
     // moved us here, in which case the browser has already changed the URL.
-    const path = PANE_PATHS[pane];
+    // The team tab keeps whatever id is loaded in the address, so switching
+    // away to Players and back does not quietly discard it - the URL is the
+    // shareable thing, and a round trip through another tab should not undo it.
+    let path = PANE_PATHS[pane];
+    if (pane === 'pane-team') {
+        let current = null;
+        try { current = localStorage.getItem(FPL_ID_KEY); } catch (e) { /* private mode */ }
+        if (current) path = `/my-team/${current}`;
+    }
     if (path && history.pushState && location.pathname !== path) {
         history.pushState({ pane: pane }, '', path);
     }
@@ -103,7 +142,7 @@ document.querySelectorAll('#mainTabs [data-pane]').forEach(btn => {
 // Back/forward between tabs. Without this the URL would change and the page
 // would not, which is worse than having no history at all.
 window.addEventListener('popstate', () => {
-    const pane = PATH_PANES[location.pathname];
+    const pane = paneForPath(location.pathname);
     if (pane) activatePane(pane, { restoring: true });
 });
 
@@ -143,7 +182,7 @@ function restoreView() {
     // is (and rendered it open, so there's no flash of the wrong pane); reading
     // location.pathname is the fallback for a cached document served before
     // that variable existed.
-    const pane = window.__INITIAL_PANE__ || PATH_PANES[location.pathname] || 'pane-team';
+    const pane = window.__INITIAL_PANE__ || paneForPath(location.pathname) || 'pane-team';
     activatePane(pane, { restoring: true });
 
     let y = 0;
@@ -419,7 +458,39 @@ function discardSavedTeam() {
         .catch(() => alert('Couldn’t discard the saved team. Try again in a moment.'));
 }
 
-function getSavedId() { return localStorage.getItem(FPL_ID_KEY); }
+// The id in the address bar wins over the one in localStorage.
+//
+// Order matters and is the whole point of /my-team/<id>: someone opening a
+// link to a particular team should see THAT team, not whichever one this
+// browser looked at last. Following the link then also adopts it as this
+// browser's id, which is what makes a shared link work the same way as typing
+// the number in.
+function getSavedId() {
+    const fromUrl = window.__INITIAL_FPL_ID__;
+    if (fromUrl !== undefined && fromUrl !== null && String(fromUrl).length) {
+        const id = String(fromUrl);
+        try { localStorage.setItem(FPL_ID_KEY, id); } catch (e) { /* private mode */ }
+        // Read once. Without this, "Change ID" could never move off the id in
+        // the URL - every subsequent call would hand back the old one.
+        window.__INITIAL_FPL_ID__ = null;
+        return id;
+    }
+    try { return localStorage.getItem(FPL_ID_KEY); } catch (e) { return null; }
+}
+
+// Put the current id in the address bar without reloading.
+//
+// replaceState rather than pushState: entering an id is not somewhere you
+// navigated to, and making Back undo it would mean the button walks through
+// every id typed rather than leaving the tab.
+function syncIdToUrl(id) {
+    if (!history.replaceState) return;
+    const want = id ? `/my-team/${id}` : '/my-team';
+    // Only while My Team is the open tab. The panes share one document, so
+    // rewriting the path from another tab would put a team id under /players.
+    if (!location.pathname.startsWith('/my-team')) return;
+    if (location.pathname !== want) history.replaceState(history.state, '', want);
+}
 function showResetBtn() { document.getElementById('resetBtn').classList.remove('d-none'); }
 
 // "Change ID" lives in the navbar now, so it's visible from any tab —
@@ -446,7 +517,8 @@ idSave.addEventListener('click', () => {
     const val = idInput.value.trim();
     if (!/^\d+$/.test(val)) { idError.textContent = 'Enter a numeric FPL ID.'; return; }
     idError.textContent = '';
-    localStorage.setItem(FPL_ID_KEY, val);
+    try { localStorage.setItem(FPL_ID_KEY, val); } catch (e) { /* private mode */ }
+    syncIdToUrl(val);
     idPrompt.classList.add('d-none');
     showToolIntro(false);
     savedDraft = null;      // different manager, different saved team
@@ -457,12 +529,16 @@ idInput.addEventListener('keydown', e => { if (e.key === 'Enter') idSave.click()
 
 document.getElementById('changeId').addEventListener('click', () => {
     idInput.value = getSavedId() || '';
+    // Back to the generic URL while the form is up: the address bar should not
+    // still be advertising a team that is no longer on screen.
+    syncIdToUrl(null);
     showPrompt();
 });
 
 function loadTeam() {
     const id = getSavedId();
     if (!id) { showPrompt(); return; }
+    syncIdToUrl(id);
     const evParam = selectedEvent ? `&event=${selectedEvent}` : '';
     fetch(`/api/team?team_id=${id}${evParam}`)
         .then(res => res.json())
@@ -544,7 +620,7 @@ function renderTeam(view) {
         renderStatChips(null);
         if (!view.header) {
             // Genuine error (bad ID, fetch failure) \u2014 nothing to build on.
-            unavailable.innerHTML = `<div class="mb-2">${view.detail || 'Team not available.'}</div>`;
+            unavailable.innerHTML = `<div class="mb-2">${esc(view.detail || 'Team not available.')}</div>`;
             unavailable.classList.remove('d-none');
             teamBody.classList.add('d-none');
             return;
@@ -886,7 +962,7 @@ function playerCard(p, opts) {
         ${posLabel}${badge}
         <div class="player-kit">${shirtImg(p.team_code, p.pos, 'kit')}${plus}</div>
         ${availBand}
-        <div class="player-name-pill">${p.web_name}</div>
+        <div class="player-name-pill">${esc(p.web_name)}</div>
         ${live}
     </div>`;
 }
@@ -1009,8 +1085,8 @@ function startSub(id) {
     subSource = id;
     const p = workingSquad.find(x => x.id === id);
     const banner = document.getElementById('subBanner');
-    banner.innerHTML = `Swapping <strong>${p ? p.web_name : ''}</strong> &mdash; tap a highlighted player to swap, `
-        + `or tap <strong>${p ? p.web_name : 'them'}</strong> again to cancel. `
+    banner.innerHTML = `Swapping <strong>${esc(p ? p.web_name : '')}</strong> &mdash; tap a highlighted player to swap, `
+        + `or tap <strong>${esc(p ? p.web_name : 'them')}</strong> again to cancel. `
         + `<button id="subCancel" class="btn btn-link btn-sm p-0 align-baseline">cancel</button>`;
     banner.classList.remove('d-none');
     document.getElementById('subCancel').onclick = exitSubMode;
@@ -1026,9 +1102,57 @@ function exitSubMode() {
 }
 
 // ---- Player modal ----
-function closeModal() { document.getElementById('playerModal').classList.add('d-none'); }
+//
+// The keyboard handling below is the difference between a dialog and a div that
+// looks like one. Before it: Escape did nothing, Tab walked out of the open
+// pop-up and through the pitch behind it, and closing left focus on <body> so
+// the next Tab started again from the top of the document. All three are
+// invisible with a mouse and make the pop-up unusable without one.
+const playerModal = document.getElementById('playerModal');
+
+// Where focus came from, so it can be given back. A dialog that closes and
+// drops focus makes a keyboard user re-traverse the page to get back to the
+// player they were just looking at.
+let modalReturnFocus = null;
+
+function focusableInModal() {
+    return [...playerModal.querySelectorAll(
+        'a[href], button:not([disabled]), input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+        .filter(el => el.offsetParent !== null);
+}
+
+function closeModal() {
+    if (playerModal.classList.contains('d-none')) return;
+    playerModal.classList.add('d-none');
+    // Guarded: the element may have been re-rendered out of the document while
+    // the pop-up was open (a substitution redraws the whole pitch).
+    if (modalReturnFocus && document.contains(modalReturnFocus)) {
+        modalReturnFocus.focus();
+    }
+    modalReturnFocus = null;
+}
 document.getElementById('pmClose').addEventListener('click', closeModal);
 document.getElementById('pmBackdrop').addEventListener('click', closeModal);
+
+// One listener on the document rather than on the pop-up: the pop-up is not
+// focused when it opens unless something puts focus there, and a keydown on an
+// unfocused element never arrives.
+document.addEventListener('keydown', e => {
+    if (playerModal.classList.contains('d-none')) return;
+    if (e.key === 'Escape') { e.preventDefault(); closeModal(); return; }
+    if (e.key !== 'Tab') return;
+    // Trap: Tab past the last control wraps to the first, and Shift+Tab past
+    // the first wraps to the last, so focus cannot walk out into the page
+    // behind an open dialog.
+    const items = focusableInModal();
+    if (!items.length) return;
+    const first = items[0], last = items[items.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+    }
+});
 
 // `opts.readOnly` opens the pop-up with no action buttons at all, for a player
 // on somebody else's pitch - the AI squads. Without it a card on the AI Manager
@@ -1078,6 +1202,26 @@ function openPlayerModal(p, owned, opts) {
             actions.innerHTML = '';
         }
     }
+    // Watch sits outside the readOnly/owned branching above, deliberately.
+    // Those three cases are about editing YOUR squad, and watching a player is
+    // not that - it is equally sensible on a player you own, one you don't, and
+    // one on the AI's pitch, which is where a shortlist usually starts.
+    // Requires a `code`, which is what the watchlist is keyed on; a squad pick
+    // that arrived without one simply gets no button.
+    if (p.code != null) {
+        const watch = document.createElement('button');
+        watch.type = 'button';
+        watch.id = 'pmWatch';
+        watch.className = 'btn btn-sm btn-outline-primary pm-btn';
+        watch.onclick = () => toggleWatch(p);
+        actions.appendChild(watch);
+        updateWatchButton(p);
+        // Primed lazily: the first pop-up of a session is usually opened before
+        // the watchlist tab has ever been visited, so without this the button
+        // would open reading "Watch" for a player already on the list.
+        primeWatchedCodes().then(() => updateWatchButton(p));
+    }
+
     const tbox = document.getElementById('pmTransfer');
     tbox.classList.add('d-none'); tbox.innerHTML = '';
 
@@ -1092,7 +1236,14 @@ function openPlayerModal(p, owned, opts) {
 
     renderUpcoming(p);
     renderForm(p);
-    document.getElementById('playerModal').classList.remove('d-none');
+    modalReturnFocus = document.activeElement;
+    playerModal.classList.remove('d-none');
+    // Focus moves INTO the dialog, which is what makes Escape and the tab trap
+    // reachable at all, and what tells a screen reader that the context
+    // changed. The close button rather than the first action: it is the one
+    // control that is always present and always safe to activate by accident.
+    const close = document.getElementById('pmClose');
+    if (close) close.focus();
 }
 
 function renderUpcoming(p) {
@@ -1147,8 +1298,8 @@ function updateTransferBanner() {
     const totalBudget = bank + pendingOuts.reduce((s, o) => s + o.cost, 0);
     const labels = pendingOuts.map(o => o.id < 0 ? o.pos : o.web_name);
     const text = pendingOuts.length === 1
-        ? `Replacing <strong>${labels[0]}</strong>`
-        : `Replacing <strong>${pendingOuts.length}</strong> players (${labels.join(', ')})`;
+        ? `Replacing <strong>${esc(labels[0])}</strong>`
+        : `Replacing <strong>${pendingOuts.length}</strong> players (${esc(labels.join(', '))})`;
     banner.innerHTML = `${text} `
         + `(\u00a3${totalBudget.toFixed(1)}m total to spend) `
         + `&mdash; tap a highlighted player below to fill a slot, or tap a greyed player to drop it. `
@@ -1254,7 +1405,7 @@ function markTransferIn(inp) {
     if (!tinEligible.size) { alert(`No eligible ${inp.pos} to swap out for ${inp.web_name}.`); return; }
     pendingIn = inp;
     const banner = document.getElementById('transferBanner');
-    banner.innerHTML = `Transferring in <strong>${inp.web_name}</strong> \u2014 tap a highlighted player to swap out. `
+    banner.innerHTML = `Transferring in <strong>${esc(inp.web_name)}</strong> \u2014 tap a highlighted player to swap out. `
         + `<button id="tinCancel" class="btn btn-link btn-sm p-0 align-baseline">cancel</button>`;
     banner.classList.remove('d-none');
     document.getElementById('tinCancel').onclick = exitTransferInMode;
@@ -1398,7 +1549,7 @@ function renderChips(gw) {
         { key: 'bboost', name: 'Bench Boost', what: 'your bench also scores',
           fallback: `Bench projected ${benchPts} pts this gameweek.` },
         { key: '3xc', name: 'Triple Captain', what: 'your captain scores x3',
-          fallback: cap ? `${cap.web_name} projected ${capPts} pts (x3 = ${(capPts * 3).toFixed(1)}).`
+          fallback: cap ? `${esc(cap.web_name)} projected ${capPts} pts (x3 = ${(capPts * 3).toFixed(1)}).`
                         : 'Pick a strong captain first.' },
         { key: 'wildcard', name: 'Wildcard', what: 'unlimited free transfers',
           fallback: 'Best when the squad has drifted - injuries, bad runs, or players not contributing.' },
@@ -1636,9 +1787,9 @@ function renderTransfers(recs) {
         const cost = r.cost_change === 0 ? '\u00b10.0' : (r.cost_change > 0 ? '+' : '') + r.cost_change.toFixed(1);
         return `<div class="transfer-rec">
             <div class="transfer-line">
-                <span class="tr-out">${shirtImg(r.out.team_code, r.out.pos, 'shirt-sm')}${r.out.web_name}</span>
+                <span class="tr-out">${shirtImg(r.out.team_code, r.out.pos, 'shirt-sm')}${esc(r.out.web_name)}</span>
                 <span class="tr-arrow">&rarr;</span>
-                <span class="tr-in">${shirtImg(r.in.team_code, r.in.pos, 'shirt-sm')}${r.in.web_name}</span>
+                <span class="tr-in">${shirtImg(r.in.team_code, r.in.pos, 'shirt-sm')}${esc(r.in.web_name)}</span>
             </div>
             <div class="transfer-meta">
                 <span>rating +${r.rating_gain}</span><span>\u00a3${cost}m</span>
@@ -1706,7 +1857,7 @@ function renderLeagues(groups) {
         html += `<div class="league-group-label">${label}</div>`;
         html += list.map(l => `
             <div class="league-row" data-id="${l.id}">
-                <span class="league-name">${l.name}</span>
+                <span class="league-name">${esc(l.name)}</span>
                 <span class="league-rank">${l.rank != null ? 'Rank ' + l.rank.toLocaleString() : ''}</span>
                 <span class="league-caret">&#9662;</span>
                 <div class="league-standings d-none"></div>
@@ -1736,7 +1887,7 @@ function toggleLeague(row) {
             box.innerHTML = `<table class="table table-sm league-table mb-0"><tbody>${
                 data.standings.map(s => `<tr>
                     <td class="ls-rank">${s.rank}</td>
-                    <td>${s.entry_name}<div class="ls-manager">${s.manager}</div></td>
+                    <td>${esc(s.entry_name)}<div class="ls-manager">${esc(s.manager)}</div></td>
                     <td class="ls-total">${s.total}</td>
                 </tr>`).join('')}</tbody></table>`;
             syncNewsHeight();
@@ -1794,11 +1945,11 @@ function loadNews() {
                         ${shirtImg(s.team_code, '', 'shirt-sm')}
                         <div class="news-body">
                             <div class="news-head">
-                                <span class="news-who"><span class="news-player">${s.player}</span>
-                                    <span class="news-team">${s.team || ''}</span></span>
-                                <span class="news-date"${exact ? ` title="${exact}"` : ''}>${rel}</span>
+                                <span class="news-who"><span class="news-player">${esc(s.player)}</span>
+                                    <span class="news-team">${esc(s.team)}</span></span>
+                                <span class="news-date"${exact ? ` title="${esc(exact)}"` : ''}>${esc(rel)}</span>
                             </div>
-                            <div class="news-text">${s.headline}</div>
+                            <div class="news-text">${esc(s.headline)}</div>
                         </div>
                     </div>`;
                 }).join('');
@@ -1852,7 +2003,7 @@ function renderPerfRows(key) {
         st.group === 'attackers' ? (p.pos === 'MID' || p.pos === 'FWD') : (p.pos === 'DEF' || p.pos === 'GK'));
     body.innerHTML = rows.length ? rows.map(p => `
         <tr class="ps-row">
-            <td class="ps-name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${p.web_name}</span></td>
+            <td class="ps-name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${esc(p.web_name)}</span></td>
             <td>${p.pos}</td>
             <td>${p.team_name || ''}</td>
             <td>${p.metric}${p.season === 'last season' ? ' <span class="text-muted">(LS)</span>' : ''}</td>
@@ -1903,8 +2054,13 @@ document.querySelectorAll('#playersViewTabs .nav-link').forEach(btn => {
         Object.entries(PERF_VIEWS).forEach(([key, cfg]) => {
             document.getElementById(cfg.view).classList.toggle('d-none', key !== chosen);
         });
+        document.getElementById('watchlistView').classList.toggle('d-none', chosen !== 'watchlist');
         document.getElementById('playersTabSearch').classList.toggle('d-none', chosen !== 'all');
         if (PERF_VIEWS[chosen]) loadPerfView(chosen);
+        // Reloaded on every visit rather than latched like the perf views: it
+        // is the one table here the reader themselves changes, and a cached
+        // copy would not show the player they just added.
+        if (chosen === 'watchlist') loadWatchlist();
     });
 });
 
@@ -2080,7 +2236,7 @@ function createPlayerSearch(cfg) {
         const owned = p.owned != null ? p.owned.toFixed(1) : '\u2013';
         const ownedCell = cfg.showOwnership ? `<td class="col-owned">${owned}</td>` : '';
         return `<tr class="ps-row${disabled ? ' ps-disabled' : ''}"${dattr} data-id="${p.id}">
-            <td class="ps-name col-web_name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${p.web_name}</span></td>
+            <td class="ps-name col-web_name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${esc(p.web_name)}</span></td>
             <td class="col-pos">${p.pos}</td>
             <td class="col-team_name">${p.team_name || ''}</td>
             <td class="col-form">${form}</td>
@@ -2388,15 +2544,6 @@ let latestRotationData = null;
 // cannot be right for all twenty clubs at once - it reads as "every fixture is
 // a banker" rather than "we don't know yet". Mirrored exactly by colour() in
 // seo_tables.py; change the two together.
-const NO_DIFFICULTY_COLOUR = 'hsl(210, 8%, 88%)';
-
-function colorFor(value, min, max) {
-    if (value == null || !isFinite(value)) return NO_DIFFICULTY_COLOUR;
-    if (max === min) return NO_DIFFICULTY_COLOUR;
-    const ratio = (value - min) / (max - min);
-    const hue = 120 - (ratio * 120);
-    return `hsl(${hue}, 70%, 82%)`;
-}
 
 function allDifficulties(data) {
     const values = [];
@@ -2425,7 +2572,7 @@ function recSlot(pl) {
     if (!pl) return '<span class="rec-empty">&mdash;</span>';
     return `<span class="rec-slot">
         ${shirtImg(pl.team_code, pl.position, 'shirt-sm')}
-        <span class="player-name">${pl.web_name ?? ''}</span>
+        <span class="player-name">${esc(pl.web_name)}</span>
         <span class="rec-rating">${pl.rating != null ? Math.round(pl.rating) : '-'}</span>
         <span class="rec-cost">${pl.cost != null ? '£' + pl.cost.toFixed(1) + 'm' : ''}</span>
     </span>`;
@@ -2620,7 +2767,7 @@ function aiPlayerCard(p, onBench, gameweek, opts) {
         ${posLabel}${badge}${sub}
         <div class="player-kit">${shirtImg(p.team_code, p.pos, 'kit')}</div>
         ${band}
-        <div class="player-name-pill">${p.web_name}</div>
+        <div class="player-name-pill">${esc(p.web_name)}</div>
         <div class="player-gws">${aiFixtureBox(p, gameweek, opts)}</div>
     </div>`;
 }
@@ -2729,7 +2876,7 @@ function renderAiSquadTable(squad) {
         const arm = p.is_captain ? ' <span class="ai-arm">C</span>'
                   : (p.is_vice_captain ? ' <span class="ai-arm vice">V</span>' : '');
         return `<tr class="${p.starting ? '' : 'ai-benched'}">
-            <td class="ps-name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${p.web_name}</span>${arm}</td>
+            <td class="ps-name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${esc(p.web_name)}</span>${arm}</td>
             <td>${p.pos || ''}</td>
             <td>${p.team_name || ''}</td>
             <td>${p.cost != null ? p.cost.toFixed(1) : '–'}</td>
@@ -3006,7 +3153,7 @@ function renderMgrChipPlan(d) {
     html += (plan.notes || []).map(n => `
         <div class="mgr-chip-note ${n.ready ? 'ready' : ''}">
             <span class="mgr-chip-name">${CHIP_NAMES[n.chip] || n.chip}</span>
-            <span class="mgr-chip-detail">${n.detail}</span>
+            <span class="mgr-chip-detail">${esc(n.detail)}</span>
         </div>`).join('');
 
     // The plan for the chips it is NOT playing. Every one has to be spent
@@ -3135,6 +3282,36 @@ function ensureMgr() {
 // (Preseason/in-season is decided server-side from the first gameweek
 // deadline — see detect_mode() — so there's no toggle to render here.)
 
+// ---- Deadline countdown ----
+// The absolute deadline is rendered by the server and is already correct; this
+// only adds the relative part, which is the half that goes wrong in a tab left
+// open overnight. Re-run on a timer for the same reason - a page open across
+// the deadline should stop saying "in 2 hours".
+function renderDeadlineCountdown() {
+    const el = document.getElementById('deadlineCountdown');
+    const stamp = document.getElementById('deadlineTime');
+    if (!el || !stamp || !stamp.dateTime) return;
+    const when = new Date(stamp.dateTime);
+    if (isNaN(when)) return;
+
+    const tick = () => {
+        const mins = Math.round((when.getTime() - Date.now()) / 60000);
+        if (mins <= 0) { el.textContent = '(deadline passed)'; return; }
+        if (mins < 60) { el.textContent = `(in ${mins}m)`; return; }
+        const hours = Math.floor(mins / 60);
+        if (hours < 24) {
+            el.textContent = `(in ${hours}h ${mins % 60}m)`;
+            return;
+        }
+        const days = Math.floor(hours / 24);
+        el.textContent = `(in ${days}d ${hours % 24}h)`;
+    };
+    tick();
+    // A minute is fine: nothing here is displayed to a finer resolution, and a
+    // shorter interval would be work nobody can see.
+    setInterval(tick, 60000);
+}
+
 // ---- Initial load ----
 // First, and synchronously. app.js is a blocking script at the end of <body>,
 // so anything done here happens before the browser's first paint - which is the
@@ -3142,6 +3319,7 @@ function ensureMgr() {
 // the reader first sees, not one network round trip later.
 renderAiSkeletons();
 restoreView();
+renderDeadlineCountdown();
 // Hidden here rather than inside loadTeam()'s callback: that lands a network
 // round trip later, by which point the browser has painted the explainer and
 // removing it is a visible jump.

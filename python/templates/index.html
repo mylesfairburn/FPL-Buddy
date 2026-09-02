@@ -16,6 +16,35 @@
            rewrites it on a tab switch - see data-h1 in partials/tabs.html. #}
         <h1 id="pageHeading" class="tab-page-title">{{ page_h1 }}</h1>
 
+        {# The two facts a returning visitor wants before reading a number:
+           when the round they are picking for locks, and whether what they are
+           looking at is today's data or last week's. Both were on the site
+           already - the deadline inside the AI tab's payload, the date only in
+           the sitemap - and neither was anywhere a reader would look.
+
+           Rendered server-side so it is right in the first frame and survives
+           JavaScript being off. app.js adds only the relative countdown, which
+           is the one part that goes stale in a tab left open overnight. #}
+        {% if next_deadline or data_updated %}
+        <p class="status-strip" id="statusStrip">
+            {% if next_deadline %}
+            <span class="status-item">
+                <span class="status-label">GW{{ next_event }} deadline</span>
+                {# The machine-readable value is what app.js counts down from;
+                   the visible text is already correct without it. #}
+                <time id="deadlineTime" datetime="{{ next_deadline }}">{{ next_deadline | deadline_text }}</time>
+                <span id="deadlineCountdown" class="status-countdown"></span>
+            </span>
+            {% endif %}
+            {% if data_updated %}
+            <span class="status-item">
+                <span class="status-label">Data updated</span>
+                <time datetime="{{ data_updated }}">{{ data_updated }}</time>
+            </span>
+            {% endif %}
+        </p>
+        {% endif %}
+
 {% include 'panes/my_team.html' %}
 
 {% include 'panes/ai_teams.html' %}
@@ -37,12 +66,22 @@
     <!-- Which tab this URL is. app.js could read it back off location.pathname,
          but then the path→pane mapping would live in two places and could drift;
          the server owns the routing table, so the server states the answer. -->
-    <script nonce="{{ csp_nonce }}">window.__INITIAL_PANE__ = "{{ initial_pane }}";</script>
+    <script nonce="{{ csp_nonce }}">window.__INITIAL_PANE__ = "{{ initial_pane }}";
+{#- The id from /my-team/<id>, when the page was reached that way. `|tojson`
+    rather than quotes: it is an int from the routing table, but the escaping
+    belongs in the template rather than in an assumption about the type. #}
+    window.__INITIAL_FPL_ID__ = {{ initial_fpl_id | default(none) | tojson }};</script>
 
     <!-- kits.js defines shirtImg(), which app.js calls while rendering the
          pitch, so it has to be parsed first. -->
+    {# esc() and colorFor(), shared with compare.js. First: both scripts below
+       call them at load time. #}
+    <script src="/static/util.js?v={{ asset_version }}"></script>
     <script src="/static/kits.js?v={{ asset_version }}"></script>
     <script src="/static/app.js?v={{ asset_version }}"></script>
+    {# After app.js: watchlist.js calls getSavedId, fixtureTile and shirtImg
+       from it. #}
+    <script src="/static/watchlist.js?v={{ asset_version }}"></script>
 
 </body>
 </html>

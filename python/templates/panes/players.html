@@ -4,11 +4,24 @@
                 <li class="nav-item"><button class="nav-link active" data-view="all">All players</button></li>
                 <li class="nav-item"><button class="nav-link" data-view="underperforming">Underperforming</button></li>
                 <li class="nav-item"><button class="nav-link" data-view="overperforming">Overperforming</button></li>
+                <li class="nav-item"><button class="nav-link" data-view="watchlist">Watchlist</button></li>
             </ul>
             {# Not empty any more. The ratings table is rendered here on the
                server and replaced in place by the interactive one once app.js
                has the pool - see partials/ssr_players.html. #}
             <div id="playersTabSearch">{% if ssr and ssr.players %}{% include 'partials/ssr_players.html' %}{% endif %}</div>
+            {# The shortlist the rest of this pane keeps producing and had
+               nowhere to put. Server-rendered as an empty shell rather than
+               built entirely in JS, so the markup a crawler sees is the same
+               shape as every other view here. #}
+            <div id="watchlistView" class="d-none">
+                <p class="text-muted small mb-2" id="watchlistIntro">
+                    Players you are keeping an eye on. Open any player and choose
+                    <strong>Watch</strong> to add them. The list is stored against your FPL ID,
+                    so it follows you between devices.
+                </p>
+                <div id="watchlistBody"></div>
+            </div>
             <div id="underperformingView" class="d-none">
                 <p class="text-muted small mb-2">Uses underlying stats to identify underperforming player, goals below xG for
                     attackers, goals conceded above xGC for keepers/defenders.</p>

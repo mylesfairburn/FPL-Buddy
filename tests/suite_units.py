@@ -1837,6 +1837,23 @@ def test_declared_dependencies():
           lambda r: "httpx" in r, severity="critical",
           note="without it the suite dies at import before a single test runs")
 
+    # Every application requirement carries an exact version.
+    #
+    # The image is rebuilt on every push, so an unpinned line means two builds
+    # of the same commit can install different code - and the one that reaches
+    # production is whichever happened to be current when watchtower pulled.
+    # Dependabot is pointed at this file and the suite gates its PRs, so
+    # pinning costs nothing and buys a reproducible build.
+    unpinned = []
+    for line in (root / "python/requirements.txt").read_text(
+            encoding="utf-8").splitlines():
+        line = line.split("#")[0].strip()
+        if line and "==" not in line:
+            unpinned.append(line)
+    expect("every app requirement is pinned to an exact version",
+           "python/requirements.txt", [], unpinned, severity="medium",
+           note="an unpinned line makes the build unreproducible from the commit alone")
+
 
 def test_kit_colours():
     group("club colours", "medium")
@@ -3183,6 +3200,1124 @@ def test_prev_season_totals():
           lambda v: v == 180)
 
 
+def test_events_cache():
+    """The season clock is fetched once per TTL, and never regresses to [].
+
+    bootstrap-static is 1.8 MB and every page that asks what gameweek it is used
+    to pull the whole thing. The two properties that matter are covered here:
+    repeated calls inside the window make ONE request, and a failed fetch serves
+    the last good answer rather than [] - because [] is not "we couldn't reach
+    FPL", it is "no gameweek has started", which the player pages render as a
+    year-old caption on every set of numbers at once.
+    """
+    group("events cache", "high")
+
+    import gameweek as gwc
+
+    calls = []
+    sample = [{"id": 1, "deadline_time": "2026-08-14T17:30:00Z", "finished": True},
+              {"id": 2, "deadline_time": "2026-08-21T17:30:00Z", "finished": False}]
+
+    real_get = gwc._get
+    try:
+        gwc._get = lambda url: (calls.append(url), {"events": sample})[1]
+        gwc.clear_events_cache()
+
+        first = gwc.get_events()
+        for _ in range(9):
+            gwc.get_events()
+        expect("ten calls inside the TTL make one request",
+               "get_events() x10", 1, len(calls),
+               note="each miss would be a 1.8 MB download from FPL")
+        expect("the cached value is the fetched value", "get_events()",
+               sample, first)
+
+        # force=True is what the deadline watcher passes: it acts on the clock
+        # rather than rendering it, so it must never read a cached copy.
+        gwc.get_events(force=True)
+        expect("force=True bypasses the cache", "get_events(force=True)",
+               2, len(calls))
+
+        # A failed fetch must not blank the clock.
+        gwc._get = lambda url: (calls.append(url), None)[1]
+        during_outage = gwc.get_events(force=True)
+        expect("a failed fetch serves the last good events",
+               "get_events(force=True) with _get -> None", sample, during_outage,
+               note="[] would be read as 'no gameweek has started'")
+
+        # ...but a process that has NEVER succeeded still reports honestly.
+        gwc.clear_events_cache()
+        cold = gwc.get_events()
+        expect("a cold start with no API returns []",
+               "clear_events_cache(); get_events()", [], cold)
+    finally:
+        gwc._get = real_get
+        gwc.clear_events_cache()
+
+
+def test_team_map_retries_after_failure():
+    """A failed first fetch must not be remembered forever.
+
+    The bug this covers: the map was memoised on `is None`, so an empty dict
+    from an unreachable API was cached as though it were an answer and every
+    club on the site stayed nameless until the process restarted.
+    """
+    group("team lookups", "high")
+
+    import team_service as ts
+
+    real_get, real_short = ts._get, ts._TEAM_SHORT
+    try:
+        ts._TEAM_SHORT = None
+        ts._get = lambda url: None
+        expect("an outage yields no short names", "_team_short_map() offline",
+               {}, ts._team_short_map())
+
+        ts._get = lambda url: {"teams": [{"id": 1, "short_name": "ARS"},
+                                         {"id": 2, "short_name": "AVL"}]}
+        recovered = ts._team_short_map()
+        expect("the next call retries and populates",
+               "_team_short_map() once the API is back",
+               {1: "ARS", 2: "AVL"}, recovered,
+               note="the failure must not be cached, only the answer")
+
+        calls = []
+        ts._get = lambda url: (calls.append(url), {"teams": []})[1]
+        ts._team_short_map()
+        expect("a populated map is not refetched", "_team_short_map() again",
+               0, len(calls))
+    finally:
+        ts._get, ts._TEAM_SHORT = real_get, real_short
+
+
+def test_known_manager_bounds():
+    """The deadline job's work queue stays finite.
+
+    /api/team records every id it is asked about and is anonymous, so the list
+    snapshot_managers walks is attacker-growable. Two bounds are asserted: the
+    per-run cap, and the idle prune that stops the table growing in the first
+    place.
+    """
+    group("known managers", "high")
+
+    import datetime as _dt
+    import db as _db
+    import jobs
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    fresh = now.isoformat()
+    ancient = (now - _dt.timedelta(days=400)).isoformat()
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM known_manager")
+        # 20 ids seen today, 5 last seen over a year ago.
+        conn.executemany(
+            "INSERT INTO known_manager (fpl_id, first_seen, last_seen) "
+            "VALUES (?, ?, ?)",
+            [(900000 + i, fresh, fresh) for i in range(20)]
+            + [(950000 + i, ancient, ancient) for i in range(5)])
+
+    expect("every id is counted", "count_known_managers()",
+           25, _db.count_known_managers())
+
+    capped = _db.known_managers(limit=10)
+    expect("the limit is honoured", "known_managers(limit=10)", 10, len(capped))
+    check("the cap keeps the most recently active",
+          "known_managers(limit=10)", "no id last seen a year ago",
+          sorted(capped), lambda ids: all(i < 950000 for i in ids),
+          note="ordering by fpl_id would have selected close to arbitrarily")
+
+    check("snapshot_managers has a ceiling", "jobs.MAX_MANAGERS_PER_RUN",
+          "a positive int well below the number that stalls the hourly job",
+          jobs.MAX_MANAGERS_PER_RUN,
+          lambda n: isinstance(n, int) and 0 < n <= 5000,
+          note="each manager costs 2-3 serial FPL API calls")
+
+    pruned = _db.prune_idle_managers(days=90, now=now)
+    expect("idle ids are forgotten", "prune_idle_managers(days=90)",
+           5, pruned["removed"])
+    expect("active ids are kept", "count_known_managers() after the prune",
+           20, _db.count_known_managers())
+
+    # An id with real data behind it is governed by the retention period, not
+    # by this prune - it must survive however long ago it was last seen.
+    with _db.connect() as conn:
+        conn.execute("INSERT INTO known_manager (fpl_id, first_seen, last_seen) "
+                     "VALUES (?, ?, ?)", (960001, ancient, ancient))
+        conn.execute(
+            "INSERT INTO manager_team (fpl_id, gameweek, captured_at) "
+            "VALUES (?, ?, ?)", (960001, 3, ancient))
+    again = _db.prune_idle_managers(days=90, now=now)
+    expect("an id with a stored gameweek is exempt",
+           "prune_idle_managers() with a manager_team row", 0, again["removed"])
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM manager_team WHERE fpl_id = 960001")
+        conn.execute("DELETE FROM known_manager")
+
+
+def test_autosub_waits_for_the_bench():
+    """A bench player whose match hasn't kicked off yet is not skipped over.
+
+    FPL fills a vacated slot in bench order. Treating "hasn't played yet" as
+    "didn't play" brings the wrong substitute on mid-afternoon and reverses it
+    later, so the pitch shuffles twice and is only right at the end.
+    """
+    group("auto-subs", "high")
+
+    import autosubs
+
+    def p(pid, pos, team, starting, position, **kw):
+        return dict(id=pid, pos=pos, team=team, starting=starting,
+                    position=position, **kw)
+
+    squad = [
+        p(1, "GK", 10, True, 1), p(2, "DEF", 10, True, 2),
+        p(3, "DEF", 10, True, 3), p(4, "DEF", 11, True, 4),
+        p(5, "DEF", 11, True, 5), p(6, "MID", 11, True, 6),
+        p(7, "MID", 12, True, 7), p(8, "MID", 12, True, 8),
+        p(9, "MID", 12, True, 9), p(10, "FWD", 13, True, 10),
+        p(11, "FWD", 13, True, 11, is_captain=True),
+        p(12, "GK", 13, False, 12),
+        p(13, "MID", 14, False, 13),   # club 14 has not kicked off
+        p(14, "MID", 15, False, 14),   # club 15 has, and he played
+        p(15, "DEF", 15, False, 15),
+    ]
+    # Starter 7 (club 12) recorded nothing and his club is done. The first
+    # bench outfielder (13) belongs to a club still to play.
+    minutes = {1: 90, 2: 90, 3: 90, 4: 90, 5: 90, 6: 90, 7: 0, 8: 90,
+               9: 90, 10: 90, 11: 90, 12: 90, 13: 0, 14: 90, 15: 90}
+    decided = {10, 11, 12, 13, 15}          # club 14 still to play
+
+    mid = autosubs.apply(squad, minutes, decided_teams=decided)
+    expect("no substitute is made while the next man up may still play",
+           "starter 7 out, bench 13 undecided", [], mid["subs"],
+           note="FPL fills the slot in bench order; 14 is not next in line yet")
+
+    # Once club 14's match has finished with him unused, 14 comes on.
+    settled = autosubs.apply(squad, minutes,
+                             decided_teams=decided | {14})
+    expect("once every club is decided the sub is made",
+           "starter 7 out, bench 13 played 0, bench 14 played 90",
+           [(7, 14)], [(s["out"]["id"], s["in"]["id"]) for s in settled["subs"]])
+    check("the effective eleven stays legal", "apply() result",
+          "11 players, one keeper, FPL minimums met",
+          settled["starters"], lambda xi: autosubs._legal_xi(xi))
+
+
+def test_accuracy_statistics():
+    """The maths behind /accuracy, on inputs whose answers are known by hand.
+
+    Worth testing properly rather than eyeballing, because this is the one page
+    that makes a quantitative claim about the model. A ranking statistic that is
+    quietly wrong would not look wrong - it would just publish a flattering
+    number under a heading about honesty.
+    """
+    group("accuracy maths", "high")
+
+    import accuracy as acc
+
+    # Ties are the normal case here, not an edge one: most actual scores are 0,
+    # 1 or 2, so an ordinal rank would invent an order among dozens of equal
+    # values and report a correlation partly built out of it.
+    expect("ties share an averaged rank", "_ranks([1, 2, 2, 3])",
+           [1.0, 2.5, 2.5, 4.0], acc._ranks([1, 2, 2, 3]))
+    expect("an all-tied list ranks flat", "_ranks([5, 5, 5])",
+           [2.0, 2.0, 2.0], acc._ranks([5, 5, 5]))
+
+    expect("a perfect linear relationship is 1", "_pearson([1,2,3,4],[2,4,6,8])",
+           1.0, acc._pearson([1, 2, 3, 4], [2, 4, 6, 8]))
+    expect("a reversed one is -1", "_pearson([1,2,3,4],[4,3,2,1])",
+           -1.0, acc._pearson([1, 2, 3, 4], [4, 3, 2, 1]))
+    # Undefined rather than zero: a week where everyone scored the same is not a
+    # week the model got wrong, it is one with nothing to be right about.
+    expect("no spread means undefined, not zero", "_pearson([1,2,3,4],[7,7,7,7])",
+           None, acc._pearson([1, 2, 3, 4], [7, 7, 7, 7]))
+    expect("a single pair is undefined", "_pearson([1],[1])",
+           None, acc._pearson([1], [1]))
+
+    # Hand-computable metrics. predicted - actual = [+1, -1, +2, -2], so the
+    # mean absolute error is 1.5 and the bias cancels to 0.
+    pairs = [(3.0, 2.0, 1), (2.0, 3.0, 1), (6.0, 4.0, 2), (4.0, 6.0, 2)]
+    m = acc._metrics(pairs)
+    expect("n counts every settled pair", str(pairs), 4, m["n"])
+    expect("mean absolute error", "errors [+1,-1,+2,-2]", 1.5, m["mae"])
+    expect("bias cancels when errors are symmetric", "same", 0.0, m["bias"])
+    expect("rmse punishes the larger misses", "same",
+           round(((1 + 1 + 4 + 4) / 4) ** 0.5, 2), m["rmse"])
+    # Actuals are [2,3,4,6], mean 3.75, so the no-model baseline is out by
+    # (1.75 + 0.75 + 0.25 + 2.25) / 4 = 1.25 - BETTER than the model's 1.5 here,
+    # which must be reported as a negative improvement rather than hidden.
+    expect("baseline predicts the mean actual", "actuals [2,3,4,6]", 1.25,
+           m["baseline_mae"])
+    check("a model worse than the baseline reports a negative improvement",
+          "mae 1.5 vs baseline 1.25", "improvement_pct < 0", m["improvement_pct"],
+          lambda v: v is not None and v < 0,
+          note="the page has to be able to say the model is not earning its keep")
+
+    expect("an empty sample is not sufficient", "_metrics([])",
+           {"n": 0, "sufficient": False}, acc._metrics([]))
+    check("the sufficiency threshold is the documented one",
+          "accuracy.MIN_PREDICTIONS", "a positive int", acc.MIN_PREDICTIONS,
+          lambda n: isinstance(n, int) and n > 0)
+    check("a small sample is flagged insufficient", "_metrics(4 pairs)",
+          "sufficient is False", m["sufficient"], lambda v: v is False)
+
+
+def test_accuracy_reads_settled_rows_only():
+    """Only frozen-and-settled rows count, and an unscored pick is not a zero.
+
+    The backfill leaves `actual_points` NULL for a player FPL never reported,
+    deliberately, rather than writing a nought. Counting those as zero would
+    invent an error the model never made and drag every figure on the page.
+    """
+    group("accuracy data", "high")
+
+    import accuracy as acc
+    import db as _db
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM ai_team_snapshot")
+        cur = conn.execute(
+            """INSERT INTO ai_team_snapshot
+                   (gameweek, formation, budget, squad_cost, predicted_points,
+                    actual_points, generated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (31, "3-4-3", 100.0, 99.0, 60.0, 55, "2026-08-01T00:00:00Z"))
+        sid = cur.lastrowid
+        # No row with a NULL prediction: ai_team_snapshot_picks declares
+        # predicted_points NOT NULL, so a pick without a frozen projection
+        # cannot exist on this table at all. The nullable half of the pair is
+        # the one that matters anyway.
+        rows = [
+            # (position, predicted, actual)
+            (1, 5.0, 6),      # settled
+            (2, 4.0, 2),      # settled
+            (3, 7.0, None),   # never reported by FPL - must not count as 0
+        ]
+        for pos, pred, actual in rows:
+            conn.execute(
+                """INSERT INTO ai_team_snapshot_picks
+                       (snapshot_id, element_id, position, cost,
+                        predicted_points, actual_points)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (sid, 5000 + pos, pos, 5.0, pred, actual))
+
+    pairs = acc._pairs("best_xi")
+    expect("only rows with both numbers are compared",
+           "3 picks: 2 settled, 1 never reported by FPL", 2, len(pairs))
+    check("the unreported pick is absent, not zeroed", "_pairs('best_xi')",
+          "no (7.0, 0.0) pair", pairs,
+          lambda ps: not any(p == 7.0 and a == 0.0 for p, a, _ in ps),
+          note="a NULL actual means 'not scored', not 'scored nothing'")
+
+    totals = acc.squad_totals()
+    expect("the squad total is read back", "squad_totals()",
+           [{"gameweek": 31, "predicted": 60.0, "actual": 55,
+             "source": "best_xi"}], totals)
+
+    summary = acc.summary()
+    check("the summary reports itself available", "summary()",
+          "available is True", summary["available"], lambda v: v is True)
+    check("per-gameweek covers the settled round", "summary()['per_gameweek']",
+          "one row for GW31", summary["per_gameweek"],
+          lambda rs: [r["gameweek"] for r in rs] == [31])
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM ai_team_snapshot")
+
+    # With nothing settled the page must say so rather than print zeroes.
+    empty = acc.summary()
+    check("an empty season is reported as unavailable", "summary() with no rows",
+          "available is False", empty["available"], lambda v: v is False)
+    expect("and carries no sources", "summary()['sources']", [], empty["sources"])
+
+
+def _price_bootstrap(players, total_players=10_000_000):
+    """A bootstrap-shaped dict for the price snapshot tests."""
+    return {"total_players": total_players,
+            "elements": [{"code": c, "now_cost": cost, "transfers_in": ti,
+                          "transfers_out": to, "selected_by_percent": own}
+                         for c, cost, ti, to, own in players]}
+
+
+def test_price_snapshot_capture():
+    """One reading a night, and a second run on the same night replaces it.
+
+    The replace rule is the one worth pinning down. A price change happens once
+    a night, so two captures on one date are two observations of the same event
+    - appending both would double-count the transfers between them and inflate
+    every momentum figure that crossed the date.
+    """
+    group("price snapshots", "high")
+
+    import datetime
+    import db as _db
+    import price_changes as pc
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM player_price_snapshot")
+
+    boot = _price_bootstrap([(9001, 100, 50_000, 10_000, 10.0)])
+    first = pc.capture(bootstrap=boot, day="2026-09-01")
+    expect("a capture writes one row per player", "capture(1 player)",
+           1, first["written"])
+
+    # Same date, different numbers: must overwrite, not accumulate.
+    pc.capture(bootstrap=_price_bootstrap([(9001, 100, 70_000, 12_000, 10.0)]),
+               day="2026-09-01")
+    with _db.connect() as conn:
+        rows = list(conn.execute(
+            "SELECT transfers_in, owners FROM player_price_snapshot "
+            "WHERE snapshot_date = '2026-09-01' AND code = 9001"))
+    expect("a second capture on the same night replaces the first",
+           "capture() twice for 2026-09-01", 1, len(rows))
+    expect("and it is the later reading that survives",
+           "transfers_in after the replace", 70_000, rows[0]["transfers_in"])
+    # 10% of 10,000,000 managers.
+    expect("the owner count is resolved at capture time",
+           "10.0% of 10,000,000", 1_000_000, rows[0]["owners"])
+
+    empty = pc.capture(bootstrap={"elements": []}, day="2026-09-02")
+    expect("a bootstrap with no players writes nothing",
+           "capture(no elements)", 0, empty["written"])
+
+    dropped = pc.prune(days=0, today=datetime.date(2026, 9, 2))
+    check("pruning removes readings past the window", "prune(days=0)",
+          "at least one row removed", dropped["removed"], lambda n: n >= 1)
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM player_price_snapshot")
+
+
+def test_price_momentum_and_calibration():
+    """The two accumulation rules, which are subtly different on purpose.
+
+    `observed_changes` totals the momentum that CAUSED a change, so it includes
+    the night the price moved. `board` totals what has built up SINCE the last
+    change, so it excludes it. Getting these the same way round would compare a
+    player's progress against a threshold measured from a different quantity,
+    and the error would be invisible - both numbers would still look plausible.
+    """
+    group("price momentum", "high")
+
+    import price_changes as pc
+
+    # 10% of 10,000,000 = 1,000,000 owners. +20,000 net a night, so momentum
+    # reaches 0.06 after three nights, which is when the price moves.
+    riser = []
+    ti = to = 0
+    cost = 100
+    for day in range(1, 9):
+        ti += 25_000
+        to += 5_000
+        riser.append({"date": f"2026-09-{day:02d}", "cost": cost, "in": ti,
+                      "out": to, "owned": 10.0, "owners": 1_000_000})
+        if day in (3, 6):
+            cost += 1
+
+    changes = pc.observed_changes({7001: riser})
+    expect("both price changes are found", "8 nights, 2 rises",
+           2, len(changes))
+    check("each change carries the momentum that caused it",
+          "8 nights, rises on the 4th and 7th",
+          "both at 0.06 (3 nights x 20,000 over 1,000,000 owners)",
+          [round(c["momentum"], 4) for c in changes],
+          lambda ms: ms == [0.06, 0.06],
+          note="counted from the PREVIOUS change, not from the season start")
+
+    board = pc.board(history={7001: riser})
+    row = board["risers"][0]
+    # Two nights have passed since the change on the 7th: 40,000 / 1,000,000.
+    expect("progress counts only from the last change",
+           "2 nights since the rise on 2026-09-07", 0.02, row["momentum"])
+    expect("last night's net transfers are reported as a fact",
+           "one night", 20_000, row["net_last_night"])
+
+    # A faller: negative momentum against a negative threshold is positive
+    # progress, so the two directions rank the same way up.
+    faller = []
+    ti = to = 0
+    cost = 95
+    for day in range(1, 6):
+        ti += 2_000
+        to += 17_000
+        faller.append({"date": f"2026-09-{day:02d}", "cost": cost, "in": ti,
+                       "out": to, "owned": 5.0, "owners": 500_000})
+    board = pc.board(history={7002: faller})
+    check("a faller is classed as a fall", "net transfers out every night",
+          "one row, code 7002", board["fallers"],
+          lambda fs: len(fs) == 1 and fs[0]["code"] == 7002)
+    check("and its progress is positive, not negative",
+          "negative momentum over a negative threshold", "progress > 0",
+          board["fallers"][0]["progress"], lambda p: p > 0)
+
+    # Calibration only replaces the borrowed estimate once there is evidence.
+    cal = pc.calibration(changes)
+    expect("two observations are not enough to claim a measurement",
+           "calibration(2 rises, 0 falls)", False, cal["measured"])
+    expect("so the fallback threshold is what gets used", "same",
+           pc.FALLBACK_THRESHOLD, cal["rise_threshold"])
+    expect("but what WAS measured is still reported", "same",
+           0.06, cal["measured_rise"])
+
+    plenty = ([{"direction": "rise", "momentum": 0.05, "code": 1, "date": "d"}] * 20
+              + [{"direction": "fall", "momentum": -0.07, "code": 2, "date": "d"}] * 20)
+    cal = pc.calibration(plenty)
+    expect("enough observations switch it to measured",
+           "calibration(20 rises, 20 falls)", True, cal["measured"])
+    expect("the rise threshold is the median of the rises", "same",
+           0.05, cal["rise_threshold"])
+    expect("falls are calibrated separately and keep their sign", "same",
+           -0.07, cal["fall_threshold"],
+           note="FPL is not symmetric; one averaged figure is wrong both ways")
+
+
+def test_price_board_excludes_unmeasurable_players():
+    """A player whose owner count is unknowable is left off, not guessed at.
+
+    FPL reports ownership to one decimal place. At 0.0% the divisor is a floor
+    rather than a fact, and a few dozen transfers over it produces a confident
+    progress bar built out of nothing - which is exactly the failure this page
+    exists not to commit.
+    """
+    group("price board", "high")
+
+    import price_changes as pc
+
+    invisible = [
+        {"date": "2026-09-01", "cost": 40, "in": 0, "out": 0, "owned": 0.0, "owners": 0},
+        {"date": "2026-09-02", "cost": 40, "in": 50, "out": 10, "owned": 0.0, "owners": 0},
+    ]
+    # 0.1% is a real figure FPL reports, and it is still excluded: rounded to
+    # one decimal place it means "somewhere between 0.05% and 0.15%", so the
+    # divisor is uncertain by half its own value.
+    barely_owned = [
+        {"date": "2026-09-01", "cost": 40, "in": 0, "out": 0, "owned": 0.1, "owners": 10_000},
+        {"date": "2026-09-02", "cost": 40, "in": 600, "out": 0, "owned": 0.1, "owners": 10_000},
+    ]
+    properly_owned = [
+        {"date": "2026-09-01", "cost": 60, "in": 0, "out": 0, "owned": 5.0, "owners": 500_000},
+        {"date": "2026-09-02", "cost": 60, "in": 20_000, "out": 0, "owned": 5.0, "owners": 500_000},
+    ]
+    one_night = [
+        {"date": "2026-09-02", "cost": 50, "in": 100, "out": 10, "owned": 5.0, "owners": 500_000},
+    ]
+
+    board = pc.board(history={8001: invisible, 8002: barely_owned,
+                              8003: one_night, 8004: properly_owned})
+    listed = {r["code"] for r in board["risers"] + board["fallers"]}
+    check("a 0.0%-owned player is left off the board", "owned = 0.0%",
+          "absent from risers and fallers", 8001 in listed, lambda v: v is False,
+          note="the divisor is a floor, not a measurement")
+    check("a 0.1%-owned player is left off too", "owned = 0.1%",
+          "absent from the board", 8002 in listed, lambda v: v is False,
+          note="one decimal place of ownership is a divisor uncertain by half "
+               "its own value; the board was otherwise all noise")
+    check("a properly owned player is shown", "owned = 5.0%",
+          "present on the board", 8004 in listed, lambda v: v is True)
+    check("the gate is the documented one", "price_changes.MIN_OWNERSHIP_PCT",
+          "1.0", pc.MIN_OWNERSHIP_PCT, lambda v: v == 1.0)
+    check("a player with one night recorded is skipped", "1 snapshot",
+          "absent from the board", 8003 in listed, lambda v: v is False,
+          note="there is no difference to take")
+
+    expect("the owner divisor is floored, never zero", "_owners({'owners': 0})",
+           1000.0, pc._owners({"owners": 0}))
+
+    # Two nights is the minimum for the page to say anything at all.
+    import db as _db
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM player_price_snapshot")
+    empty = pc.summary()
+    check("no snapshots means the page reports itself unavailable",
+          "summary() with an empty table", "available is False",
+          empty["available"], lambda v: v is False)
+    pc.capture(bootstrap=_price_bootstrap([(9101, 100, 10, 1, 5.0)]),
+               day="2026-09-01")
+    one = pc.summary()
+    check("one night is still not enough", "summary() after a single capture",
+          "available is False", one["available"], lambda v: v is False,
+          note="every difference would be a difference from nothing")
+    pc.capture(bootstrap=_price_bootstrap([(9101, 100, 5010, 1001, 5.0)]),
+               day="2026-09-02")
+    two = pc.summary()
+    check("two nights is", "summary() after a second capture",
+          "available is True", two["available"], lambda v: v is True)
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM player_price_snapshot")
+
+
+
+def test_watchlist():
+    """The shortlist that survives the page.
+
+    Keyed on `code` rather than `element_id`, which is the one thing here worth
+    a test of its own: this is the only stored object on the site meant to
+    outlive a season, and FPL reassigns `id` every August.
+    """
+    group("watchlist", "high")
+
+    import db as _db
+    import watchlist as wl
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM watchlist")
+
+    pool = [{"code": 111, "id": 1, "web_name": "Haaland", "team_name": "MCI",
+             "pos": "FWD", "cost": 15.5, "predicted": 6.1, "rating": 100,
+             "form": 7.5, "owned": 69.6, "status": "a",
+             "path": "/player/erling-haaland-111", "team_code": 43,
+             "next_gameweeks": []}]
+
+    wl.add(7, 111, "watch the run")
+    entries = wl.get(7, pool)
+    expect("an added player comes back", "add(7, 111); get(7)", 1, len(entries))
+    expect("joined against the pool at read time", "get(7)",
+           "Haaland", entries[0]["web_name"],
+           note="the row stores a code and nothing else - one source of truth "
+                "for who a player is")
+    expect("the note is kept", "get(7)", "watch the run", entries[0]["note"])
+
+    # Adding again edits rather than duplicating, which is what makes the
+    # button in the pop-up safe to press twice.
+    wl.add(7, 111, "still watching")
+    entries = wl.get(7, pool)
+    expect("adding twice does not duplicate", "add(7, 111) again", 1, len(entries))
+    expect("and updates the note instead", "get(7)",
+           "still watching", entries[0]["note"])
+
+    # A player who has left the game keeps his row. Dropping it silently would
+    # look like the site had lost the entry rather than the player having gone.
+    wl.add(7, 999999)
+    entries = wl.get(7, pool)
+    gone = [e for e in entries if e["code"] == 999999]
+    expect("a player no longer in the pool is still listed",
+           "get(7) with a code the pool has never heard of", 1, len(gone))
+    check("and is flagged unavailable rather than dropped", "get(7)",
+          "available is False", gone[0]["available"], lambda v: v is False)
+
+    for bad in ("abc", -1, 0, None):
+        err = safe(wl.add, 7, bad)
+        check(f"a code of {bad!r} is rejected", f"add(7, {bad!r})",
+              "WatchlistError", err,
+              lambda v: isinstance(v, str) and "WatchlistError" in v)
+
+    err = safe(wl.add, 7, 222, "x" * (wl.MAX_NOTE_CHARS + 1))
+    check("an over-long note is rejected", "add(7, 222, 121 chars)",
+          "WatchlistError", err,
+          lambda v: isinstance(v, str) and "WatchlistError" in v,
+          note="the one free-text field the app STORES rather than relays")
+
+    expect("control characters are flattened, not stored",
+           r"_clean_note('a\nb\tc')", "a b c", wl._clean_note("a\nb\tc"))
+    expect("an empty note becomes None", "_clean_note('   ')",
+           None, wl._clean_note("   "))
+
+    # The cap is what stops an unauthenticated write endpoint being used as
+    # storage for something other than football.
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM watchlist WHERE fpl_id = 8")
+    for code in range(2000, 2000 + wl.MAX_ENTRIES):
+        wl.add(8, code)
+    err = safe(wl.add, 8, 9000)
+    check("the size cap is enforced", f"add() past {wl.MAX_ENTRIES} entries",
+          "WatchlistError", err,
+          lambda v: isinstance(v, str) and "WatchlistError" in v)
+    expect("and nothing was written past it", "get(8)",
+           wl.MAX_ENTRIES, len(wl.get(8, [])))
+    # Editing an existing entry must still work at the cap.
+    err = safe(wl.add, 8, 2000, "edited at the cap")
+    check("but an existing entry can still be edited at the cap",
+          "add(8, 2000, note) when full", "no error", err,
+          lambda v: isinstance(v, dict) and v.get("ok") is True)
+
+    expect("removing takes one row", "remove(7, 111)",
+           1, wl.remove(7, 111)["removed"])
+    check("and it is gone", "get(7)", "111 absent",
+          [e["code"] for e in wl.get(7, pool)], lambda cs: 111 not in cs)
+    expect("removing something absent is not an error", "remove(7, 111) again",
+           0, wl.remove(7, 111)["removed"])
+
+    check("watchlists are per-id", "get(8) is unaffected by 7's removals",
+          "still full", len(wl.get(8, [])), lambda n: n == wl.MAX_ENTRIES)
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM watchlist")
+
+
+# ---------------------------------------------------------------------------
+#  Specification tests
+# ---------------------------------------------------------------------------
+# The cases below are derived from a RULE or a DEFINITION, and then compared
+# against what the code says - rather than from what the code already does.
+#
+# The distinction matters and it is not academic. The auto-sub tests originally
+# here were written by reading the implementation, which meant they agreed with
+# it by construction: a wrong rule would have produced a wrong expectation and a
+# green run. Rewritten against FPL's published substitution rules, they
+# immediately found a formation the game forbids and the code allowed.
+#
+# Where a statistic has a textbook definition, the oracle is numpy or pandas
+# rather than arithmetic done by hand here - if the formula has been
+# misunderstood, a hand-derived expectation would agree with the mistake.
+
+def _sq_player(pid, pos, starting, position, **kw):
+    return dict(id=pid, pos=pos, team=1, starting=starting, position=position, **kw)
+
+
+def _squad_442():
+    """A legal 4-4-2 with a full bench, in FPL's bench order: GK, then three
+    outfielders in the order the manager set."""
+    P = _sq_player
+    return [
+        P(1, "GK", True, 1),
+        P(2, "DEF", True, 2), P(3, "DEF", True, 3),
+        P(4, "DEF", True, 4), P(5, "DEF", True, 5),
+        P(6, "MID", True, 6), P(7, "MID", True, 7),
+        P(8, "MID", True, 8), P(9, "MID", True, 9),
+        P(10, "FWD", True, 10), P(11, "FWD", True, 11, is_captain=True),
+        P(12, "GK", False, 12), P(13, "DEF", False, 13),
+        P(14, "MID", False, 14), P(15, "FWD", False, 15),
+    ]
+
+
+def _mins(over=None):
+    m = {i: 90 for i in range(1, 16)}
+    m.update(over or {})
+    return m
+
+
+def _subs_made(result):
+    return [(s["out"]["id"], s["in"]["id"]) for s in result["subs"]]
+
+
+def test_autosub_rules():
+    """FPL's substitution rules, as the game publishes them.
+
+      R1  A starter who does not play is replaced by the first substitute who
+          did, taken in the bench order the manager set.
+      R2  A goalkeeper can only be replaced by the substitute goalkeeper.
+      R3  A substitution is only made if the resulting formation is legal.
+      R4  If the captain does not play, the vice-captain is captained instead.
+      R5  Bench Boost: all fifteen score, so no substitutions happen.
+      R6  Triple Captain triples rather than doubles.
+    """
+    group("auto-sub rules", "high")
+
+    import autosubs
+
+    # R1
+    r = autosubs.apply(_squad_442(), _mins({8: 0}))
+    expect("R1: the first legal substitute comes on",
+           "4-4-2, MID 8 blanks, bench GK/DEF/MID/FWD",
+           [(8, 13)], _subs_made(r),
+           note="the bench keeper is skipped because two keepers is not a legal XI")
+    r = autosubs.apply(_squad_442(), _mins({8: 0, 13: 0}))
+    expect("R1: a substitute who did not play is passed over",
+           "bench DEF blanked too", [(8, 14)], _subs_made(r))
+
+    # R2
+    r = autosubs.apply(_squad_442(), _mins({1: 0}))
+    expect("R2: the bench keeper replaces the keeper",
+           "GK blanks", [(1, 12)], _subs_made(r))
+    r = autosubs.apply(_squad_442(), _mins({1: 0, 12: 0}))
+    expect("R2: no outfielder ever takes the gloves",
+           "GK and bench GK both blank", [], _subs_made(r))
+    r = autosubs.apply(_squad_442(), _mins({10: 0}))
+    expect("R2: the bench keeper does not come on for an outfielder",
+           "FWD blanks, keeper is first on the bench", [(10, 13)], _subs_made(r))
+
+    # R3 - a replacement need not share the position of the man replaced. This
+    # is the case that was got wrong when these were first written: FPL's rule
+    # is about the resulting FORMATION, not about like-for-like.
+    r = autosubs.apply(_squad_442(), _mins({10: 0, 11: 0}))
+    expect("R3: both forwards are replaced, ending 5-4-1",
+           "both FWDs blank, bench has DEF then FWD",
+           [(10, 13), (11, 15)], _subs_made(r))
+
+    # R3 - the floor genuinely binds.
+    P = _sq_player
+    lone_forward = [
+        P(1, "GK", True, 1),
+        P(2, "DEF", True, 2), P(3, "DEF", True, 3), P(4, "DEF", True, 4), P(5, "DEF", True, 5),
+        P(6, "MID", True, 6), P(7, "MID", True, 7), P(8, "MID", True, 8),
+        P(9, "MID", True, 9), P(10, "MID", True, 10),
+        P(11, "FWD", True, 11, is_captain=True),
+        P(12, "GK", False, 12), P(13, "DEF", False, 13),
+        P(14, "MID", False, 14), P(15, "FWD", False, 15),
+    ]
+    r = autosubs.apply(lone_forward, _mins({11: 0, 15: 0}))
+    expect("R3: no substitution when it would leave zero forwards",
+           "4-5-1, the lone FWD and the bench FWD both blank",
+           [], _subs_made(r))
+
+    # R3 - the CEILING binds too. This is the bug these tests found: every FPL
+    # minimum can be satisfied by a formation the game still forbids, because
+    # one keeper plus ten outfielders leaves room for six midfielders.
+    three_five_two = [
+        P(1, "GK", True, 1),
+        P(2, "DEF", True, 2), P(3, "DEF", True, 3), P(4, "DEF", True, 4),
+        P(5, "MID", True, 5), P(6, "MID", True, 6), P(7, "MID", True, 7),
+        P(8, "MID", True, 8), P(9, "MID", True, 9),
+        P(10, "FWD", True, 10), P(11, "FWD", True, 11, is_captain=True),
+        P(12, "GK", False, 12), P(13, "MID", False, 13),
+        P(14, "MID", False, 14), P(15, "DEF", False, 15),
+    ]
+    r = autosubs.apply(three_five_two, _mins({10: 0}))
+    expect("R3: a sixth midfielder is refused even though every floor is met",
+           "3-5-2, FWD blanks, two MIDs ahead of the DEF on the bench",
+           [(10, 15)], _subs_made(r),
+           note="3-6-1 satisfies DEF>=3, MID>=2 and FWD>=1 and is still illegal")
+
+    # R3 - exhaustively, against FPL's own bounds.
+    bad = []
+    for d in range(0, 12):
+        for m in range(0, 12 - d):
+            f = 10 - d - m
+            if f < 0:
+                continue
+            xi = ([P(0, "GK", True, 0)]
+                  + [P(100 + i, "DEF", True, 100 + i) for i in range(d)]
+                  + [P(200 + i, "MID", True, 200 + i) for i in range(m)]
+                  + [P(300 + i, "FWD", True, 300 + i) for i in range(f)])
+            fpl_legal = (3 <= d <= 5) and (2 <= m <= 5) and (1 <= f <= 3)
+            if autosubs._legal_xi(xi) != fpl_legal:
+                bad.append({"DEF": d, "MID": m, "FWD": f, "fpl": fpl_legal})
+    expect("R3: every possible eleven is judged exactly as FPL judges it",
+           "all 1-GK formations summing to 11", [], bad, severity="high")
+
+    # R4
+    sq = _squad_442()
+    sq[9]["is_vice_captain"] = True
+    expect("R4: the armband moves to the vice when the captain blanks",
+           "captain plays 0", 10, autosubs.apply(sq, _mins({11: 0}))["captain_id"])
+    expect("R4: and stays put when he plays",
+           "captain plays 90", 11, autosubs.apply(sq, _mins())["captain_id"])
+    r = autosubs.apply(sq, _mins({10: 0, 11: 0}))
+    doubled = [pid for pid, mult in autosubs.multipliers(sq, r).items() if mult >= 2]
+    expect("R4: nobody is doubled when captain and vice both blank",
+           "both play 0", [], doubled)
+
+    # R5
+    r = autosubs.apply(_squad_442(), _mins({8: 0, 10: 0}), chip="bboost")
+    expect("R5: a bench boost makes no substitutions",
+           "two starters blank under bboost", [], _subs_made(r))
+    mult = autosubs.multipliers(_squad_442(), r, chip="bboost")
+    expect("R5: and all fifteen count", "bboost multipliers", 15,
+           sum(1 for v in mult.values() if v >= 1))
+    r = autosubs.apply(sq, _mins({11: 0}), chip="bboost")
+    expect("R5: but the armband still moves under a bench boost",
+           "captain blanks under bboost", 10, r["captain_id"])
+
+    # R6
+    r = autosubs.apply(_squad_442(), _mins())
+    expect("R6: the triple captain is on x3", "chip='3xc'", 3,
+           autosubs.multipliers(_squad_442(), r, chip="3xc")[11])
+    points = {i: 5 for i in range(1, 16)}
+    expect("R6: and the total reflects it", "everyone on 5 points", 65,
+           autosubs.score(_squad_442(), points, r, chip="3xc"),
+           note="ten starters on 5, plus the captain's 5 tripled")
+
+    # Scoring rules that are not about substitutions.
+    missing = {i: 5 for i in range(1, 16)}
+    del missing[7]
+    expect("a player FPL never reported contributes nothing rather than a nought",
+           "player 7 absent from the points feed",
+           55, autosubs.score(_squad_442(), missing, r),
+           note="counting him as 0 would invent a blank he never had")
+    r = autosubs.apply(_squad_442(), _mins({8: 0}))
+    scored = {i: 5 for i in range(1, 16)}
+    scored[8] = 0
+    expect("only the effective eleven counts", "MID 8 blanks, DEF 13 comes on",
+           60, autosubs.score(_squad_442(), scored, r),
+           note="the three unused substitutes must not score")
+
+
+def test_accuracy_against_numpy():
+    """The statistics, checked against their textbook definitions.
+
+    numpy and pandas are the oracle rather than arithmetic written out here.
+    Both are already dependencies, and pandas' `.rank()` implements the
+    average-rank tie handling Spearman needs independently of this project's
+    own `_ranks`, which is the part most likely to be subtly wrong.
+    """
+    group("accuracy vs definitions", "high")
+
+    import random as _random
+    import numpy as _np
+    import pandas as _pd
+
+    import accuracy as acc
+
+    _random.seed(20)
+    worst = {"mae": 0.0, "rmse": 0.0, "bias": 0.0, "base": 0.0, "rho": 0.0}
+    for _ in range(5):
+        n = _random.randint(30, 300)
+        pred = [round(_random.uniform(0, 14), 2) for _ in range(n)]
+        act = [max(0, round(_random.gauss(p, 3))) for p in pred]
+        m = acc._metrics([(p, a, 1) for p, a in zip(pred, act)])
+
+        P = _np.array(pred, dtype=float)
+        A = _np.array(act, dtype=float)
+        # Spearman from first principles: Pearson over average ranks.
+        rho = float(_np.corrcoef(_pd.Series(P).rank(), _pd.Series(A).rank())[0, 1])
+
+        worst["mae"] = max(worst["mae"], abs(float(_np.mean(_np.abs(P - A))) - m["mae"]))
+        worst["rmse"] = max(worst["rmse"], abs(float(_np.sqrt(_np.mean((P - A) ** 2))) - m["rmse"]))
+        worst["bias"] = max(worst["bias"], abs(float(_np.mean(P - A)) - m["bias"]))
+        worst["base"] = max(worst["base"], abs(float(_np.mean(_np.abs(A.mean() - A))) - m["baseline_mae"]))
+        worst["rho"] = max(worst["rho"], abs(rho - m["spearman"]))
+
+    # Rounding to 2dp (3 for rho) is the only difference allowed.
+    check("mean absolute error matches numpy", "5 random samples",
+          "within rounding", round(worst["mae"], 4), lambda v: v <= 0.005)
+    check("root mean squared error matches numpy", "5 random samples",
+          "within rounding", round(worst["rmse"], 4), lambda v: v <= 0.005)
+    check("bias matches numpy", "5 random samples",
+          "within rounding", round(worst["bias"], 4), lambda v: v <= 0.005)
+    check("the no-model baseline is the mean-actual MAE", "5 random samples",
+          "within rounding", round(worst["base"], 4), lambda v: v <= 0.005)
+    check("rank correlation matches Pearson-over-pandas-ranks",
+          "5 random samples, heavy ties at the low scores",
+          "within rounding", round(worst["rho"], 5), lambda v: v <= 0.0005,
+          note="tie handling is the part most likely to be quietly wrong")
+
+    # Anchors that follow from the definitions rather than from any sample.
+    perfect = acc._metrics([(float(v), float(v), 1) for v in range(1, 40)])
+    expect("a perfect model has zero error", "predicted == actual for 39 rows",
+           0.0, perfect["mae"])
+    expect("a perfect model has zero bias", "predicted == actual for 39 rows",
+           0.0, perfect["bias"])
+    expect("a perfect model beats the baseline by 100%",
+           "predicted == actual for 39 rows", 100.0, perfect["improvement_pct"])
+    expect("a perfect model ranks perfectly", "predicted == actual for 39 rows",
+           1.0, perfect["spearman"])
+
+    actuals = [3, 5, 1, 9, 4, 4, 7, 2]
+    mean_actual = sum(actuals) / len(actuals)
+    same_as_baseline = acc._metrics([(mean_actual, float(a), 1) for a in actuals])
+    expect("predicting the mean for everybody gains exactly nothing",
+           "every prediction = mean(actuals)",
+           0.0, same_as_baseline["improvement_pct"])
+
+    inverted = acc._metrics([(float(9 - a), float(a), 1) for a in range(1, 9)])
+    check("a model worse than the baseline reports a negative gain",
+          "predictions anti-correlated with outcomes", "improvement < 0",
+          inverted["improvement_pct"], lambda v: v is not None and v < 0,
+          note="the page has to be able to say the model is not earning its keep")
+    expect("and a perfectly inverted ranking is -1",
+           "predictions anti-correlated with outcomes",
+           -1.0, inverted["spearman"])
+
+
+def test_price_change_invariants():
+    """Properties the price board must have whatever the implementation does.
+
+    Invariants rather than worked examples on purpose: a worked example can be
+    satisfied by accident by the same misunderstanding that produced it, and
+    these are the claims the page actually makes to a reader.
+    """
+    group("price invariants", "high")
+
+    import random as _random
+    import price_changes as _pc
+
+    def hist(entries):
+        return [{"date": "2026-09-%02d" % d, "cost": c, "in": i, "out": o,
+                 "owned": 5.0, "owners": w} for d, c, i, o, w in entries]
+
+    # Momentum is net transfers OVER owners, so the same ratio at two very
+    # different club sizes has to produce the same number. If it did not, the
+    # board would simply rank by popularity.
+    small = hist([(1, 100, 0, 0, 100_000), (2, 100, 5_000, 0, 100_000)])
+    big = hist([(1, 100, 0, 0, 1_000_000), (2, 100, 50_000, 0, 1_000_000)])
+    expect("momentum is a ratio, not a count",
+           "5k net over 100k owners vs 50k over 1m",
+           _pc.board(history={1: small})["risers"][0]["momentum"],
+           _pc.board(history={2: big})["risers"][0]["momentum"])
+
+    flat = hist([(1, 100, 0, 0, 500_000), (2, 100, 9_000, 9_000, 500_000)])
+    board = _pc.board(history={3: flat})
+    expect("equal transfers in and out cancel to nothing",
+           "9,000 in and 9,000 out", 0.0,
+           (board["risers"] + board["fallers"])[0]["momentum"])
+
+    # Direction and progress, over a few hundred random movements.
+    _random.seed(4)
+    misfiled, negative = [], []
+    for _ in range(200):
+        h = hist([(1, 100, 0, 0, 400_000),
+                  (2, 100, _random.randint(0, 40_000), _random.randint(0, 40_000), 400_000)])
+        b = _pc.board(history={9: h})
+        misfiled += [r["momentum"] for r in b["risers"] if r["momentum"] < 0]
+        misfiled += [r["momentum"] for r in b["fallers"] if r["momentum"] >= 0]
+        negative += [r["progress"] for r in b["risers"] + b["fallers"] if r["progress"] < 0]
+    expect("nobody is filed under the wrong direction",
+           "200 random transfer movements", [], misfiled)
+    expect("progress is never negative, so both boards rank the same way up",
+           "200 random transfer movements", [], negative)
+
+    # Every price transition in a history must be found, and no others.
+    _random.seed(6)
+    mismatches = []
+    for _ in range(50):
+        costs, cur = [], 100
+        for _d in range(11):
+            if _random.random() < 0.3:
+                cur += _random.choice([-1, 1])
+            costs.append(cur)
+        h = hist([(d + 1, costs[d], 1000 * (d + 1), 0, 300_000)
+                  for d in range(len(costs))])
+        transitions = sum(1 for a, b in zip(costs, costs[1:]) if a != b)
+        found = len(_pc.observed_changes({7: h}))
+        if found != transitions:
+            mismatches.append((transitions, found))
+    expect("one observed change per price transition, no more and no fewer",
+           "50 random 11-night price histories", [], mismatches)
+
+    rise = _pc.observed_changes({1: hist([(1, 100, 0, 0, 300_000),
+                                          (2, 101, 50_000, 0, 300_000)])})[0]
+    fall = _pc.observed_changes({2: hist([(1, 100, 0, 0, 300_000),
+                                          (2, 99, 0, 50_000, 300_000)])})[0]
+    expect("a price going up is recorded as a rise", "cost 100 -> 101",
+           "rise", rise["direction"])
+    expect("a price going down is recorded as a fall", "cost 100 -> 99",
+           "fall", fall["direction"])
+    check("a rise carries positive momentum", "cost 100 -> 101",
+          "momentum > 0", rise["momentum"], lambda v: v > 0)
+    check("a fall carries negative momentum", "cost 100 -> 99",
+          "momentum < 0", fall["momentum"], lambda v: v < 0)
+
+    # FPL resets its own counter when a price moves, so the board has to as
+    # well. Without this a player who rose on Tuesday reads on Wednesday as
+    # though he still had the whole week's buying behind him.
+    after_change = hist([(1, 100, 0, 0, 100_000), (2, 100, 20_000, 0, 100_000),
+                         (3, 100, 40_000, 0, 100_000), (4, 101, 60_000, 0, 100_000),
+                         (5, 101, 61_000, 0, 100_000)])
+    row = _pc.board(history={11: after_change})["risers"][0]
+    expect("momentum counts from the last price change, not the first reading",
+           "three heavy nights, a rise, then one quiet night",
+           0.01, row["momentum"],
+           note="one quiet night of 1,000 over 100,000 owners")
+
+    # The calibrated threshold is a median of observations, and the two
+    # directions are calibrated separately because FPL is not symmetric.
+    obs = ([{"direction": "rise", "momentum": v, "code": 1, "date": "d"}
+            for v in (0.02, 0.04, 0.06, 0.08, 0.10)] * 3
+           + [{"direction": "fall", "momentum": -0.05, "code": 2, "date": "d"}] * 15)
+    cal = _pc.calibration(obs)
+    expect("the rise threshold is the median observed rise",
+           "rises at .02 .04 .06 .08 .10", 0.06,
+           round(cal["rise_threshold"], 6))
+    expect("the fall threshold keeps its sign", "15 falls at -0.05", -0.05,
+           round(cal["fall_threshold"], 6))
+    check("and it only claims to be measured once there is enough of it",
+          "15 rises, 15 falls", "measured", cal["measured"], lambda v: v is True)
+
+
+def test_the_tests_are_wired_correctly():
+    """A test that checks the tests, because two failure modes here are silent.
+
+    **Arity.** `expect` takes (name, input, expected, actual) and `check` takes
+    (name, input, expected, actual, predicate). Call either with one argument
+    too few and Python raises at CALL time, which the runner catches and reports
+    as "suite crashed" - so a single miscounted call takes out every remaining
+    case in that suite and the run still prints a large number of passes. That
+    has now happened twice while writing these, which is twice more than it
+    should take to automate.
+
+    **Registration.** A test function that is never added to SUITES does not
+    fail - it does not run at all, and nothing anywhere says so. That is the
+    worse of the two, because the suite gets quietly smaller while appearing to
+    grow.
+    """
+    group("test wiring", "high")
+
+    import ast
+    import pathlib
+
+    here = pathlib.Path(__file__).resolve().parent
+    arity = {"expect": 4, "check": 5}
+
+    underfed, unregistered = [], []
+    for path in sorted(here.glob("suite_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id in arity
+                    and len(node.args) < arity[node.func.id]):
+                underfed.append(f"{path.name}:{node.lineno} {node.func.id}() "
+                                f"got {len(node.args)}, needs {arity[node.func.id]}")
+
+        defined = {n.name for n in tree.body
+                   if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")}
+        listed = set()
+        for node in tree.body:
+            if (isinstance(node, ast.Assign)
+                    and any(getattr(t, "id", None) == "SUITES" for t in node.targets)
+                    and isinstance(node.value, ast.List)):
+                listed = {e.id for e in node.value.elts if isinstance(e, ast.Name)}
+        unregistered += [f"{path.name}:{n}" for n in sorted(defined - listed)]
+
+    expect("every expect()/check() call is given enough arguments",
+           "ast scan of tests/suite_*.py", [], underfed, severity="high",
+           note="one short call aborts its whole suite and still reports passes")
+    expect("every test function is registered in its SUITES list",
+           "ast scan of tests/suite_*.py", [], unregistered, severity="high",
+           note="an unregistered test does not fail, it simply never runs")
+
+
+def test_watchlist_survives_id_reassignment():
+    """The claim the watchlist's whole design rests on, tested directly.
+
+    FPL reassigns `element_id` every August. A watchlist is the only thing this
+    app stores that is meant to outlive a season, so it is keyed on `code`
+    instead - and this simulates the summer to prove the difference is real
+    rather than a comment.
+    """
+    group("watchlist keys", "high")
+
+    import db as _db
+    import watchlist as wl
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM watchlist WHERE fpl_id = 4711")
+
+    # Two players, this season.
+    before = [
+        {"code": 500001, "id": 12, "web_name": "Tracked", "team_name": "ARS",
+         "pos": "MID", "cost": 7.0, "path": "/player/tracked-500001"},
+        {"code": 500002, "id": 13, "web_name": "Other", "team_name": "CHE",
+         "pos": "DEF", "cost": 5.0, "path": "/player/other-500002"},
+    ]
+    wl.add(4711, 500001)
+    expect("the tracked player is found this season",
+           "watchlist keyed on code 500001", "Tracked",
+           wl.get(4711, before)[0]["web_name"])
+
+    # August: FPL hands out new element ids and they land on DIFFERENT players.
+    # The codes are untouched, because a code belongs to a footballer.
+    after = [
+        {"code": 500002, "id": 12, "web_name": "Other", "team_name": "CHE",
+         "pos": "DEF", "cost": 5.2, "path": "/player/other-500002"},
+        {"code": 500001, "id": 13, "web_name": "Tracked", "team_name": "ARS",
+         "pos": "MID", "cost": 7.3, "path": "/player/tracked-500001"},
+    ]
+    entry = wl.get(4711, after)[0]
+    expect("and is still the same footballer after the ids are reshuffled",
+           "element_id 12 now belongs to a different player",
+           "Tracked", entry["web_name"], severity="high",
+           note="keyed on element_id this would now read Other - a different "
+                "player, silently")
+    expect("picking up his new price with him",
+           "same code, new season", 7.3, entry["cost"])
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM watchlist WHERE fpl_id = 4711")
+
 SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_describe_zero_minutes,
           test_a_to_z_grouping, test_draft_validation, test_storage_kind,
@@ -3217,4 +4352,12 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_manager_points_backfill, test_performance_gap_season,
           test_settled_lineup_flags, test_draft_applies_to_one_gameweek,
           test_rescore_queue,
-          test_prev_season_totals]
+          test_prev_season_totals,
+          test_events_cache, test_team_map_retries_after_failure,
+          test_known_manager_bounds, test_autosub_waits_for_the_bench,
+          test_accuracy_statistics, test_accuracy_reads_settled_rows_only,
+          test_price_snapshot_capture, test_price_momentum_and_calibration,
+          test_price_board_excludes_unmeasurable_players, test_watchlist,
+          test_autosub_rules, test_accuracy_against_numpy,
+          test_price_change_invariants, test_watchlist_survives_id_reassignment,
+          test_the_tests_are_wired_correctly]

@@ -536,8 +536,112 @@ def test_open_redirect():
               lambda _: "evil.example" not in loc, severity="high")
 
 
+def _unescaped_in_markup(scripts, expr):
+    """Lines interpolating `expr` raw into something that looks like markup.
+
+    Only lines containing an HTML tag count. The same expression legitimately
+    appears unescaped in three other places - an alert(), an input's .value,
+    and a lowercased key used only for matching - none of which is ever parsed
+    as HTML, and flagging those taught the reader to ignore this check.
+
+    Line-based, so a template literal split across lines with the tag on one
+    line and the interpolation on another would be missed. The DOM-level tests
+    in tests/js/ cover that from the other direction.
+    """
+    import re as _re
+    pattern = _re.compile(r"\$\{\s*" + _re.escape(expr) + r"\s*[}|]")
+    out = []
+    for name, body in scripts.items():
+        for n, line in enumerate(body.split(chr(10)), start=1):
+            if "<" not in line:
+                continue
+            if pattern.search(line):
+                out.append(f"{name}:{n}")
+    return out
+
+
+def test_client_side_escaping():
+    """Strings other FPL users typed must not reach innerHTML unescaped.
+
+    This is the one injection surface the rest of this file cannot see. Every
+    other case here reads the HTML the server sent, and none of this markup
+    exists until fetch() has returned - the league list, the standings table
+    and the news feed are all built in the browser from /api/ responses.
+
+    Three of those fields are free text typed by strangers: a mini-league's
+    name, and the team and manager names of everyone in it. A manager who calls
+    their team `<img src=x onerror=...>` gets that markup parsed in the page of
+    everyone who opens the league.
+
+    The CSP stops such a handler EXECUTING, which is why this is graded medium
+    rather than critical - but the CSP is currently the only thing that does,
+    and it does nothing about markup that merely tears the page apart
+    (`</table><h1>`), which needs no script at all.
+
+    Read from the source rather than a browser: the suite has no DOM, and "is
+    this interpolation escaped" is a property of the source. The DOM-level
+    behaviour is covered by tests/js/.
+    """
+    group("client-side escaping", "medium")
+
+    import os
+    import re
+
+    static = "static"
+    scripts = {name: open(os.path.join(static, name), encoding="utf-8").read()
+               for name in sorted(os.listdir(static)) if name.endswith(".js")}
+    # Scanned across every shipped script, so moving a helper between files -
+    # esc() lives in util.js now - does not silently stop this checking.
+    js = chr(10).join(scripts.values())
+
+    definers = [n for n, body in scripts.items() if "function esc(" in body]
+    check("exactly one script defines the escape helper", "static/*.js",
+          "one definition, so the copies cannot drift", definers,
+          lambda names: len(names) == 1,
+          note="it was duplicated in app.js and compare.js, and the two had "
+               "already diverged on an adjacent constant")
+
+    # The fields that are typed by other people, with the expression each one
+    # appears as in the source.
+    untrusted = {
+        "mini-league name": "l.name",
+        "league entry name": "s.entry_name",
+        "league manager name": "s.manager",
+    }
+    for label, expr in untrusted.items():
+        check(f"{label} is escaped before innerHTML", f"${{{expr}}} in static/*.js",
+              "wrapped in esc(...)", _unescaped_in_markup(scripts, expr) or "escaped",
+              lambda v: v == "escaped", severity="high",
+              note="free text from the FPL API, rendered as markup in every viewer's page")
+
+    # FPL's own strings. Not hostile, but not ours either, and they travel the
+    # same path into the same innerHTML.
+    for label, expr in {"player name": "p.web_name",
+                        "news headline": "s.headline",
+                        "news player": "s.player"}.items():
+        check(f"{label} is escaped before innerHTML", f"${{{expr}}} in static/*.js",
+              "wrapped in esc(...)", _unescaped_in_markup(scripts, expr) or "escaped",
+              lambda v: v == "escaped", severity="medium",
+              note="defence in depth; FPL controls this text, we do not")
+
+    # The helper has to cover the characters that actually matter. A version
+    # handling < and > but not quotes is the usual half-fix, and it leaves
+    # every attribute interpolation open.
+    # Read the body of esc() itself rather than the whole file: an entity that
+    # happens to appear elsewhere in the script would otherwise pass this.
+    body = ""
+    if definers:
+        src_js = scripts[definers[0]]
+        a = src_js.index('function esc(')
+        body = src_js[a:src_js.index(chr(10) + chr(125), a) + 2]
+    for ch, entity in (("&", "&amp;"), ("<", "&lt;"), (">", "&gt;"),
+                       ('"', "&quot;"), ("'", "&#39;")):
+        check(f"esc() replaces {ch!r}", f"the body of esc() in {definers[0] if definers else '?'}",
+              f"maps to {entity}", entity if entity in body else "missing",
+              lambda v, e=entity: v == e)
+
 SUITES = [test_sql_injection, test_regex_injection, test_xss, test_path_traversal,
           test_auth_on_state_changing_routes, test_security_headers,
           test_information_disclosure, test_input_fuzzing, test_payload_limits,
           test_third_party_assets, test_privacy_surface, test_http_methods,
-          test_open_redirect]
+          test_open_redirect, test_client_side_escaping]

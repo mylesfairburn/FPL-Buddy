@@ -1,22 +1,46 @@
-fastapi
-uvicorn[standard]
-jinja2
-starlette<1.0.0
+# Every version is pinned exactly.
+#
+# Half of this file used to float, which meant two builds of the SAME COMMIT
+# could install different code - the image is rebuilt on every push, so "it
+# passed CI" and "it works in production" were statements about potentially
+# different dependency sets. Dependabot is configured against this file
+# (.github/dependabot.yml) and the full suite gates every PR it opens, so a
+# bump arrives as a tested change rather than as a surprise at 03:00.
+#
+# Bump by editing here, not by installing something newer locally and
+# forgetting. `pip install -r python/requirements.txt` in a clean venv should
+# reproduce what the container runs.
+
+fastapi==0.140.0
+uvicorn[standard]==0.51.0
+jinja2==3.1.6
+# Starlette is FastAPI's own dependency and FastAPI's pin governs it. Named
+# here anyway because the app imports Starlette types directly, and because
+# the 1.0 release is expected to move things this code touches.
+starlette==0.52.1
 # Imported directly by main.py (Markup, escape) and NOT only through Jinja.
 # It has always been installed here as a dependency of jinja2, which is why
 # nothing has broken - but a direct import satisfied by somebody else's
 # dependency is one `pip` resolution away from a missing module, and the
 # failure lands at import time on a fresh install.
-markupsafe
+markupsafe==3.0.3
+
+# The model stack. These three are the ones to read carefully in a Dependabot
+# PR rather than merge on green: the trained bundles in data/models are
+# pickles produced against these exact versions, and unpickling across a major
+# change is not guaranteed. rating_model.py has a version guard that turns a
+# mismatch into a StaleModelError rather than into wrong numbers, and the
+# suite exercises it - but the fix is still a retrain, so the PR should say so.
 pandas==3.0.0
 numpy==2.4.1
 scikit-learn==1.8.0
-joblib
-matplotlib
-requests
-pulp
+joblib==1.5.3
+matplotlib==3.10.8
+
+requests==2.33.0
+pulp==3.3.2
 # Service-account auth for seo_report.py: RS256 JWT signing and the token
 # exchange against Google's endpoint. Only this one library, deliberately -
 # google-api-python-client would pull in a large client stack to call two
 # endpoints that are plain REST, and `requests` above already covers those.
-google-auth
+google-auth==2.56.3

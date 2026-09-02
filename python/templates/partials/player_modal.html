@@ -1,8 +1,12 @@
     <!-- Player pop-up -->
-    <div id="playerModal" class="player-modal d-none">
+    <!-- role/aria-modal so assistive technology treats this as a dialog rather
+         than as another div; aria-labelledby points at the name, which is what
+         gets announced when focus lands inside. -->
+    <div id="playerModal" class="player-modal d-none" role="dialog"
+         aria-modal="true" aria-labelledby="pmName">
         <div class="pm-backdrop" id="pmBackdrop"></div>
         <div class="pm-card">
-            <button class="pm-close" id="pmClose">&times;</button>
+            <button class="pm-close" id="pmClose" type="button" aria-label="Close">&times;</button>
             <div class="pm-head">
                 <span id="pmKit"></span>
                 <div><div class="pm-name" id="pmName"></div><div class="pm-sub" id="pmSub"></div></div>

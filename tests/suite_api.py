@@ -485,7 +485,44 @@ def test_chip_advice_shape():
                    "- their simulated figure is in different units entirely")
 
 
+def test_watchlist_routes():
+    """The three endpoints, through the app rather than the module."""
+    group("watchlist API", "high")
+
+    import db as _db
+    c = _client()
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM watchlist")
+
+    r = c.get("/api/watchlist/4242")
+    expect("an empty watchlist is available, not an error",
+           "GET /api/watchlist/4242", 200, r.status_code)
+    expect("and carries no players", "GET /api/watchlist/4242",
+           [], r.json().get("players"))
+
+    r = c.post("/api/watchlist/4242", json={"code": 111, "note": "keep an eye"})
+    expect("a player can be added", "POST /api/watchlist/4242", 200, r.status_code)
+
+    r = c.get("/api/watchlist/4242")
+    codes = [p["code"] for p in r.json().get("players", [])]
+    expect("and comes back on the next read", "GET /api/watchlist/4242",
+           [111], codes)
+
+    r = c.post("/api/watchlist/4242", json={"code": "not-a-code"})
+    expect("a bad code is a 400, not a 500", "POST with code='not-a-code'",
+           400, r.status_code)
+
+    r = c.delete("/api/watchlist/4242/111")
+    expect("a player can be removed", "DELETE /api/watchlist/4242/111",
+           200, r.status_code)
+    expect("leaving the list empty", "GET /api/watchlist/4242",
+           [], c.get("/api/watchlist/4242").json().get("players"))
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM watchlist")
+
 SUITES = [test_read_endpoints, test_ratings_parameters, test_sorted_and_shaped,
           test_search, test_draft_roundtrip, test_ai_endpoints,
           test_live_and_proxy_endpoints,
-          test_ai_chip_plan, test_chip_advice_shape]
+          test_ai_chip_plan, test_chip_advice_shape, test_watchlist_routes]

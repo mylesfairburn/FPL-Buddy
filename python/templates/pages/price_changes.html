@@ -1,0 +1,234 @@
+{% extends "pages/_layout.html" %}
+
+{% block content %}
+<h1 class="page-title">FPL price changes tonight</h1>
+<p class="page-lede">
+    Fantasy Premier League moves prices overnight, at about 01:30. These are the
+    players closest to a rise or a fall — worked out from how many managers have
+    transferred them in or out since their last change, measured against a
+    threshold this site has learned by watching real changes happen.
+</p>
+
+{% if not pc.available %}
+<h2>Not enough nights recorded yet</h2>
+<p>
+    This page works by comparing one night's transfer counts with the next, and
+    there
+    {% if pc.snapshot_days == 0 %}are no nights recorded yet{% else %}is only one night recorded so far{% endif %}.
+    Fantasy Premier League publishes transfer totals for the whole season rather
+    than for the last day, so a single reading cannot tell a player being bought
+    right now from one bought heavily in August and ignored since. The
+    difference between two nights is the entire signal.
+</p>
+<p>
+    The nightly job records a reading at 03:00, an hour and a half after Fantasy
+    Premier League applies that night's changes. The board appears on its own
+    once there are two.
+</p>
+
+{% else %}
+
+{% set cal = pc.calibration %}
+<h2>How close each player is</h2>
+<p>
+    Progress is how far a player has travelled toward the threshold since his
+    last price change, where 100% means he has reached it. It is not a promise:
+    Fantasy Premier League has never published the rule, and everything below is
+    an estimate of a number the game keeps to itself.
+</p>
+<p class="text-muted small">
+    The two number columns answer different questions, so they can disagree.
+    <em>Net last night</em> is one day; <em>progress</em> is everything since
+    that player's last price change. A player on the fall list with a small
+    positive figure beside him is one who has been sold steadily for a week and
+    bought slightly today — still heading down, just not last night.
+</p>
+
+<div class="row g-4">
+    <div class="col-lg-6">
+        <h3 class="h5">Closest to a rise</h3>
+        {% if pc.risers %}
+        <div class="table-responsive">
+            <table class="table table-sm price-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Player</th>
+                        <th scope="col" class="text-end">Price</th>
+                        <th scope="col" class="text-end">Owned</th>
+                        <th scope="col" class="text-end">Net last night</th>
+                        <th scope="col" class="text-end">Progress</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for r in pc.risers %}
+                    <tr>
+                        <th scope="row">
+                            {%- if r.path %}<a href="{{ r.path }}">{{ r.name }}</a>
+                            {%- else %}{{ r.name }}{% endif %}
+                            {% if r.team %}<span class="text-muted small">{{ r.team }}</span>{% endif %}
+                        </th>
+                        <td class="text-end">&pound;{{ '%.1f'|format(r.cost) }}m</td>
+                        <td class="text-end text-muted">{{ r.owned }}%</td>
+                        <td class="text-end">{{ '{:+,}'.format(r.net_last_night) }}</td>
+                        <td class="text-end fw-semibold">{{ r.progress }}%</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">Nobody is moving toward a rise at the moment.</p>
+        {% endif %}
+    </div>
+
+    <div class="col-lg-6">
+        <h3 class="h5">Closest to a fall</h3>
+        {% if pc.fallers %}
+        <div class="table-responsive">
+            <table class="table table-sm price-table">
+                <thead>
+                    <tr>
+                        <th scope="col">Player</th>
+                        <th scope="col" class="text-end">Price</th>
+                        <th scope="col" class="text-end">Owned</th>
+                        <th scope="col" class="text-end">Net last night</th>
+                        <th scope="col" class="text-end">Progress</th>
+                    </tr>
+                </thead>
+                <tbody>
+                {% for r in pc.fallers %}
+                    <tr>
+                        <th scope="row">
+                            {%- if r.path %}<a href="{{ r.path }}">{{ r.name }}</a>
+                            {%- else %}{{ r.name }}{% endif %}
+                            {% if r.team %}<span class="text-muted small">{{ r.team }}</span>{% endif %}
+                        </th>
+                        <td class="text-end">&pound;{{ '%.1f'|format(r.cost) }}m</td>
+                        <td class="text-end text-muted">{{ r.owned }}%</td>
+                        <td class="text-end">{{ '{:+,}'.format(r.net_last_night) }}</td>
+                        <td class="text-end fw-semibold">{{ r.progress }}%</td>
+                    </tr>
+                {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <p class="text-muted">Nobody is moving toward a fall at the moment.</p>
+        {% endif %}
+    </div>
+</div>
+
+<h2>How confident this is</h2>
+{% if cal.measured %}
+<p>
+    The threshold used above is <strong>measured, not assumed</strong>. This site
+    has watched <strong>{{ cal.rise_observations }}</strong> rises and
+    <strong>{{ cal.fall_observations }}</strong> falls happen, recorded how much
+    transfer momentum each player had built when it did, and taken the middle of
+    those. A rise currently needs about
+    <strong>{{ (cal.measured_rise * 100) | round(2) }}%</strong> of a player's
+    owners to have transferred him in net; a fall needs about
+    <strong>{{ (cal.measured_fall * 100) | round(2) | abs }}%</strong> to have
+    transferred him out.
+</p>
+{% else %}
+<p>
+    <strong>The threshold is still a borrowed estimate.</strong> Working it out
+    from evidence needs {{ cal.min_observations }} observed rises and
+    {{ cal.min_observations }} observed falls, and so far this site has seen
+    <strong>{{ cal.rise_observations }}</strong> and
+    <strong>{{ cal.fall_observations }}</strong>. Until then the progress figures
+    above are measured against the community's long-standing estimate — about
+    5.5% of a player's owners — which is a reasonable starting point and is not
+    the same thing as knowing.
+    {% if cal.measured_rise is not none or cal.measured_fall is not none %}
+    For what it is worth, the changes seen so far came at
+    {% if cal.measured_rise is not none %}{{ (cal.measured_rise * 100) | round(2) }}% for a rise{% endif %}
+    {%- if cal.measured_rise is not none and cal.measured_fall is not none %} and {% endif %}
+    {%- if cal.measured_fall is not none %}{{ (cal.measured_fall * 100) | round(2) | abs }}% for a fall{% endif %}.
+    {% endif %}
+</p>
+{% endif %}
+<p class="text-muted small">
+    Built from {{ pc.snapshot_days }} nightly readings
+    {%- if pc.first_date %} ({{ pc.first_date }} to {{ pc.last_date }}){% endif %},
+    covering {{ pc.observed_total }} observed price change{{ '' if pc.observed_total == 1 else 's' }}.
+</p>
+
+{% if pc.recent %}
+<h2>Changes actually seen</h2>
+<p>
+    The record this page calibrates itself from — every price change these
+    nightly readings have caught, and the momentum the player had behind him
+    when it happened.
+</p>
+<div class="table-responsive">
+    <table class="table table-sm price-recent-table">
+        <thead>
+            <tr>
+                <th scope="col">Date</th>
+                <th scope="col">Player</th>
+                <th scope="col">Change</th>
+                <th scope="col" class="text-end">Momentum at the time</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in pc.recent %}
+            <tr>
+                <td>{{ r.date }}</td>
+                <th scope="row">
+                    {%- if r.path %}<a href="{{ r.path }}">{{ r.name }}</a>
+                    {%- else %}{{ r.name }}{% endif %}
+                </th>
+                <td>{{ 'Rise' if r.direction == 'rise' else 'Fall' }}</td>
+                <td class="text-end">{{ (r.momentum * 100) | round(2) }}%</td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% endif %}
+
+<h2>What this page can and cannot tell you</h2>
+<p>
+    <strong>Fantasy Premier League has never published the rule.</strong> What is
+    known is that a player rises when enough managers transfer him in and falls
+    when enough transfer him out, and that the number needed scales with how many
+    people own him. Everything more precise than that — including every tool that
+    shows you a countdown — is somebody's reverse-engineering. This one at least
+    shows you its evidence.
+</p>
+<p>
+    <strong>A player who has not moved yet may be further along than this
+    says.</strong> Fantasy Premier League resets its counter when a price
+    changes, and for anyone whose last change came before these readings began
+    there is buying this page cannot see. His progress is therefore a floor
+    rather than an estimate. It corrects itself the first time he does move.
+</p>
+<p>
+    <strong>A reading a night is coarse.</strong> Fantasy Premier League updates
+    its transfer counters continuously and this site looks once, at 03:00. A
+    player who crosses the line at lunchtime and is still climbing at midnight
+    appears here as one number for the whole day. That is enough to rank who is
+    close and not enough to tell you the hour.
+</p>
+<p>
+    <strong>Do not make a transfer for 0.1m.</strong> Selling to beat a fall
+    costs you a transfer, and possibly four points, to protect a tenth of a
+    million — and you only get half of any rise back when you sell. Price is the
+    last thing to think about after fixtures, form and minutes, which is what the
+    rest of this site is for.
+</p>
+<p>
+    Players owned by fewer than 1% of managers are left out entirely. Fantasy
+    Premier League reports ownership to one decimal place, so a player listed
+    at 0.1% is really somewhere between 0.05% and 0.15% — the number this page
+    divides by would be wrong by up to half, and everything built on it with
+    it. At 1% that rounding is worth a twentieth as much. The cost is that a
+    genuine differential being quietly bought will not appear here until he
+    reaches 1%, which is better than a board ranking players it cannot measure
+    above the ones it can.
+</p>
+{% endblock %}

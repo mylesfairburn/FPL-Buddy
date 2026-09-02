@@ -13,6 +13,7 @@ import re
 import secrets
 import threading
 import urllib.parse
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape as xml_escape
 
@@ -23,6 +24,7 @@ from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
+import accuracy
 import ai_manager
 import ai_team
 import db
@@ -33,9 +35,11 @@ import kits
 import manager_history
 import ops
 import player_pages
+import price_changes
 import seasons
 import seo_tables as seo_tables_builder
 import social
+import watchlist
 from pipeline import run_pipeline
 from rating_model import (MIN_CURRENT_GAMEWEEKS, StaleModelError,
                           completed_current_gameweeks, form_blend_weight,
@@ -294,6 +298,49 @@ PAGES = {
         "priority": "0.8",
         "changefreq": "weekly",
     },
+    # One URL; the players live in the query string, which the sitemap does not
+    # list. What gets indexed is the empty tool, which is what should rank.
+    "/compare": {
+        "title": "Compare FPL players side by side | FPL Buddy",
+        "h1": "Compare players",
+        "description": ("Put two or three Fantasy Premier League players next to each "
+                        "other: predicted points, form, price, ownership and their "
+                        "next fixtures, from a trained model."),
+        "priority": "0.7",
+        "changefreq": "weekly",
+    },
+    # The briefing already computes this shortlist, but buries it in a page
+    # about eight other things at a URL with a gameweek number in it.
+    "/captain-picks": {
+        "title": "FPL captain picks this gameweek — top projected scorers",
+        "h1": "FPL captain picks",
+        "description": ("The highest projected scorers in Fantasy Premier League this "
+                        "gameweek, ranked by a trained points model, with price, "
+                        "ownership and fixtures for each."),
+        "priority": "0.8",
+        "changefreq": "daily",
+    },
+    "/price-changes": {
+        # No apostrophe - see /injuries.
+        "title": "FPL price changes tonight — predicted rises and falls",
+        "h1": "FPL price changes",
+        "description": ("Which Fantasy Premier League players are closest to a price "
+                        "rise or fall tonight, from nightly transfer counts and a "
+                        "threshold measured from real changes."),
+        "priority": "0.8",
+        "changefreq": "daily",
+    },
+    # Gains a gameweek every time one settles, so `daily` and no `lastmod`.
+    "/accuracy": {
+        # No apostrophe - see /injuries. The metadata suite caught this one.
+        "title": "Prediction accuracy — predicted against actual points | FPL Buddy",
+        "h1": "Prediction accuracy",
+        "description": ("Predicted against actual points for every frozen AI squad: "
+                        "mean error, bias and rank correlation, measured against a "
+                        "no-model baseline."),
+        "priority": "0.7",
+        "changefreq": "daily",
+    },
     "/about": {
         "title": "About FPL Buddy — how the ratings and AI squads work",
         "description": ("How FPL Buddy rates players, how the two AI squads are picked, "
@@ -397,7 +444,10 @@ FAQ_ITEMS = [
               "single score. Football over ninety minutes is not very predictable, and a "
               "model working from a handful of inputs will be wrong about individual "
               "players most weeks. The honest use is \"who is the better pick\", not "
-              "\"how many will he get\"."),
+              "\"how many will he get\". You do not have to take that on trust: the "
+              "<a href=\"/accuracy\">accuracy page</a> publishes every frozen prediction "
+              "against what the player actually scored, including how the model compares "
+              "with not modelling at all."),
     },
     {
         "q": "My team rating went up but I scored fewer points. Why?",
@@ -466,7 +516,23 @@ FAQ_ITEMS = [
               "points you gain ground on almost everyone. Sort the "
               "<a href=\"/players\">player ratings</a> by predicted points and look for "
               "low ownership — a high projection at low ownership is the combination "
-              "worth having."),
+              "worth having. Once you have two or three names, the "
+              "<a href=\"/compare\">comparison tool</a> puts them side by side on "
+              "projected points, value per million and fixtures."),
+    },
+    {
+        "q": "When do FPL player prices change, and can you predict them?",
+        "a": ("Prices move overnight, at around 01:30 UK time. A player rises when "
+              "enough managers transfer him in and falls when enough transfer him "
+              "out, and the number needed scales with how many people already own "
+              "him — but Fantasy Premier League has never published the actual rule, "
+              "so every prediction of it, here and everywhere else, is "
+              "reverse-engineering. The <a href=\"/price-changes\">price change "
+              "page</a> shows who is closest and, unusually, shows the evidence it "
+              "is working from: the threshold it uses is measured from real changes "
+              "it has watched happen, and it says how many that is. Worth a look "
+              "before a transfer, not worth taking a hit for — you only get half of "
+              "a price rise back when you sell."),
     },
     {
         "q": "How often is the data updated?",
@@ -483,7 +549,23 @@ FAQ_ITEMS = [
     },
 ]
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app):
+    """Startup, the way Starlette wants to be told about it.
+
+    Was `@app.on_event("startup")`, deprecated since FastAPI 0.93 and slated
+    for removal - which would have arrived as a Dependabot bump that failed at
+    import time in the container, where that is a crash loop.
+
+    The body is in _startup() below, beside the warm-up it drives; the name
+    resolves at call time. Nothing runs on shutdown: the warm-up thread is a
+    daemon and SQLite connections are per-request.
+    """
+    _startup()
+    yield
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 class HeadAsGet:
@@ -702,6 +784,22 @@ def obf_mail(address):
 templates.env.globals["obf_mail"] = obf_mail
 
 
+def deadline_text(value):
+    """An FPL deadline stamp as "Fri 12 Sep, 18:30".
+
+    Returns the input unchanged if unparseable - an ugly timestamp beats a page
+    that raises mid-render."""
+    parsed = gw_clock.parse_deadline(value)
+    if parsed is None:
+        return value or ""
+    stamp = parsed.strftime("%a %d %b, %H:%M")
+    # Windows has no %-d, so the leading zero comes off by hand.
+    return stamp.replace(" 0", " ", 1) if stamp[4] == "0" else stamp
+
+
+templates.env.filters["deadline_text"] = deadline_text
+
+
 def asset_version():
     """Short token that changes whenever the CSS or JS changes on disk.
 
@@ -711,7 +809,8 @@ def asset_version():
     work anyway."""
     import hashlib
     h = hashlib.sha1()
-    for name in ("static/style.css", "static/app.js", "static/kits.js"):
+    for name in ("static/style.css", "static/util.js", "static/app.js",
+                 "static/kits.js", "static/compare.js", "static/watchlist.js"):
         try:
             st = os.stat(name)
             h.update(f"{name}:{st.st_mtime_ns}:{st.st_size}".encode())
@@ -1093,8 +1192,8 @@ def require_refresh_token(token):
         raise HTTPException(status_code=403, detail="Invalid or missing refresh token.")
 
 
-@app.on_event("startup")
-def startup():
+def _startup():
+    """The work the lifespan handler above runs. See it for why it is split."""
     # Creating the schema is idempotent, and doing it here means a fresh
     # container comes up with a usable DB without a manual init step.
     try:
@@ -1194,7 +1293,7 @@ def index(request: Request):
 # template hands it to app.js, which opens that tab before first paint rather
 # than flashing My Team and then switching.
 
-def tab_response(request, path):
+def tab_response(request, path, **extra):
     """Render the app shell with the tab for `path` already open.
 
     The bar itself is the same `tab_links()` every other page gets; the only
@@ -1208,14 +1307,40 @@ def tab_response(request, path):
     # URLs, so this goes out with every one of them rather than only with the
     # tab it belongs to - which is also what a crawler needs, since it has no
     # way to click through to a pane it can't see.
+    # Server-rendered so the strip is right in the first painted frame and
+    # survives JS being off. Both are cheap: the clock is cached and the other
+    # is a stat(). app.js adds only the relative countdown.
+    next_event = _horizon_anchor()
+    deadline = None
+    if next_event is not None:
+        try:
+            deadline = gw_clock.deadline_for(next_event)
+        except Exception as e:
+            print(f"couldn't read the GW{next_event} deadline for the status bar: {e}")
     return html_response("index.html", request, path, mode=state["mode"],
                          initial_pane=TAB_PANES[path],
-                         page_h1=PAGES[path]["h1"], ssr=seo_tables())
+                         page_h1=PAGES[path]["h1"], ssr=seo_tables(),
+                         next_event=next_event, next_deadline=deadline,
+                         data_updated=data_lastmod(), **extra)
 
 
 @app.get("/my-team", response_class=HTMLResponse)
 def my_team(request: Request):
     return tab_response(request, "/my-team")
+
+
+@app.get("/my-team/{fpl_id}", response_class=HTMLResponse)
+def my_team_for(request: Request, fpl_id: int):
+    """The same tab, with an FPL id in the address, so a loaded team can be
+    bookmarked and shared.
+
+    The canonical stays /my-team: every one of these URLs renders the identical
+    shell, so to a crawler they are one page several million times over. Not
+    also `noindex`, because the two signals contradict each other - canonical
+    says "index that one", noindex says "index neither".
+    """
+    return tab_response(request, "/my-team", initial_fpl_id=fpl_id,
+                        canonical=SITE_URL + "/my-team")
 
 
 @app.get("/ai-teams", response_class=HTMLResponse)
@@ -1363,6 +1488,103 @@ def privacy(request: Request):
 @app.get("/faq", response_class=HTMLResponse)
 def faq(request: Request):
     return html_response("pages/faq.html", request, "/faq", faq_items=FAQ_ITEMS)
+
+
+# Longer than the briefing's three: a page about nothing but the armband can
+# afford a table under the cards.
+CAPTAIN_PAGE_LIMIT = 10
+
+
+@app.get("/compare", response_class=HTMLResponse)
+def compare_page(request: Request):
+    """Two or three players next to each other.
+
+    Client-side beyond this shell, off /api/all_players - no new endpoint. The
+    selection is deliberately NOT server-rendered: a crawler following a few
+    query strings would index near-identical pages.
+    """
+    return html_response("pages/compare.html", request, "/compare",
+                         season_label=_season_label(), updated=data_lastmod())
+
+
+@app.get("/captain-picks", response_class=HTMLResponse)
+def captain_picks_page(request: Request):
+    """Who to captain this gameweek.
+
+    Computed live rather than read from the frozen briefing: a briefing is a
+    dated edition and should not change, but this answers "who should I
+    captain", which moves when the team news does.
+
+    Reuses gw_report.captain_picks, so the ranking, the tie-break and the
+    refusal to rank during a cold start are defined once.
+    """
+    gameweek = _horizon_anchor()
+    picks, provisional = [], False
+    try:
+        provisional = using_fallback_form(state["mode"])
+    except Exception as e:
+        print(f"couldn't tell whether the ratings are provisional: {e}")
+    if gameweek is not None:
+        try:
+            picks = gw_report.captain_picks(
+                player_page_index(), gameweek, limit=CAPTAIN_PAGE_LIMIT,
+                ratings_provisional=provisional)
+        except Exception as e:
+            print(f"couldn't build the captain shortlist: {e}")
+
+    return html_response("pages/captain_picks.html", request, "/captain-picks",
+                         picks=picks, gameweek=gameweek,
+                         provisional=provisional, updated=data_lastmod(),
+                         season_label=_season_label())
+
+
+@app.get("/price-changes", response_class=HTMLResponse)
+def price_changes_page(request: Request):
+    """Who is closest to a price change tonight.
+
+    The one page not downstream of the model: arithmetic on FPL's own transfer
+    counters, plus a pool lookup only to turn codes into names.
+    """
+    names = {}
+    try:
+        names = {code: {"name": rec["web_name"], "path": rec["path"],
+                        "team": rec.get("team_short") or rec.get("team_name")}
+                 for code, rec in player_page_index().items()}
+    except Exception as e:
+        # Costs the names and the links, not the numbers.
+        print(f"couldn't attach player names to the price board: {e}")
+
+    # No bootstrap fetch: the owner count is stored on the snapshot row, so
+    # this route touches nothing but SQLite. See `owners` in db.py.
+    try:
+        data = price_changes.summary(names=names)
+    except Exception as e:
+        print(f"couldn't build the price change board: {e}")
+        data = {"available": False, "snapshot_days": 0, "dates": [],
+                "risers": [], "fallers": [], "recent": [],
+                "calibration": price_changes.calibration([])}
+
+    return html_response("pages/price_changes.html", request, "/price-changes",
+                         pc=data, updated=data_lastmod())
+
+
+@app.get("/accuracy", response_class=HTMLResponse)
+def accuracy_page(request: Request):
+    """Predicted against actual, for every settled prediction.
+
+    Straight out of SQLite - a page that recomputed its own scorecard would be
+    marking its own homework against numbers that had since moved.
+    """
+    try:
+        data = accuracy.summary()
+    except Exception as e:
+        print(f"couldn't build the accuracy page: {e}")
+        data = {"available": False, "sources": [], "per_gameweek": [],
+                "squad_totals": [], "headline": None,
+                "min_predictions": accuracy.MIN_PREDICTIONS,
+                "settled_gameweeks": []}
+    return html_response("pages/accuracy.html", request, "/accuracy",
+                         acc=data, season_label=_season_label())
 
 
 # =========================================================================
@@ -1789,14 +2011,24 @@ def security_txt():
         headers={"Cache-Control": "public, max-age=86400"})
 
 
+# A query longer than any name cannot match one, so accepting it only buys an
+# unauthenticated caller a substring scan of the whole pool.
+SEARCH_MAX_CHARS = 64
+# `q=a` matches most of the pool, and the front end shows a short dropdown.
+SEARCH_MAX_RESULTS = 50
+
+
 @app.get("/api/search")
-def search(q: str):
-    if not q or state["position_dfs"] is None:
+def search(response: Response, q: str, limit: int = SEARCH_MAX_RESULTS):
+    response.headers["Cache-Control"] = API_CACHE
+    q = (q or "").strip()
+    if not q or len(q) > SEARCH_MAX_CHARS or state["position_dfs"] is None:
         return {"results": []}
     result = search_player(q, state["position_dfs"])
     if result is None:
         return {"results": []}
-    return {"results": records(result)}
+    limit = max(0, min(int(limit), SEARCH_MAX_RESULTS))
+    return {"results": records(result.head(limit))}
 
 
 # position_dfs is keyed on the long names the rating model uses. Every other
@@ -2111,6 +2343,44 @@ def clear_draft(fpl_id: int):
 
 
 # =========================================================================
+#  Watchlist
+# =========================================================================
+# Keyed on FPL id and unauthenticated, like the drafts above - see watchlist.py.
+# Nothing here should grow a field that is not safe to serve to anyone who can
+# guess an id.
+
+@app.get("/api/watchlist/{fpl_id}")
+def get_watchlist(fpl_id: int):
+    try:
+        return {"available": True, "players": watchlist.get(fpl_id, _player_pool())}
+    except Exception as e:
+        return {"available": False, "detail": str(e), "players": []}
+
+
+@app.post("/api/watchlist/{fpl_id}")
+def add_to_watchlist(fpl_id: int, payload: dict = Body(...)):
+    try:
+        result = watchlist.add(fpl_id, payload.get("code"), payload.get("note"))
+    except watchlist.WatchlistError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    try:
+        db.record_known_manager(fpl_id)
+    except Exception:
+        pass
+    return result
+
+
+@app.delete("/api/watchlist/{fpl_id}/{code}")
+def remove_from_watchlist(fpl_id: int, code: int):
+    try:
+        return watchlist.remove(fpl_id, code)
+    except watchlist.WatchlistError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# =========================================================================
 #  AI Manager
 # =========================================================================
 
@@ -2331,7 +2601,7 @@ def ai_status():
         "current_gameweek": gw_clock.current_gameweek(events),
         "next_gameweek": gw_clock.next_gameweek(events),
         "processed_deadlines": db.processed_deadlines(),
-        "known_managers": len(db.known_managers()),
+        "known_managers": db.count_known_managers(),
         # Whether the cron jobs are still running. Everything else on this
         # endpoint describes the state of the data; this describes whether
         # anything is still updating it, which is the question you actually
@@ -2642,6 +2912,10 @@ QUESTION_MAX_CHARS = 600
 _QUESTION_HITS = {}
 QUESTION_WINDOW_S = 600
 QUESTION_MAX_PER_WINDOW = 5
+# Sync endpoints run in a threadpool. Without this, two concurrent requests
+# both read the same count, both decide they are under the limit, and the cap
+# becomes "five per window per connection".
+_QUESTION_LOCK = threading.Lock()
 
 
 def _question_allowed(key):
@@ -2649,16 +2923,17 @@ def _question_allowed(key):
     cannot grow without bound on a site with no other per-IP state."""
     now = datetime.now(timezone.utc).timestamp()
     cutoff = now - QUESTION_WINDOW_S
-    for k, stamps in list(_QUESTION_HITS.items()):
-        fresh = [t for t in stamps if t > cutoff]
-        if fresh:
-            _QUESTION_HITS[k] = fresh
-        else:
-            del _QUESTION_HITS[k]
-    recent = _QUESTION_HITS.get(key, [])
-    if len(recent) >= QUESTION_MAX_PER_WINDOW:
-        return False
-    _QUESTION_HITS[key] = recent + [now]
+    with _QUESTION_LOCK:
+        for k, stamps in list(_QUESTION_HITS.items()):
+            fresh = [t for t in stamps if t > cutoff]
+            if fresh:
+                _QUESTION_HITS[k] = fresh
+            else:
+                del _QUESTION_HITS[k]
+        recent = _QUESTION_HITS.get(key, [])
+        if len(recent) >= QUESTION_MAX_PER_WINDOW:
+            return False
+        _QUESTION_HITS[key] = recent + [now]
     return True
 
 
@@ -2725,7 +3000,19 @@ def refresh(x_refresh_token: str = Header(default="")):
     is still building its ratings would otherwise run a second pipeline beside
     the first. This blocks until the warm-up finishes and then does its own
     pass, which is slower than failing fast but is what the caller asked for.
+
+    Returns what the run produced rather than a bare `null`: a pipeline that
+    finished with stale bundles and no ratings otherwise looks exactly like a
+    healthy one in the job log. `degraded` is what separates them.
     """
     require_refresh_token(x_refresh_token)
+    started = datetime.now(timezone.utc)
     load_data_serialised()
+    return {
+        "status": "degraded" if state.get("degraded") else "ok",
+        "mode": state["mode"],
+        "degraded": state.get("degraded"),
+        "ratings_loaded": state["position_dfs"] is not None,
+        "duration_s": round((datetime.now(timezone.utc) - started).total_seconds(), 1),
+    }
     return {"status": "refreshed", "mode": state["mode"]}

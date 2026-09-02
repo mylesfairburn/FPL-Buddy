@@ -110,6 +110,17 @@ services:
       # INSIDE this container via `docker exec`, so loopback is the app itself.
       FPL_APP_URL: http://127.0.0.1:8000
       FPL_SOCIAL_KEY: ${FPL_SOCIAL_KEY:-}
+      # Both of these have correct defaults baked into main.py, so nothing is
+      # broken today by their absence. They are listed anyway because the rule
+      # at the top of this block is the whole point of the block: a variable
+      # the app reads and this file omits is unsettable from .env, silently.
+      # The site's absolute origin - every canonical URL, Open Graph tag and
+      # sitemap entry is built from it, so a staging stack that does not
+      # override it advertises production's URLs to crawlers.
+      FPL_SITE_URL: ${FPL_SITE_URL:-https://fpl.mfhost.co.uk}
+      # The Ko-fi handle behind the footer button. Empty hides the button
+      # rather than guessing, which is deliberate - see main.py.
+      FPL_KOFI_HANDLE: ${FPL_KOFI_HANDLE:-mylesfairburn}
       # Cloudflare Web Analytics site token. Not a secret - it is served in the
       # HTML of every page. Blank means no beacon is rendered and the CSP stays
       # entirely 'self', which is what a staging or local stack wants.
