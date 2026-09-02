@@ -499,10 +499,18 @@ def gain_matrix(available, now, gameweeks, squad, pool, outlook, bank=0.0,
 
 # ---- The schedule ---------------------------------------------------------
 
-def schedule_chips(available, now, deadline, matrix, priors=None):
+def schedule_chips(available, now, deadline, matrix, priors=None, block_now=()):
     """Assign each remaining chip to a gameweek, at most one chip per gameweek.
 
     Returns {gameweek: chip}. The chip to play now is whatever lands on `now`.
+
+    `block_now` bars chips from THIS gameweek only, leaving them free to be
+    scheduled later. It exists for the week the bot drafts a squad from
+    nothing: that week already has unlimited transfers, so a wildcard or free
+    hit spent on it buys exactly nothing and is then gone for the half. Barring
+    them here rather than discarding the answer afterwards is what keeps the
+    chip in the plan - the solver simply assigns it to a week where it is worth
+    something.
 
     Two rules beyond "maximise expected points":
 
@@ -543,6 +551,10 @@ def schedule_chips(available, now, deadline, matrix, priors=None):
         # The rule the whole feature has to respect: never two chips in a week.
         prob += pulp.lpSum(x[(c, gw)] for c in chips) <= 1
 
+    for c in block_now:
+        if (c, now) in x:
+            prob += x[(c, now)] == 0
+
     if slack > 0:
         for c in chips:
             for gw in gameweeks:
@@ -560,23 +572,30 @@ def schedule_chips(available, now, deadline, matrix, priors=None):
         if pulp.LpStatus[status] != "Optimal":
             raise OptimisationError(pulp.LpStatus[status])
     except (OptimisationError, pulp.PulpSolverError):
-        return _greedy_schedule(chips, gameweeks, matrix, priors, slack)
+        return _greedy_schedule(chips, gameweeks, matrix, priors, slack,
+                                now=now, block_now=block_now)
 
     return {gw: c for c in chips for gw in gameweeks
             if x[(c, gw)].value() and round(x[(c, gw)].value()) == 1}
 
 
-def _greedy_schedule(chips, gameweeks, matrix, priors, slack):
+def _greedy_schedule(chips, gameweeks, matrix, priors, slack, now=None,
+                     block_now=()):
     """Fallback if the solver is unavailable: best chip-week pairs, first come.
 
     A deadline job must not fail because CBC did. This gives up optimality, not
-    legality - the one-chip-per-gameweek rule is still enforced.
+    legality - the one-chip-per-gameweek rule is still enforced, and so is
+    `block_now`: a fallback that quietly played the chip the caller had just
+    barred would be worse than no fallback at all.
     """
+    blocked = set(block_now)
     pairs = sorted(((matrix[c][gw][0], c, gw) for c in chips for gw in gameweeks),
                    reverse=True, key=lambda t: t[0])
     taken_gws, taken_chips, out = set(), set(), {}
     for gain, c, gw in pairs:
         if c in taken_chips or gw in taken_gws:
+            continue
+        if gw == now and c in blocked:
             continue
         if slack > 0 and gain < floor(c, priors):
             continue

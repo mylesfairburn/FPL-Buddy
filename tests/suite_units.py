@@ -4216,6 +4216,237 @@ def test_price_change_invariants():
           "15 rises, 15 falls", "measured", cal["measured"], lambda v: v is True)
 
 
+def _ai_pool(n_extra=0):
+    """A pool big enough to field a legal squad, with a projection for GW5.
+
+    Costs are deliberately low so budget never binds - these tests are about
+    who is in the squad and where they stand, not about money.
+    """
+    quota = {"GK": 4, "DEF": 10, "MID": 10, "FWD": 6}
+    pool, pid = [], 0
+    for pos, n in quota.items():
+        for i in range(n + n_extra):
+            pid += 1
+            pool.append({
+                "id": pid, "element_id": pid, "code": 1000 + pid,
+                "web_name": f"{pos}{i}", "pos": pos,
+                "team": (pid % 12) + 1, "team_code": (pid % 12) + 1,
+                "team_name": f"T{(pid % 12) + 1}", "cost": 4.0,
+                "rating": 50, "status": "a",
+                "next_gameweeks": [{"event": gw, "points": 3.0 + (i % 4)}
+                                   for gw in range(5, 13)],
+            })
+    return pool
+
+
+def _store_ai_gameweek(gameweek, squad, chip=None, bank=0.0):
+    """Write one AI Manager gameweek straight to the tables, bypassing the
+    solver. The tests below are about what the READER does with a stored row."""
+    import db as _db
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM manager_team WHERE fpl_id = ? AND gameweek = ?",
+                     (_db.AI_MANAGER_FPL_ID, gameweek))
+        cur = conn.execute(
+            """INSERT INTO manager_team (fpl_id, gameweek, predicted_points, bank,
+                                         value, active_chip, captured_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (_db.AI_MANAGER_FPL_ID, gameweek, 50.0, bank,
+             round(sum(p["cost"] for p in squad), 1), chip, "2026-01-01T00:00:00Z"))
+        conn.executemany(
+            """INSERT INTO manager_team_picks
+                   (manager_team_id, element_id, position, is_captain,
+                    is_vice_captain, multiplier, cost, predicted_points)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            [(cur.lastrowid, p["id"], slot, int(slot == 1), int(slot == 2),
+              2 if slot == 1 else 1, p["cost"], 4.0)
+             for slot, p in enumerate(squad, start=1)])
+    return cur.lastrowid
+
+
+def _legal_fifteen(pool):
+    """Two keepers, five defenders, five midfielders, three forwards, in the
+    slot order a stored row uses: XI first, bench after."""
+    by_pos = {}
+    for p in pool:
+        by_pos.setdefault(p["pos"], []).append(p)
+    xi = (by_pos["GK"][:1] + by_pos["DEF"][:4]
+          + by_pos["MID"][:4] + by_pos["FWD"][:2])
+    bench = (by_pos["GK"][1:2] + by_pos["DEF"][4:5]
+             + by_pos["MID"][4:5] + by_pos["FWD"][2:3])
+    return xi + bench
+
+
+def test_ai_squad_survives_a_missing_player():
+    """The bug that gave the AI Manager no goalkeeper.
+
+    One pick the rated pool has lost used to be dropped on the floor, which
+    made the squad fourteen, which made run_gameweek think it had never run
+    before, which redrafted all fifteen from nothing - a wildcard nobody played
+    and nobody paid for - while the chip the scheduler had chosen stayed on the
+    row. The same missing player had no position, so the pitch, which lays
+    cards out by position, drew him in no row at all.
+    """
+    group("ai manager squad integrity", "critical")
+
+    import db as _db
+    pool = _ai_pool()
+    squad = _legal_fifteen(pool)
+    _store_ai_gameweek(4, squad)
+
+    # The keeper drops out of the rated pool, exactly as a player with no
+    # current-season minutes does.
+    keeper = squad[0]
+    thinned = [p for p in pool if p["id"] != keeper["id"]]
+    index = {keeper["id"]: {"pos": "GK", "team": keeper["team"],
+                            "team_code": keeper["team_code"],
+                            "web_name": keeper["web_name"], "code": keeper["code"],
+                            "status": "a", "cost": keeper["cost"]}}
+
+    state = ai_manager.load_state(thinned, 5, index)
+    check("a pick the pool has lost is kept, not dropped",
+          "load_state with the keeper missing from the pool",
+          "15 players", len(state["squad"]), lambda n: n == 15,
+          severity="critical",
+          note="dropping him is what turned one stale rating into a free "
+               "wildcard and a squad with no goalkeeper")
+    expect("and he keeps his position, so the pitch can draw him",
+           "the recovered keeper", "GK",
+           next(p["pos"] for p in state["squad"] if p["id"] == keeper["id"]))
+    expect("nobody is reported as departed", "load_state", [], state["departed"])
+
+    # Without an index to look him up in, the state is degraded rather than
+    # wrong - and that has to be distinguishable, because the two want opposite
+    # handling.
+    blind = ai_manager.load_state(thinned, 5, None)
+    expect("with no fallback index he is flagged unresolved instead",
+           "load_state(fallback=None)", [keeper["id"]], blind["unresolved"],
+           severity="high",
+           note="a failed API lookup must not be read as a transfer")
+
+    # And a player neither source knows really has gone.
+    gone = ai_manager.load_state(thinned, 5, {})
+    expect("a player in neither source is reported as departed",
+           "load_state(fallback={})", [keeper["id"]],
+           [d["id"] for d in gone["departed"]])
+    expect("with the cost that has to come back to the bank",
+           "load_state(fallback={})", keeper["cost"],
+           gone["departed"][0]["cost"])
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM manager_team WHERE fpl_id = ?",
+                     (_db.AI_MANAGER_FPL_ID,))
+
+
+def test_ai_lineup_never_loses_the_goalkeeper():
+    """best_lineup has to return an XI for any fifteen it is handed.
+
+    It used to fail outright if a single squad member had no projection for
+    that exact gameweek - a blank fixture, or a player the model has nothing on
+    - and a failed lineup was persisted as fifteen picks all at position 15: no
+    XI, no captain, no keeper.
+    """
+    group("ai manager lineup", "critical")
+
+    pool = _ai_pool()
+    squad = _legal_fifteen(pool)
+    # One outfielder loses his projection entirely.
+    squad = [dict(p, next_gameweeks=[]) if p is squad[5] else p for p in squad]
+
+    lineup = ai_manager.best_lineup(squad, 5)
+    check("a squad member with no projection does not fail the lineup",
+          "one of the fifteen has no next_gameweeks",
+          "a lineup, not None", lineup, lambda l: l is not None,
+          severity="critical")
+    starters = [p for p in (lineup or {}).get("squad", []) if p["starting"]]
+    expect("eleven start", "best_lineup", 11, len(starters))
+    expect("exactly one of them is a goalkeeper", "best_lineup", 1,
+           sum(1 for p in starters if p["pos"] == "GK"), severity="critical")
+    expect("and the unprojected player is benched rather than picked",
+           "the man with no projection", False,
+           next(p["starting"] for p in lineup["squad"]
+                if p["element_id"] == squad[5]["id"]))
+
+    expect("check_lineup passes a legal squad", "check_lineup(squad, lineup)",
+           [], ai_manager.check_lineup(squad, lineup))
+    check("and refuses one with no lineup at all", "check_lineup(squad, None)",
+          "at least one problem", ai_manager.check_lineup(squad, None),
+          lambda p: len(p) > 0, severity="critical",
+          note="_persist calls this, so a failed solve can no longer be "
+               "written as fifteen players on the bench")
+
+
+def test_ai_free_hit_reverts_the_following_week():
+    """A free hit is a one-week rental, and the week after has to pick up the
+    squad it was borrowed instead of - not the rental."""
+    group("ai manager free hit", "critical")
+
+    import db as _db
+    pool = _ai_pool(n_extra=3)
+    owned = _legal_fifteen(pool)
+    _store_ai_gameweek(4, owned, bank=1.5)
+
+    # GW5 is a free hit, storing a completely different fifteen.
+    rental = _legal_fifteen(list(reversed(pool)))
+    _store_ai_gameweek(5, rental, chip="freehit", bank=0.4)
+
+    state = ai_manager.load_state(pool, 6, {})
+    expect("the week after a free hit carries the owned squad forward",
+           "load_state(gameweek=6) with GW5 a free hit",
+           sorted(p["id"] for p in owned),
+           sorted(p["id"] for p in state["squad"]), severity="critical")
+    expect("and the bank that came with it, not the rental's",
+           "load_state(gameweek=6)", 1.5, state["bank"], severity="high",
+           note="squad and bank used to be read from different rows")
+
+    # The rental itself is still what that gameweek stores and scores.
+    stored = ai_manager.get_gameweek(5, pool)
+    expect("the free-hit gameweek still stores the rental",
+           "get_gameweek(5)", sorted(p["id"] for p in rental),
+           sorted(p["id"] for p in stored["squad"]))
+
+    # Planning GW5 itself must not see GW5 - or later.
+    at_five = ai_manager.load_state(pool, 5, {})
+    expect("planning a gameweek reads only the weeks before it",
+           "load_state(gameweek=5)", 4, at_five["gameweek"], severity="high",
+           note="unfiltered, replaying GW4 loaded GW5's squad and wrote it "
+                "back as GW4's")
+
+    with _db.connect() as conn:
+        conn.execute("DELETE FROM manager_team WHERE fpl_id = ?",
+                     (_db.AI_MANAGER_FPL_ID,))
+
+
+def test_ai_first_run_cannot_burn_a_free_chip():
+    """A draft week already has unlimited transfers. A wildcard or free hit
+    spent on it buys nothing and is then gone for the half."""
+    group("ai manager first run", "high")
+
+    priors = chip_model.DEFAULT_PRIORS
+    chips = ["wildcard", "freehit", "bboost"]
+    m = _matrix({c: {5: 50.0, 6: 40.0, 7: 40.0} for c in chips})
+
+    free = chip_model.schedule_chips(chips, 5, 7, m, priors,
+                                     block_now=("wildcard", "freehit"))
+    check("neither free-transfer chip lands on the blocked gameweek",
+          "schedule_chips(block_now=('wildcard','freehit'))",
+          "GW5 is not a wildcard or free hit", free.get(5),
+          lambda c: c not in ("wildcard", "freehit"), severity="high")
+    check("but they stay in the plan for a later week",
+          "schedule_chips(block_now=...)", "both still scheduled", free,
+          lambda s: {"wildcard", "freehit"} <= set(s.values()),
+          note="blocking must not throw the chip away - that is the very "
+               "waste the scheduler exists to prevent")
+
+    greedy = chip_model._greedy_schedule(chips, [5, 6, 7], m, priors, 0,
+                                         now=5, block_now=("wildcard", "freehit"))
+    check("the greedy fallback respects the block too",
+          "_greedy_schedule(block_now=...)", "GW5 is not a wildcard or free hit",
+          greedy.get(5), lambda c: c not in ("wildcard", "freehit"),
+          severity="high",
+          note="a fallback that quietly played the barred chip would be worse "
+               "than no fallback")
+
+
 def test_the_tests_are_wired_correctly():
     """A test that checks the tests, because two failure modes here are silent.
 
@@ -4360,4 +4591,8 @@ SUITES = [test_slugify, test_article, test_fmt_and_plural, test_fixture_label,
           test_price_board_excludes_unmeasurable_players, test_watchlist,
           test_autosub_rules, test_accuracy_against_numpy,
           test_price_change_invariants, test_watchlist_survives_id_reassignment,
+          test_ai_squad_survives_a_missing_player,
+          test_ai_lineup_never_loses_the_goalkeeper,
+          test_ai_free_hit_reverts_the_following_week,
+          test_ai_first_run_cannot_burn_a_free_chip,
           test_the_tests_are_wired_correctly]

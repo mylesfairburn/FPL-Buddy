@@ -2842,17 +2842,31 @@ function effectiveLineup(squad) {
     }));
 }
 
+// A starter whose `pos` matches none of the four rows used to be dropped on
+// the floor by the map below - laid out in no row, and so absent from the pitch
+// entirely. That is how a stored gameweek could show ten outfielders and no
+// goalkeeper: the keeper had fallen out of the rated pool, came back with no
+// position, and silently wasn't drawn. The server now fills the position in
+// from bootstrap (ai_manager.get_gameweek), so this should never fire - but a
+// card the page cannot place belongs somewhere visible rather than nowhere.
+const PITCH_ROWS = ['GK', 'DEF', 'MID', 'FWD'];
+
 function renderAiPitchInto(pitchId, benchId, rawSquad, gameweek, opts) {
     const squad = effectiveLineup(rawSquad);
     const starters = squad.filter(p => p.starting);
     const bench = squad.filter(p => !p.starting);
+    const unplaceable = starters.filter(p => PITCH_ROWS.indexOf(p.pos) === -1);
     document.getElementById(pitchId).innerHTML =
-        ['GK', 'DEF', 'MID', 'FWD'].map(pos => {
+        PITCH_ROWS.map(pos => {
             const line = starters.filter(p => p.pos === pos);
             return line.length
                 ? `<div class="pitch-row">${line.map(p => aiPlayerCard(p, false, gameweek, opts)).join('')}</div>`
                 : '';
-        }).join('');
+        }).join('')
+        + (unplaceable.length
+            ? `<div class="pitch-row pitch-row-unknown">${unplaceable
+                .map(p => aiPlayerCard(p, false, gameweek, opts)).join('')}</div>`
+            : '');
     document.getElementById(benchId).innerHTML =
         `<div class="bench-label">Bench</div>
          <div class="bench-row">${bench.map(p => aiPlayerCard(p, true, gameweek, opts)).join('')}</div>`;

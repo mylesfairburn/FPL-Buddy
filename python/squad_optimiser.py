@@ -113,13 +113,24 @@ def availability(player):
     return 1.0 if status == "a" else DEFAULT_DOUBTFUL_CHANCE
 
 
-def eligible_pool(players, gameweek, include_unavailable=False):
+def eligible_pool(players, gameweek, include_unavailable=False,
+                  unpredicted_as_zero=False):
     """Players that can legally be picked and have a prediction for this
     gameweek.
 
     Injured, suspended and unavailable players are dropped outright - an
     optimiser that doesn't know they can't play will happily build a squad
     around them. Doubtful players are kept, with their points risk-adjusted.
+
+    `unpredicted_as_zero` is for the one caller whose pool is a squad it
+    already owns. Dropping a player there does not protect anything: the
+    selection is already made and the only question left is who starts, so a
+    man the model cannot project is worth nought and belongs on the bench -
+    not removed from a fifteen that has to stay fifteen. Dropping him instead
+    took the pool below a legal squad and failed the whole lineup, which is
+    how a stored gameweek ended up with no starting XI and therefore no
+    goalkeeper. Leave it False everywhere the squad is still being chosen: an
+    unprojected player must not be BOUGHT at a notional nought.
     """
     pool = []
     for p in players:
@@ -130,7 +141,9 @@ def eligible_pool(players, gameweek, include_unavailable=False):
             continue
         pts = predicted_for_gameweek(p, gameweek)
         if pts is None:
-            continue
+            if not unpredicted_as_zero:
+                continue
+            pts = 0.0
         pool.append({**p, "_raw_predicted": pts,
                      "_availability": avail,
                      "_predicted": pts * avail})
@@ -184,7 +197,8 @@ def _formation(starters):
 def optimise_squad(players, gameweek, budget=DEFAULT_BUDGET,
                    max_per_club=MAX_PER_CLUB, bench_weight=BENCH_WEIGHT,
                    include_unavailable=False, squad_values=None,
-                   squad_weight=1.0, coverage=None):
+                   squad_weight=1.0, coverage=None,
+                   unpredicted_as_zero=False):
     """Pick the highest-scoring legal 15, its starting XI, and its captain.
 
     Returns a dict with `squad` (15 dicts carrying position 1-15, starting,
@@ -208,7 +222,8 @@ def optimise_squad(players, gameweek, budget=DEFAULT_BUDGET,
     excellent on paper and unable to field eleven bodies. Constraining coverage
     across the horizon is what makes a squad rotation-proof.
     """
-    pool = eligible_pool(players, gameweek, include_unavailable)
+    pool = eligible_pool(players, gameweek, include_unavailable,
+                         unpredicted_as_zero=unpredicted_as_zero)
     if not pool:
         # The rating model only projects a few gameweeks ahead, so asking for a
         # distant one isn't an error so much as out of range - say that rather

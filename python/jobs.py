@@ -51,7 +51,8 @@ import social
 from pipeline import run_pipeline
 from rating_model import get_rated_position_dfs
 from fetch_data import refresh_gameweek_stats
-from squad_optimiser import DEFAULT_BUDGET, OptimisationError
+from squad_optimiser import (DEFAULT_BUDGET, SQUAD_QUOTA, SQUAD_SIZE, XI_MAX,
+                             XI_MIN, OptimisationError)
 from team_service import get_all_players, get_team_view
 
 APP_URL = os.environ.get("FPL_APP_URL", "http://127.0.0.1:8000")
@@ -356,17 +357,217 @@ def deadline_watch(budget=DEFAULT_BUDGET, force_gameweek=None):
         if position_dfs is None:
             pool, position_dfs = _rated_pool()
 
-        # Normally a no-op: the pre-deadline phase already committed these.
-        # This is the safety net for a window the app slept through, and it
-        # flags itself as late so a post-deadline squad is never mistaken for
-        # one chosen on pre-deadline information.
-        pool, detail = commit_ai_teams(gw, budget=budget, pool=pool, late=True)
+        # Per gameweek, because the loop usually has more than one to do and
+        # they are independent. Without this, one gameweek raising anything
+        # other than OptimisationError - which commit_ai_teams already catches -
+        # aborted the whole run, and every gameweek after it went unprocessed
+        # and unrecorded, so the next hour started from the same place and hit
+        # the same wall. Marked `failed` rather than left pending: an hourly job
+        # that retries a permanent failure forever never gets to the ones behind
+        # it.
+        try:
+            # Normally a no-op: the pre-deadline phase already committed these.
+            # This is the safety net for a window the app slept through, and it
+            # flags itself as late so a post-deadline squad is never mistaken
+            # for one chosen on pre-deadline information.
+            pool, detail = commit_ai_teams(gw, budget=budget, pool=pool, late=True)
 
-        n, replaced = snapshot_managers(gw, position_dfs, next_gameweek=gw + 1)
-        detail.append(f"managers={n}; drafts_replaced={replaced}")
-        db.mark_deadline_processed(gw, deadline, "processed", "; ".join(detail))
+            n, replaced = snapshot_managers(gw, position_dfs, next_gameweek=gw + 1)
+            detail.append(f"managers={n}; drafts_replaced={replaced}")
+            db.mark_deadline_processed(gw, deadline, "processed", "; ".join(detail))
+        except Exception as e:
+            traceback.print_exc()
+            log(f"GW{gw}: FAILED - {e}")
+            db.mark_deadline_processed(gw, deadline, "failed", f"{type(e).__name__}: {e}")
+            ops.alert(f"deadline-watch could not process GW{gw}: {e}")
 
     ping_refresh()
+    return 0
+
+
+# ---------------------------------------------------------------------------
+#  AI Manager squad health
+# ---------------------------------------------------------------------------
+
+class _Row(dict):
+    """A stored pick in the shape ai_manager reads one.
+
+    sqlite3.Row supports subscripting and .keys(); a plain dict is one method
+    short of standing in for it, and _squad_from_rows takes either.
+    """
+    def keys(self):
+        return list(super().keys())
+
+
+def _stored_ai_gameweeks():
+    with db.connect() as conn:
+        return [dict(r) for r in conn.execute(
+            """SELECT id, gameweek, active_chip, bank, value
+               FROM manager_team WHERE fpl_id = ? ORDER BY gameweek""",
+            (db.AI_MANAGER_FPL_ID,))]
+
+
+def _stored_ai_picks(manager_team_id):
+    with db.connect() as conn:
+        return [_Row(dict(r)) for r in conn.execute(
+            """SELECT element_id, position, is_captain, is_vice_captain, cost,
+                      predicted_points, actual_points, effective_multiplier
+               FROM manager_team_picks WHERE manager_team_id = ? ORDER BY position""",
+            (manager_team_id,))]
+
+
+def ai_doctor():
+    """Report the health of every stored AI Manager squad. Changes nothing.
+
+    Written because the failure it looks for is invisible from the site. A pick
+    the rated pool has lost comes back with no position, and the pitch lays
+    cards out by position - so the card is drawn in no row at all and the squad
+    simply appears to have been picked without a goalkeeper. This names the
+    player and says whether the stored XI is legal on its own terms.
+    """
+    db.init_db()
+    rows = _stored_ai_gameweeks()
+    if not rows:
+        log("No AI Manager gameweeks are stored.")
+        return 0
+
+    pool, _ = _rated_pool()
+    pool_by_id = {p["id"]: p for p in pool}
+    try:
+        index = gw_clock.element_index()
+    except Exception as e:
+        log(f"couldn't read bootstrap-static ({e}) - unresolved picks show as ids")
+        index = {}
+
+    problems = 0
+    for head in rows:
+        picks = _stored_ai_picks(head["id"])
+        starters = [p for p in picks if (p["position"] or 99) <= 11]
+        counts, xi, unresolved = {}, {}, []
+        for p in picks:
+            meta = pool_by_id.get(p["element_id"]) or index.get(p["element_id"]) or {}
+            pos = meta.get("pos")
+            counts[pos] = counts.get(pos, 0) + 1
+            if (p["position"] or 99) <= 11:
+                xi[pos] = xi.get(pos, 0) + 1
+            if p["element_id"] not in pool_by_id:
+                unresolved.append(
+                    (p, meta,
+                     "bootstrap only" if p["element_id"] in index else "NOWHERE"))
+
+        faults = []
+        if len(picks) != SQUAD_SIZE:
+            faults.append(f"{len(picks)} picks, expected {SQUAD_SIZE}")
+        if len(starters) != 11:
+            faults.append(f"{len(starters)} starters, expected 11")
+        for pos, need in SQUAD_QUOTA.items():
+            if counts.get(pos, 0) != need:
+                faults.append(f"{counts.get(pos, 0)} {pos} in the squad, expected {need}")
+        for pos in SQUAD_QUOTA:
+            n = xi.get(pos, 0)
+            if not (XI_MIN[pos] <= n <= XI_MAX[pos]):
+                faults.append(f"{n} {pos} starting, legal range {XI_MIN[pos]}-{XI_MAX[pos]}")
+        if sum(1 for p in picks if p["is_captain"]) != 1:
+            faults.append("not exactly one captain")
+
+        log(f"{'OK  ' if not faults else 'FAIL'} GW{head['gameweek']:<3} "
+            f"chip={head['active_chip'] or '-':<9} picks={len(picks)} "
+            f"starters={len(starters)}  "
+            + " ".join(f"{pos}:{counts.get(pos, 0)}"
+                       for pos in ("GK", "DEF", "MID", "FWD")))
+        for p, meta, where in unresolved:
+            name = meta.get("web_name") or f"#{p['element_id']}"
+            log(f"       not in the rated pool: {name} (#{p['element_id']}, "
+                f"pos={meta.get('pos')}, slot={p['position']}, found in {where})")
+        for f in faults:
+            log(f"       {f}")
+        problems += len(faults)
+
+    log("")
+    log("Every stored gameweek is legal." if not problems
+        else f"{problems} problem(s). `jobs.py ai-repair --gameweek N` re-solves "
+             "one gameweek's XI from the fifteen it already stores.")
+    return 0
+
+
+def ai_repair(gameweek, apply=False):
+    """Re-solve one stored gameweek's starting XI, captain and bench order.
+
+    Deliberately cannot change WHO is in the squad. The fifteen were chosen
+    before a deadline and re-picking them now would be inventing a team the bot
+    never had. Only the arrangement is rebuilt, which is the part a failed
+    lineup solve got wrong.
+
+    Dry run unless `apply`. Clears the gameweek's scoring afterwards so the
+    backfill re-scores it against the corrected XI.
+    """
+    db.init_db()
+    head = next((r for r in _stored_ai_gameweeks()
+                 if r["gameweek"] == int(gameweek)), None)
+    if head is None:
+        log(f"No AI Manager squad is stored for GW{gameweek}.")
+        return 1
+
+    picks = _stored_ai_picks(head["id"])
+    pool, _ = _rated_pool()
+    pool_by_id = {p["id"]: p for p in pool}
+    try:
+        index = gw_clock.element_index()
+    except Exception as e:
+        log(f"couldn't read bootstrap-static: {e}")
+        index = None
+
+    squad, gaps = ai_manager._squad_from_rows(picks, pool_by_id, index)
+    stranded = ([str(d["id"]) for d in gaps["departed"]]
+                + [str(i) for i in gaps["unresolved"]])
+    if stranded:
+        log(f"GW{gameweek}: can't repair - #" + ", #".join(stranded)
+            + " resolve nowhere. A player who has left the game has to be "
+              "replaced by a transfer, which is a decision rather than a repair.")
+        return 1
+
+    lineup = ai_manager.best_lineup(squad, int(gameweek))
+    problems = ai_manager.check_lineup(squad, lineup)
+    if problems:
+        log(f"GW{gameweek}: the re-solved XI is still not legal: "
+            + "; ".join(problems))
+        return 1
+
+    order = {p["element_id"]: p for p in lineup["squad"]}
+    changes = []
+    for p in picks:
+        lp = order[p["element_id"]]
+        was = (p["position"], bool(p["is_captain"]), bool(p["is_vice_captain"]))
+        now = (lp["position"], bool(lp["is_captain"]), bool(lp["is_vice_captain"]))
+        if was != now:
+            meta = (pool_by_id.get(p["element_id"])
+                    or (index or {}).get(p["element_id"]) or {})
+            changes.append((meta.get("web_name") or f"#{p['element_id']}", was, now))
+
+    log(f"GW{gameweek}: {lineup['formation']}, {len(changes)} pick(s) would change")
+    for name, was, now in changes:
+        log(f"  {name:<20} slot {was[0]:>2} -> {now[0]:>2}"
+            + ("  (captain)" if now[1] else "")
+            + ("  (vice)" if now[2] else ""))
+    if not apply:
+        log("Dry run. Re-run with --apply to write it.")
+        return 0
+
+    with db.connect() as conn:
+        for p in picks:
+            lp = order[p["element_id"]]
+            conn.execute(
+                """UPDATE manager_team_picks
+                      SET position = ?, is_captain = ?, is_vice_captain = ?,
+                          multiplier = ?
+                    WHERE manager_team_id = ? AND element_id = ?""",
+                (lp["position"], int(bool(lp["is_captain"])),
+                 int(bool(lp["is_vice_captain"])),
+                 (3 if head["active_chip"] == "3xc" else 2) if lp["is_captain"] else 1,
+                 head["id"], p["element_id"]))
+    ai_team.clear_settled_scoring(int(gameweek))
+    log(f"Wrote GW{gameweek} and cleared its scoring - the next daily-refresh "
+        "re-scores it.")
     return 0
 
 
@@ -1203,6 +1404,20 @@ def main(argv=None):
     rescore.add_argument("--gameweek", type=int, default=None,
                          help="just this one. Defaults to every settled round.")
 
+    sub.add_parser(
+        "ai-doctor",
+        help="check every stored AI Manager squad for an illegal XI or a pick "
+             "the rated pool has lost. Read-only.")
+
+    repair = sub.add_parser(
+        "ai-repair",
+        help="re-solve one stored gameweek's XI, captain and bench order from "
+             "the fifteen it already holds. Never changes who is in the squad.")
+    repair.add_argument("--gameweek", type=int, required=True)
+    repair.add_argument("--apply", action="store_true",
+                        help="write it. Without this the command prints the "
+                             "diff and changes nothing.")
+
     status = sub.add_parser("status",
                             help="print the job heartbeat and what is overdue")
     status.add_argument("--alert", action="store_true",
@@ -1283,6 +1498,10 @@ def _dispatch(args):
     if args.command == "player-spotlight":
         return build_player_spotlight(force_date=args.date,
                                       replace=args.replace)
+    if args.command == "ai-doctor":
+        return ai_doctor()
+    if args.command == "ai-repair":
+        return ai_repair(args.gameweek, apply=args.apply)
     if args.command == "purge":
         db.init_db()
         log("Retention sweep" + (" (dry run)" if args.dry_run else ""))

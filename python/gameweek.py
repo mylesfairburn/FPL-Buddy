@@ -438,21 +438,34 @@ _POSITION_BY_TYPE = {1: "GK", 2: "DEF", 3: "MID", 4: "FWD"}
 
 
 def element_index():
-    """{element_id: {"pos": 'GK'|…, "team": id}} straight from bootstrap-static.
+    """{element_id: {"pos", "team", "team_code", "web_name", "cost"}} straight
+    from bootstrap-static.
 
     Deliberately not the rated player pool. The backfill jobs that need a
     player's position in order to apply substitutions run hourly and are cheap
     by design - building the rated pool to learn that Dubravka is a goalkeeper
     would make the cheapest job on the schedule one of the most expensive.
+
+    It carries the name and shirt as well as the position because the other
+    caller is the fallback that keeps a stored pick on the pitch when the rated
+    pool has lost him - see ai_manager._squad_from_rows. A card needs a name and
+    a shirt to be drawn at all, and both are right here in the same response the
+    position came from.
     """
     data = _get(f"{BASE}/bootstrap-static/")
     out = {}
     for el in (data or {}).get("elements") or []:
         if el.get("id") is None:
             continue
+        cost = el.get("now_cost")
         out[int(el["id"])] = {
             "pos": _POSITION_BY_TYPE.get(el.get("element_type")),
             "team": el.get("team"),
+            "team_code": el.get("team_code"),
+            "code": el.get("code"),
+            "web_name": el.get("web_name"),
+            "status": el.get("status"),
+            "cost": round(float(cost) / 10.0, 1) if cost is not None else None,
         }
     return out
 
