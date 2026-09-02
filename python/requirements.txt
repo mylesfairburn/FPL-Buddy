@@ -32,7 +32,7 @@ markupsafe==3.0.3
 # mismatch into a StaleModelError rather than into wrong numbers, and the
 # suite exercises it - but the fix is still a retrain, so the PR should say so.
 pandas==3.0.0
-numpy==2.4.1
+numpy==2.5.2
 scikit-learn==1.8.0
 joblib==1.5.3
 matplotlib==3.10.8
