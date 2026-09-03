@@ -112,6 +112,11 @@ def player_rows(players, top_n=TOP_PLAYERS):
         rows.append({
             "name": p.get("web_name") or "",
             "path": p.get("path"),
+            # For the watchlist star. The star itself is drawn by the browser -
+            # it is a per-reader state the server has no way of knowing - but
+            # the code has to be in the row for the script to know which player
+            # the button it fills in belongs to.
+            "code": p.get("code"),
             "pos": p.get("pos") or "",
             "team_name": p.get("team_name") or "",
             "team_code": p.get("team_code"),

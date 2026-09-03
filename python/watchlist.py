@@ -8,6 +8,7 @@ drafts.py for that trade. What is stored is a list of publicly listed
 footballers plus a note the reader typed, which is why it is acceptable here.
 """
 
+import price_changes
 from db import connect, utcnow
 
 # Past a couple of dozen this is a worse copy of the player table - and the
@@ -56,12 +57,28 @@ def get(fpl_id, pool=None):
     truth for who a player is. A code no longer in the pool still comes back
     with `available: False`: dropping it would look like the site had lost the
     entry rather than the player having left.
+
+    Each entry also carries how close the player is to a price change, from the
+    same transfer-momentum arithmetic the price-changes page runs - see
+    price_changes.for_codes. Asked for the watched codes only, so a thirty-name
+    list costs one pass over the snapshot history rather than one per player,
+    and absent from the reading means "not measurable", which the table shows
+    as a dash rather than as steady.
     """
     by_code = {p["code"]: p for p in (pool or []) if p.get("code") is not None}
     with connect() as conn:
         rows = list(conn.execute(
             """SELECT code, note, added_at FROM watchlist
                WHERE fpl_id = ? ORDER BY added_at DESC, code""", (int(fpl_id),)))
+
+    # Never fatal: a shortlist that cannot say which way a price is drifting is
+    # still a shortlist, and the snapshot table is empty for the first two days
+    # of any deployment.
+    try:
+        momentum = price_changes.for_codes([r["code"] for r in rows])
+    except Exception as e:
+        print(f"couldn't read price momentum for the watchlist: {e}")
+        momentum = {}
 
     out = []
     for r in rows:
@@ -77,6 +94,15 @@ def get(fpl_id, pool=None):
                 "form": player.get("form"), "owned": player.get("owned"),
                 "status": player.get("status"), "path": player.get("path"),
                 "next_gameweeks": player.get("next_gameweeks") or [],
+            })
+        drift = momentum.get(int(r["code"]))
+        if drift:
+            entry.update({
+                "price_direction": drift["direction"],
+                # Percent of the way to the threshold that has actually moved a
+                # price, so the bar means the same thing as the one on the
+                # price-changes page.
+                "price_progress": drift["progress"],
             })
         out.append(entry)
     return out

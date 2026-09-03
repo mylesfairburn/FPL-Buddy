@@ -281,7 +281,9 @@ function wireClear(input, btn, cb) {
 // =====================================================================
 //  MY TEAM
 // =====================================================================
-const FPL_ID_KEY = 'fpl_team_id';
+// FPL_ID_KEY now lives in util.js, which loads first and is shared with the
+// watchlist star on prose pages - declaring it again here is a duplicate-const
+// error the moment both scripts are on the same page.
 // Saves carry no write token. A per-id secret in localStorage would load the
 // squad anywhere but let it be EDITED only on the browser that first saved it,
 // which defeats keeping drafts on the server. See the drafts.py docstring.
@@ -2187,6 +2189,10 @@ function createPlayerSearch(cfg) {
     // answers a question you have already asked by the time you are picking a
     // replacement.
     const COLS = [
+        // The star has no label and never sorts. It is a control column, and a
+        // sortable "Watching" header would invite a reader to reorder the whole
+        // table by a property only they can see.
+        { key: 'watch', label: '<span class="visually-hidden">Watching</span>', noSort: true },
         { key: 'web_name', label: 'Player', noSort: true },
         { key: 'pos', label: 'Pos', noSort: true },
         { key: 'team_name', label: 'Team', noSort: true },
@@ -2235,7 +2241,8 @@ function createPlayerSearch(cfg) {
         // him", a different and much more interesting claim.
         const owned = p.owned != null ? p.owned.toFixed(1) : '\u2013';
         const ownedCell = cfg.showOwnership ? `<td class="col-owned">${owned}</td>` : '';
-        return `<tr class="ps-row${disabled ? ' ps-disabled' : ''}"${dattr} data-id="${p.id}">
+        return `<tr class="ps-row${disabled ? ' ps-disabled' : ''}"${dattr} data-id="${p.id}" data-code="${p.code == null ? '' : p.code}">
+            <td class="col-watch">${watchStar(p.code, p.web_name)}</td>
             <td class="ps-name col-web_name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${esc(p.web_name)}</span></td>
             <td class="col-pos">${p.pos}</td>
             <td class="col-team_name">${p.team_name || ''}</td>
@@ -2255,7 +2262,11 @@ function createPlayerSearch(cfg) {
         // No pool yet. Leave the server-rendered rows where they are rather
         // than replacing them with "No players match." - which would be a
         // false statement about an empty pool, not an empty result.
-        if (!pool().length && seededRows) { listEl.innerHTML = seededRows; return; }
+        if (!pool().length && seededRows) {
+            listEl.innerHTML = seededRows;
+            bindWatchStars(listEl);
+            return;
+        }
         ensureTeams();
         const transfer = cfg.isTransferMode();
         const [lo, hi] = bounds();
@@ -2294,6 +2305,9 @@ function createPlayerSearch(cfg) {
             if (!p) return;
             if (transfer) cfg.onTransfer(p); else cfg.onBrowse(p);
         }));
+        // After the rows, not before: bindWatchStars looks for buttons that
+        // exist, and these were written into innerHTML a moment ago.
+        bindWatchStars(c);
     }
 
     qEl.addEventListener('input', render);
@@ -3338,6 +3352,14 @@ renderDeadlineCountdown();
 // round trip later, by which point the browser has painted the explainer and
 // removing it is a visible jump.
 if (getSavedId()) { showToolIntro(false); loadTeam(); } else showPrompt();
-ensurePlayers().then(() => playersTabSearch.refresh());
+// The pool first, then the watched-codes set, then one render - so a player
+// already on the list shows a filled star from the first paint rather than
+// flicking on a beat later. primeWatchedCodes lives in watchlist.js, which
+// parses AFTER this file, so it is reached here (inside a .then, after the pool
+// fetch) rather than called at the top level where it would not yet exist. It
+// no-ops without an FPL id.
+ensurePlayers()
+    .then(() => (typeof primeWatchedCodes === 'function' ? primeWatchedCodes() : null))
+    .then(() => playersTabSearch.refresh());
 loadRotation();
 loadNews();

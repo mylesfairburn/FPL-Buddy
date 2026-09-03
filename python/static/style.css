@@ -812,21 +812,23 @@ table th { color: var(--accent-dark); }
 .ps-table { table-layout: fixed; }
 
 /* Without ownership - My Team's copy of the widget. Sums to 100. */
-.ps-table .col-web_name  { width: 28%; }
+.ps-table .col-watch     { width: 5%;  }
+.ps-table .col-web_name  { width: 25%; }
 .ps-table .col-pos       { width: 8%;  }
-.ps-table .col-team_name { width: 12%; }
-.ps-table .col-form      { width: 12%; }
+.ps-table .col-team_name { width: 11%; }
+.ps-table .col-form      { width: 11%; }
 .ps-table .col-rating    { width: 13%; }
 .ps-table .col-cost      { width: 9%;  }
 .ps-table .col-fixtures  { width: 18%; }
 
 /* With it - the Players tab. Every other column gives up a little rather than
    the new one coming out of the fixtures, which are the column that clips. */
-.ps-table-own .col-web_name  { width: 24%; }
-.ps-table-own .col-pos       { width: 7%;  }
-.ps-table-own .col-team_name { width: 11%; }
+.ps-table-own .col-watch     { width: 5%;  }
+.ps-table-own .col-web_name  { width: 22%; }
+.ps-table-own .col-pos       { width: 6%;  }
+.ps-table-own .col-team_name { width: 10%; }
 .ps-table-own .col-form      { width: 10%; }
-.ps-table-own .col-rating    { width: 11%; }
+.ps-table-own .col-rating    { width: 10%; }
 .ps-table-own .col-cost      { width: 8%;  }
 .ps-table-own .col-owned     { width: 11%; }
 .ps-table-own .col-fixtures  { width: 18%; }
@@ -2227,13 +2229,57 @@ a.navbar-brand.brand:focus-visible {
 .captain-table th[scope="row"] { min-width: 130px; }
 .captain-table .gw-fixtures { margin: 0; }
 
-.wl-table { font-size: 0.82rem; min-width: 640px; }
+.wl-table { font-size: 0.82rem; min-width: 720px; }
 .wl-table td, .wl-table th { vertical-align: middle; }
-.wl-note { color: #555; font-style: italic; max-width: 220px; }
 .wl-fixtures { white-space: nowrap; }
 .wl-fixtures .mini-gw { margin-right: 2px; }
 .wl-remove { color: #999; font-size: 1.1rem; line-height: 1; }
 .wl-remove:hover { color: #e03131; }
+
+/* The watchlist star, wherever it appears: player tables, the watchlist itself,
+   and a player's own profile page.
+
+   A button stripped back to its glyph rather than a styled <span>, because it
+   has to be reachable by keyboard and announce whether it is pressed - see
+   watchStar() in watchlist.js. The unfilled state is deliberately faint: a
+   column of solid stars down a 100-row table would read as decoration and
+   compete with the names, which are what the table is for.
+
+   The hit area is padded out past the glyph. At 0.82rem a bare star is about
+   11px across, which is half what a thumb needs, and this sits inside a row
+   whose own tap does something else. */
+.wl-star {
+    background: none; border: 0; padding: 2px 4px; line-height: 1;
+    font-size: 0.95rem; color: #c8ccd0; cursor: pointer;
+    transition: color 0.12s ease, transform 0.12s ease;
+}
+.wl-star:hover { color: var(--accent-dark, #0b7285); transform: scale(1.15); }
+.wl-star.is-on { color: #f5a524; }
+.wl-star:focus-visible { outline: 2px solid var(--accent-dark, #0b7285); outline-offset: 1px; border-radius: 3px; }
+.ps-table td.col-watch, .wl-starcell { text-align: center; padding-left: 0; padding-right: 0; }
+
+/* On a profile the star sits beside the h1, so it is sized to the heading
+   rather than to a table row. */
+.player-title-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.player-title-row .page-title { margin-bottom: 0; }
+.player-title-row .wl-star { font-size: 1.4rem; }
+
+/* How close a watched player is to a price change. The bar is the share of the
+   threshold his transfers have covered - see priceDrift() - so a full bar is a
+   change tonight and a quarter bar is a drift. Rises and falls are coloured
+   apart rather than only pointed apart, because the direction is the first
+   thing read and an arrow at this size is nearly invisible. */
+.wl-drift { white-space: nowrap; }
+.wl-bar {
+    display: inline-block; vertical-align: middle; width: 46px; height: 6px;
+    background: #e9ecef; border-radius: 3px; overflow: hidden; margin-right: 6px;
+}
+.wl-bar-fill { display: block; height: 100%; border-radius: 3px; }
+.wl-bar-fill.is-rise { background: #2f9e44; }
+.wl-bar-fill.is-fall { background: #e03131; }
+.wl-drift-label { font-size: 0.75rem; color: #666; }
+.wl-drift-none { color: #adb5bd; }
+
 
 /* Comparison: the players are the COLUMNS, so it reads down. */
 .cmp-pickers { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }

@@ -25,13 +25,21 @@
 <div class="ps-list">
     <table class="table table-sm ps-table ps-table-own mb-0">
         <thead><tr>
+            {# The watchlist star. Rendered as an empty cell here and filled in
+               by watchlist.js once it knows whose list this is - the state is
+               per-reader and the server has no way of knowing it. The column
+               still has to EXIST server-side, or the table would gain one when
+               the script swaps its rows in and every column would shift a place
+               to the right in front of the reader. #}
+            <th class="col-watch"><span class="visually-hidden">Watching</span></th>
             <th class="col-web_name">Player</th><th class="col-pos">Pos</th><th class="col-team_name">Team</th>
             <th class="col-form">Form</th><th class="col-rating">Rtg</th><th class="col-cost">&pound;m</th>
             <th class="col-owned">Own %</th><th class="col-fixtures">Next 3</th>
         </tr></thead>
         <tbody>
 {% for p in ssr.players %}
-            <tr>
+            <tr class="ssr-row" data-code="{{ p.code if p.code is not none }}">
+                <td class="col-watch ssr-watch"></td>
                 {# Linked to the player's own page. These are several hundred
                    internal links to fully server-rendered documents, which is
                    the part of this table that compounds - without them a

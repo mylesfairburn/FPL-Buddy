@@ -213,18 +213,20 @@ def calibration(changes):
     }
 
 
-def board(limit=20, history=None, names=None):
-    """Who is closest to a rise and who to a fall, most advanced first.
+def _momentum_rows(history, cal, names=None, codes=None):
+    """One row per player with usable momentum, unsorted.
 
-    `progress` is momentum as a share of whatever threshold is in force, capped
-    just over 100%: that a player crossed the line matters, by how far does not.
+    Split out of `board` so the watchlist can ask about a handful of specific
+    players without building - and then throwing away - the whole league. Same
+    arithmetic either way, which is the point: two implementations of "how
+    close is he to a rise" would drift, and one of them would be the one on the
+    page that promises a price change.
     """
-    history = history if history is not None else _history()
-    changes = observed_changes(history)
-    cal = calibration(changes)
-
+    wanted = None if codes is None else {int(c) for c in codes}
     rows = []
     for code, snaps in history.items():
+        if wanted is not None and code not in wanted:
+            continue
         if len(snaps) < 2:
             continue
         # See MIN_OWNERSHIP_PCT: no usable owner count, no usable momentum.
@@ -259,12 +261,40 @@ def board(limit=20, history=None, names=None):
             "momentum": round(momentum, 4),
             "progress": round(min(progress, 105.0), 1),
         })
+    return rows
+
+
+def board(limit=20, history=None, names=None):
+    """Who is closest to a rise and who to a fall, most advanced first.
+
+    `progress` is momentum as a share of whatever threshold is in force, capped
+    just over 100%: that a player crossed the line matters, by how far does not.
+    """
+    history = history if history is not None else _history()
+    cal = calibration(observed_changes(history))
+    rows = _momentum_rows(history, cal, names)
 
     risers = sorted((r for r in rows if r["direction"] == "rise"),
                     key=lambda r: -r["progress"])[:limit]
     fallers = sorted((r for r in rows if r["direction"] == "fall"),
                      key=lambda r: -r["progress"])[:limit]
     return {"risers": risers, "fallers": fallers, "calibration": cal}
+
+
+def for_codes(codes, history=None, names=None):
+    """{code: row} for the codes asked about, and nothing else.
+
+    Missing from the result means "no usable reading", which is a real answer
+    and not a zero: a player with one snapshot has no momentum to measure and
+    one owned by fewer than MIN_OWNERSHIP_PCT of the game has no denominator
+    worth dividing by. The caller shows a dash rather than a bar.
+    """
+    codes = [int(c) for c in codes if c is not None]
+    if not codes:
+        return {}
+    history = history if history is not None else _history()
+    cal = calibration(observed_changes(history))
+    return {r["code"]: r for r in _momentum_rows(history, cal, names, codes)}
 
 
 def recent_changes(changes, names=None, limit=30):

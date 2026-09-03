@@ -21,7 +21,8 @@ const { Element } = require('./dom');
 const WATCHED = [
     {
         code: 111, available: true, web_name: 'Haaland', team_name: 'MCI',
-        pos: 'FWD', cost: 15.0, predicted: 6.1, note: 'the obvious one',
+        pos: 'FWD', cost: 15.0, predicted: 6.1, form: 7.5, note: 'the obvious one',
+        price_direction: 'rise', price_progress: 72,
         path: '/player/erling-haaland-111', team_code: 43,
         next_gameweeks: [{ event: 3, points: 6.1, difficulty: 2, opponent: 'BUR' }],
     },
@@ -86,8 +87,22 @@ module.exports = async function run() {
           'Haaland appears', html, h => h.includes('Haaland'));
     check('with his price', 'three entries', '£15.0m shown', html,
           h => h.includes('£15.0m'));
-    check('and his own note', 'note = the obvious one', 'note shown', html,
-          h => h.includes('the obvious one'));
+    // The note is no longer a column on the watchlist - it was dropped for
+    // form, price and a price-change indicator. The server still stores a note
+    // and still sends it back with a departed player (below), but an available
+    // row does not print one.
+    check('an available row no longer prints the note',
+          'note = the obvious one', 'note NOT shown', html,
+          h => !h.includes('the obvious one'), 'medium',
+          'the note column was removed in favour of form and price movement');
+    check('his form is shown instead', 'form = 7.5', '7.5 in the row', html,
+          h => h.includes('7.5'));
+    check('and how close he is to a price change', 'price_progress = 72',
+          'a price bar with a rising fill', html,
+          h => h.includes('wl-bar-fill is-rise'));
+    check('every listed player has a watch star', 'three entries',
+          'a .wl-star carrying his code', html,
+          h => h.includes('wl-star') && h.includes('data-code="111"'));
 
     // W5
     check('a player who has left the game keeps his row',

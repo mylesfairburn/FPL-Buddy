@@ -25,7 +25,21 @@
                 <span>{{ player.full_name }}</span>
             </nav>
 
-            <h1 class="page-title">{{ player.full_name }}</h1>
+            {# The star sits on the heading line rather than in a stat tile so
+               it reads as an action on this player, not another number about
+               him. Rendered as the unwatched state and repainted by
+               player_watch.js once the browser knows whose list it is - the
+               server has no way to know. A player with no season-stable code
+               (freshly promoted, mid-transfer) gets no star: there is nothing
+               stable to key a watchlist entry on. #}
+            <div class="player-title-row">
+                <h1 class="page-title">{{ player.full_name }}</h1>
+                {% if player.code is not none %}
+                <button type="button" class="wl-star" data-code="{{ player.code }}"
+                        aria-pressed="false" title="Add to your watchlist"
+                        aria-label="Add {{ player.full_name }} to your watchlist">&#9734;</button>
+                {% endif %}
+            </div>
             <p class="player-sub">
                 {{ player.team_name }} &middot; {{ player.pos_name | title }}
                 {%- if player.cost %} &middot; &pound;{{ player.cost }}m{% endif %}
@@ -179,4 +193,12 @@
                 <a href="/players/a-z">Every player A&ndash;Z</a> &middot;
                 <a href="/fixture-rotator">Fixture rotation planner</a>
             </p>
+{% endblock %}
+
+{% block scripts %}
+{# util.js for currentFplId(), watchlist.js for the star machinery, and a small
+   page script to prime and paint it. Same pattern as pages/compare.html. #}
+<script nonce="{{ csp_nonce }}" src="/static/util.js?v={{ asset_version }}"></script>
+<script nonce="{{ csp_nonce }}" src="/static/watchlist.js?v={{ asset_version }}"></script>
+<script nonce="{{ csp_nonce }}" src="/static/player_watch.js?v={{ asset_version }}"></script>
 {% endblock %}

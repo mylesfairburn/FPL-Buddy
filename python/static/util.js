@@ -32,3 +32,20 @@ function colorFor(value, min, max) {
     if (value == null || !isFinite(value) || max === min) return NO_DIFFICULTY_COLOUR;
     return `hsl(${120 - ((value - min) / (max - min)) * 120}, 70%, 82%)`;
 }
+
+// The saved FPL id, read straight from localStorage. app.js has a richer
+// getSavedId() that also adopts an id from the URL, and where it exists it
+// wins - this is the fallback for the prose pages (a player profile, say) that
+// load util.js but not app.js and still want the watchlist star to know whose
+// list it is. One key name, defined once, so the two readers cannot drift onto
+// different storage.
+const FPL_ID_KEY = 'fpl_team_id';
+function readSavedFplId() {
+    try { return localStorage.getItem(FPL_ID_KEY); } catch (e) { return null; }
+}
+// The id whoever is looking at this page is identified by, from whichever
+// reader the page has. Classic scripts resolve names at call time, so this
+// picks app.js's version when it is loaded and falls back otherwise.
+function currentFplId() {
+    return (typeof getSavedId === 'function') ? getSavedId() : readSavedFplId();
+}
