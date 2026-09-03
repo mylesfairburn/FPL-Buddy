@@ -9,6 +9,18 @@
     form, not filtered by ownership.
 </p>
 
+{# Two views of the same subject. "This week" is who to captain now, rebuilt
+   nightly; "History" is how the model's pick has actually done against the
+   week's real top scorer, read from frozen editions. The pills toggle them in
+   the browser - captain_picks.js - and the history view fetches its data only
+   when first opened. Both are inside the one page so the URL and the SEO stay
+   with /captain-picks. #}
+<ul class="nav nav-pills mb-3" id="captainViewTabs">
+    <li class="nav-item"><button class="nav-link active" type="button" data-view="week">This week</button></li>
+    <li class="nav-item"><button class="nav-link" type="button" data-view="history">History</button></li>
+</ul>
+
+<div id="capWeekView">
 {% if provisional %}
 <h2>Too early to rank</h2>
 <p>
@@ -147,4 +159,26 @@
     this page follows the news: if the top pick is ruled out on a Friday, the
     shortlist changes.
 </p>
+</div>{# /capWeekView #}
+
+<div id="capHistoryView" class="d-none">
+    <p class="page-lede">
+        How the model's captain pick has actually fared. Each week its top pick
+        is set beside the player who really scored most — one gameweek at a time,
+        newest first. Every one of these is read from a frozen edition, so the
+        projection shown is the number the model published before the deadline,
+        not one worked out with hindsight.
+    </p>
+    <div class="ai-gw-nav cap-hist-nav" id="capHistNav" hidden>
+        <button id="capHistPrev" class="gw-btn" type="button" aria-label="Previous gameweek">&#9664;</button>
+        <span id="capHistTitle" class="cap-hist-title">Gameweek</span>
+        <button id="capHistNext" class="gw-btn" type="button" aria-label="Next gameweek">&#9654;</button>
+    </div>
+    <div id="capHistBody"><p class="text-muted small">Loading…</p></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}" src="/static/util.js?v={{ asset_version }}"></script>
+<script nonce="{{ csp_nonce }}" src="/static/captain_picks.js?v={{ asset_version }}"></script>
 {% endblock %}

@@ -162,29 +162,50 @@ EMAILS = {
 # This is the one definition of the tab bar: the routes below, the links the
 # template renders and the pane app.js opens all come from here, so a fifth tab
 # is one entry rather than four edits in three files.
+# Two kinds of tab share the bar. The first four are PANES of the app shell -
+# app.js switches them without a page load, and they carry a `pane`. The last
+# three are ordinary PAGES: their own server-rendered, individually indexable
+# documents (a captain shortlist, the price board, the compare tool), promoted
+# out of the footer where a reader never found them. They deliberately have no
+# `pane`, so tabs.html renders them without a data-pane attribute and app.js
+# leaves their clicks alone - a real navigation, exactly as the reading links
+# beside them already are.
 TABS = [
     {"path": "/my-team", "pane": "pane-team", "label": "My Team"},
     {"path": "/ai-teams", "pane": "pane-ai-teams", "label": "AI Teams"},
     {"path": "/players", "pane": "pane-players", "label": "Players"},
     {"path": "/fixture-rotator", "pane": "pane-rotator", "label": "Fixture Rotator"},
+    {"path": "/captain-picks", "label": "Captain Picks"},
+    {"path": "/price-changes", "label": "Price Changes"},
+    {"path": "/compare", "label": "Compare"},
 ]
-TAB_PANES = {t["path"]: t["pane"] for t in TABS}
+# Only the pane tabs. app.js's PATH_PANES and this must agree, and a page tab
+# has no pane to map.
+TAB_PANES = {t["path"]: t["pane"] for t in TABS if "pane" in t}
 
 
-def tab_links():
+def tab_links(active_path=None):
     """The tab bar, with each tab's title and <h1> alongside its label.
 
-    app.js reads `title` and `h1` so a tab switch can rewrite document.title and
+    app.js reads `title` and `h1` so a pane switch can rewrite document.title and
     the heading without a page load - otherwise the browser tab, and anything
     bookmarked from it, keeps the name of whichever page you happened to arrive
     on. They're carried on the prose pages too, where nothing reads them, so
     there is one shape of tab rather than two.
 
-    Rendered on every page except the home page. The four tools are what the
-    site is for, and a reader who has finished the FAQ or a player's page
-    shouldn't have to go back through the logo to reach one - previously these
-    pages offered the two reading links and nothing else."""
-    return [dict(t, title=PAGES[t["path"]]["title"], h1=PAGES[t["path"]]["h1"])
+    `active` is set for a PAGE tab whose own URL is the one being served - a
+    pane tab is marked active a different way (initial_pane, client-side),
+    because its "page" never actually loads. Computed here from `active_path`
+    rather than in the template off request.url.path, for the same reason the
+    content links are: this module owns the routing table and the canonical
+    path is already the answer.
+
+    Rendered on every page except the home page. The tools are what the site is
+    for, and a reader who has finished the FAQ or a player's page shouldn't have
+    to go back through the logo to reach one - previously these pages offered the
+    two reading links and nothing else."""
+    return [dict(t, title=PAGES[t["path"]]["title"], h1=PAGES[t["path"]]["h1"],
+                 active=("pane" not in t and t["path"] == active_path))
             for t in TABS]
 
 # The two pages that are reading rather than tools. Both were reachable only
@@ -1253,7 +1274,7 @@ def page_context(request, path, meta=None, **extra):
         # No tab is marked active on a prose page: `initial_pane` is undefined
         # there, and none of the panes is open. tab_response overrides this with
         # its own list - `**extra` lands last in this dict.
-        "tabs": [] if path == "/" else tab_links(),
+        "tabs": [] if path == "/" else tab_links(path),
         "today": datetime.now(timezone.utc).strftime("%-d %B %Y")
                  if os.name != "nt" else datetime.now(timezone.utc).strftime("%d %B %Y").lstrip("0"),
         # Club colours for the server-rendered pages. A callable rather than a
@@ -1538,6 +1559,72 @@ def captain_picks_page(request: Request):
                          season_label=_season_label())
 
 
+def _captain_history():
+    """The model's captain pick against the week's actual top scorer, per
+    settled gameweek, newest first.
+
+    Both halves are already frozen, so this only reads and joins them - it never
+    recomputes a projection, which is the whole point of a track record. The
+    model's pick is the top of a frozen briefing's captain shortlist
+    (gw_report.captains); the actual is the top of that gameweek's roundup
+    (gw_roundup.top_scorers). A gameweek missing either half is skipped rather
+    than half-shown - a cold-start week has an empty captain shortlist, and a
+    round the box slept through has no roundup.
+
+    The model captain's OWN return is shown when he landed in the roundup's
+    top-scorer list, and left as unknown otherwise: the roundup stores the
+    leaders, not every player, and inventing his score from anywhere else would
+    be marking the homework against a number that has since moved.
+    """
+    out = []
+    for ed in db.gw_report_index():
+        if not ed.get("frozen"):
+            continue
+        gw = ed["gameweek"]
+        report = db.get_gw_report(gw)
+        caps = ((report or {}).get("payload") or {}).get("captains") or []
+        if not caps:
+            continue
+        roundup = db.get_gw_roundup(gw)
+        tops = ((roundup or {}).get("payload") or {}).get("top_scorers") or []
+        if not tops:
+            continue
+        model, actual = caps[0], tops[0]
+        by_code = {t.get("code"): t for t in tops if t.get("code") is not None}
+        scored = by_code.get(model.get("code"))
+        out.append({
+            "gameweek": gw,
+            "predicted": {
+                "name": model.get("name"), "code": model.get("code"),
+                "path": model.get("path"), "team_name": model.get("team_name"),
+                "team_code": model.get("team_code"),
+                "projected": model.get("predicted"),
+                # His real return, when the roundup happens to list him.
+                "actual_points": (scored or {}).get("points"),
+            },
+            "actual": {
+                "name": actual.get("name"), "code": actual.get("code"),
+                "path": actual.get("path"), "team_name": actual.get("team_name"),
+                "team_code": actual.get("team_code"),
+                "points": actual.get("points"),
+            },
+            # By code, so two players who share a surname aren't called a match.
+            "matched": (model.get("code") is not None
+                        and model.get("code") == actual.get("code")),
+        })
+    return out
+
+
+@app.get("/api/captain-history")
+def captain_history():
+    """The captain track record: model pick vs actual top scorer, per gameweek."""
+    try:
+        return {"available": True, "history": _captain_history()}
+    except Exception as e:
+        print(f"couldn't build the captain history: {e}")
+        return {"available": False, "history": [], "detail": str(e)}
+
+
 @app.get("/price-changes", response_class=HTMLResponse)
 def price_changes_page(request: Request):
     """Who is closest to a price change tonight.
@@ -1564,8 +1651,23 @@ def price_changes_page(request: Request):
                 "risers": [], "fallers": [], "recent": [],
                 "calibration": price_changes.calibration([])}
 
+    # The HISTORY view: every change since the current gameweek's deadline, which
+    # is the window FPL's own transfer counters reset on. Deadline-aware here
+    # rather than in price_changes, which is kept on its nightly clock - it
+    # passes the window's start date in.
+    window = {"changes": [], "gameweek": None, "since": None}
+    try:
+        gw = gw_clock.current_gameweek()
+        if gw is not None:
+            deadline = gw_clock.deadline_for(gw)
+            since = deadline[:10] if deadline else None
+            window = {"gameweek": gw, "since": since,
+                      "changes": price_changes.changes_since(since, names=names)}
+    except Exception as e:
+        print(f"couldn't build the price-change window: {e}")
+
     return html_response("pages/price_changes.html", request, "/price-changes",
-                         pc=data, updated=data_lastmod())
+                         pc=data, window=window, updated=data_lastmod())
 
 
 @app.get("/accuracy", response_class=HTMLResponse)

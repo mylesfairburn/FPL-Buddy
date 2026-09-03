@@ -2318,3 +2318,39 @@ td.col-watch, th.col-watch, .wl-starcell { text-align: center; padding-left: 0; 
 @media (max-width: 575.98px) {
     .status-strip { gap: 2px 14px; font-size: 0.78rem; }
 }
+
+/* ---- Captain-picks history & price-changes history (Part 4) ------------- */
+
+/* Sub-tab panes toggled by the small page scripts share d-none with the rest
+   of the site; these rules are only for the content inside the history views. */
+
+/* The captain track record: the model's pick and the actual top scorer, side
+   by side, one gameweek at a time. */
+.cap-hist-nav { display: flex; align-items: center; gap: 12px; margin: 4px 0 16px; }
+.cap-hist-title { font-weight: 600; font-size: 1.05rem; min-width: 8em; text-align: center; }
+.cap-hist-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.cap-hist-card { border: 1px solid #e9e9ef; border-radius: 10px; padding: 14px 16px; }
+.cap-hist-model { border-left: 4px solid var(--accent, #00acae); }
+.cap-hist-actual { border-left: 4px solid #f5a524; }
+.cap-hist-role { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
+                 color: #888; margin-bottom: 4px; }
+.cap-hist-card .gw-card-name { margin: 0 0 2px; font-size: 1.1rem; }
+.cap-hist-card .gw-card-figure { font-size: 1.4rem; font-weight: 700; margin: 6px 0 4px;
+                                 color: var(--accent-dark, #0b7285); }
+.cap-hist-verdict { margin-top: 14px; padding: 10px 14px; border-radius: 8px; font-size: 0.9rem; }
+.cap-hist-verdict.is-hit { background: #e6f7ed; color: #1a7a43; }
+.cap-hist-verdict.is-miss { background: #f6f3ef; color: #555; }
+@media (max-width: 575.98px) {
+    .cap-hist-pair { grid-template-columns: 1fr; }
+}
+
+/* The price-change window: a scrollable list of everything since the deadline,
+   so a busy gameweek doesn't run the page off the bottom. */
+.pc-window-scroll { max-height: 60vh; overflow-y: auto; border: 1px solid #e9e9ef;
+                    border-radius: 8px; }
+.pc-window-scroll table { margin: 0; }
+.pc-window-scroll thead th { position: sticky; top: 0; background: #fff; z-index: 1;
+                             box-shadow: inset 0 -1px 0 #e9e9ef; }
+.pc-dir { font-weight: 600; }
+.pc-dir-rise { color: #2f9e44; }
+.pc-dir-fall { color: #e03131; }

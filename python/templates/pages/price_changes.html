@@ -9,6 +9,17 @@
     threshold this site has learned by watching real changes happen.
 </p>
 
+{# Two views. "Current" is who is closest to a change tonight, rebuilt nightly;
+   "History" is what has actually changed since the last deadline - the window
+   FPL's transfer counters reset on, so it empties and refills each gameweek.
+   The pills toggle them in the browser (price_changes.js); both are inside the
+   one page so /price-changes keeps its URL and its SEO. #}
+<ul class="nav nav-pills mb-3" id="priceViewTabs">
+    <li class="nav-item"><button class="nav-link active" type="button" data-view="current">Current</button></li>
+    <li class="nav-item"><button class="nav-link" type="button" data-view="history">History</button></li>
+</ul>
+
+<div id="pcCurrentView">
 {% if not pc.available %}
 <h2>Not enough nights recorded yet</h2>
 <p>
@@ -231,4 +242,57 @@
     reaches 1%, which is better than a board ranking players it cannot measure
     above the ones it can.
 </p>
+</div>{# /pcCurrentView #}
+
+<div id="pcHistoryView" class="d-none">
+    <h2>Changes this window{% if window.gameweek %} — since the Gameweek {{ window.gameweek }} deadline{% endif %}</h2>
+    <p class="page-lede">
+        Every price change since the last deadline{% if window.since %}, {{ window.since }} onward{% endif %}.
+        Fantasy Premier League resets a player's transfer counter each time his
+        price moves, and the whole board resets at the deadline — so this list
+        empties every gameweek and fills back up as the window runs.
+    </p>
+    {% if window.changes %}
+    <div class="pc-window-scroll">
+        <table class="table table-sm price-recent-table mb-0">
+            <thead>
+                <tr>
+                    <th scope="col">Date</th>
+                    <th scope="col">Player</th>
+                    <th scope="col">Change</th>
+                    <th scope="col" class="text-end">Momentum at the time</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for r in window.changes %}
+                <tr>
+                    <td>{{ r.date }}</td>
+                    <th scope="row">
+                        {%- if r.path %}<a href="{{ r.path }}">{{ r.name }}</a>
+                        {%- else %}{{ r.name }}{% endif %}
+                    </th>
+                    <td><span class="pc-dir pc-dir-{{ r.direction }}">{{ 'Rise' if r.direction == 'rise' else 'Fall' }}</span></td>
+                    <td class="text-end">{{ (r.momentum * 100) | round(2) }}%</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="text-muted small mt-2">
+        {{ window.changes | length }} change{{ '' if window.changes | length == 1 else 's' }}
+        in this window. Older windows aren't kept — once the deadline passes this
+        starts again from nothing.
+    </p>
+    {% else %}
+    <p class="text-muted">
+        No prices have changed since the deadline yet. As managers transfer
+        players in and out over the gameweek, the rises and falls will appear
+        here, newest first.
+    </p>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script nonce="{{ csp_nonce }}" src="/static/price_changes.js?v={{ asset_version }}"></script>
 {% endblock %}

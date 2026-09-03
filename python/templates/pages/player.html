@@ -38,6 +38,12 @@
                 <button type="button" class="wl-star" data-code="{{ player.code }}"
                         aria-pressed="false" title="Add to your watchlist"
                         aria-label="Add {{ player.full_name }} to your watchlist">&#9734;</button>
+                {# Compare, prefilled with this player. A real link to the compare
+                   tool with ?p=<code>, the form compare.js reads back into the
+                   first slot - the same thing the player pop-up's Compare button
+                   builds. #}
+                <a class="btn btn-sm btn-outline-secondary player-compare-btn"
+                   href="/compare?p={{ player.code }}">Compare</a>
                 {% endif %}
             </div>
             <p class="player-sub">

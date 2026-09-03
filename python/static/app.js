@@ -1222,6 +1222,17 @@ function openPlayerModal(p, owned, opts) {
         // the watchlist tab has ever been visited, so without this the button
         // would open reading "Watch" for a player already on the list.
         primeWatchedCodes().then(() => updateWatchButton(p));
+
+        // Compare, next to Watch: it takes the same one thing a watch does - a
+        // season-stable code - and hands it to the compare tool with this
+        // player already in the first slot. A real link, so it opens the page
+        // (leaving this SPA) rather than being faked with a click handler; the
+        // ?p=<code> form is exactly what compare.js reads back.
+        const cmp = document.createElement('a');
+        cmp.className = 'btn btn-sm btn-outline-secondary pm-btn';
+        cmp.href = '/compare?p=' + encodeURIComponent(p.code);
+        cmp.textContent = 'Compare';
+        actions.appendChild(cmp);
     }
 
     const tbox = document.getElementById('pmTransfer');

@@ -46,7 +46,12 @@ def test_page_routes():
 def test_tab_panes():
     group("tab routing", "high")
     c = _client()
-    for tab in main.TABS:
+    pane_tabs = [t for t in main.TABS if "pane" in t]
+    page_tabs = [t for t in main.TABS if "pane" not in t]
+
+    # The pane tabs are panes of the app shell: opening one sets __INITIAL_PANE__
+    # and app.js switches between them without a page load.
+    for tab in pane_tabs:
         r = c.get(tab["path"])
         check(f"{tab['path']} opens {tab['pane']}", f"GET {tab['path']}",
               f'__INITIAL_PANE__ = "{tab["pane"]}"', r.text,
@@ -57,13 +62,33 @@ def test_tab_panes():
               lambda body, t=tab: re.search(
                   r'class="nav-link active"[^>]*href="%s"' % re.escape(t["path"]), body)
               or re.search(r'href="%s"[^>]*class="nav-link active"' % re.escape(t["path"]), body))
-        # Every tool tab has to be a real <a href>, checked per path rather than
-        # by counting anchors in the bar. The bar also carries the Gameweek
-        # briefings and Players A-Z links now, so a bare count says nothing
-        # about whether the four tabs are all there - it only says how many
-        # things happen to be in the bar today.
-        check(f"{tab['path']} renders all four tab links as anchors",
-              f"GET {tab['path']}", "an <a href> for each of the four tabs", r.text,
+
+    # The page tabs (Captain Picks, Price Changes, Compare) are their own
+    # server-rendered documents promoted into the bar. They carry NO data-pane -
+    # app.js must not intercept their clicks - and they mark themselves active
+    # server-side on their own URL.
+    for tab in page_tabs:
+        r = c.get(tab["path"])
+        check(f"{tab['path']} is a page tab, not a pane", f"GET {tab['path']}",
+              "no data-pane on its own nav link", r.text,
+              lambda body, t=tab: not re.search(
+                  r'href="%s"[^>]*data-pane' % re.escape(t["path"]), body)
+              and not re.search(r'data-pane="[^"]+"[^>]*href="%s"' % re.escape(t["path"]), body),
+              severity="high",
+              note="an intercepted click would open My Team instead of navigating")
+        check(f"{tab['path']} marks its own nav link active", f"GET {tab['path']}",
+              "the matching nav-link carries .active", r.text,
+              lambda body, t=tab: re.search(
+                  r'class="nav-link active"[^>]*href="%s"' % re.escape(t["path"]), body)
+              or re.search(r'href="%s"[^>]*class="nav-link active"' % re.escape(t["path"]), body))
+
+    # Every tab is a real <a href>, checked per path rather than by counting
+    # anchors in the bar - which also carries the reading links now, so a count
+    # says nothing about whether each tab is present.
+    for tab in main.TABS:
+        r = c.get(tab["path"])
+        check(f"{tab['path']} renders every tab link as an anchor",
+              f"GET {tab['path']}", "an <a href> for each tab", r.text,
               lambda body: all(
                   re.search(r'<a class="nav-link[^"]*"[^>]*href="%s"' % re.escape(t["path"]), body)
                   for t in main.TABS),
@@ -105,7 +130,8 @@ def test_tab_panes():
     home = c.get("/").text
     check("the home page has no tool tabs", "GET /",
           "the reading links only", home,
-          lambda b: not any(f'data-pane="{t["pane"]}"' in b for t in main.TABS)
+          lambda b: not any(f'data-pane="{t["pane"]}"' in b
+                            for t in main.TABS if "pane" in t)
                     and all(f'href="{c_["path"]}"' in b for c_ in main.CONTENT_LINKS))
 
 

@@ -308,6 +308,27 @@ def recent_changes(changes, names=None, limit=30):
     return out
 
 
+def changes_since(since_date, names=None, history=None):
+    """Every observed price change on or after `since_date`, newest first.
+
+    The price-changes HISTORY view shows one FPL price window: the changes since
+    the last deadline, which is when a manager's own decisions reset. This
+    module is otherwise deadline-agnostic on purpose - it runs on a nightly
+    clock and knows nothing about gameweeks (see the docstring up top) - so the
+    caller passes the window's start date rather than this reaching for the
+    season clock. `since_date` is an ISO date string, compared lexically, which
+    is why snapshot_date is stored as YYYY-MM-DD.
+
+    Not capped like `recent_changes`: a busy window can run past thirty and the
+    view scrolls, so truncating it would silently drop the oldest changes in
+    the very window it is meant to show in full.
+    """
+    history = history if history is not None else _history()
+    changes = [c for c in observed_changes(history)
+               if since_date is None or c["date"] >= since_date]
+    return recent_changes(changes, names, limit=len(changes) or 1)
+
+
 def snapshot_dates():
     with connect() as conn:
         return [r[0] for r in conn.execute(

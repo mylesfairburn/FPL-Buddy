@@ -13,10 +13,18 @@
            and hrefs aren't repeated here so they can't drift out of step with
            the routes that serve them. #}
         <ul class="nav nav-tabs mb-4" id="mainTabs">
+{# Two kinds of tab, one bar. A pane tab carries data-pane and app.js switches
+   it in place; a page tab (Captain Picks, Price Changes, Compare) has no pane
+   and is a genuine navigation, exactly like the reading links below - so it
+   must NOT get a data-pane attribute at all, not even an empty one, or app.js's
+   [data-pane] selector would grab its click and open My Team instead. A pane
+   tab is marked active from initial_pane (client-side, its page never loads); a
+   page tab from `active`, set server-side on its own URL. #}
 {% for t in tabs %}
-            <li class="nav-item"><a class="nav-link{{ ' active' if initial_pane == t.pane }}"
-                href="{{ t.path }}" data-pane="{{ t.pane }}" data-title="{{ t.title }}"
-                data-h1="{{ t.h1 }}">{{ t.label }}</a></li>
+            <li class="nav-item"><a class="nav-link{{ ' active' if (t.pane and initial_pane == t.pane) or t.active }}"
+                href="{{ t.path }}"{% if t.pane %} data-pane="{{ t.pane }}"{% endif %}
+                data-title="{{ t.title }}" data-h1="{{ t.h1 }}"
+                {%- if t.active %} aria-current="page"{% endif %}>{{ t.label }}</a></li>
 {% endfor %}
 {# The reading pages, in the same bar but not of it. They're <li>s inside the
    same <ul> rather than a separate row so the tab bar's underline still runs
