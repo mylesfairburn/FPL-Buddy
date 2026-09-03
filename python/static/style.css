@@ -2256,7 +2256,8 @@ a.navbar-brand.brand:focus-visible {
 .wl-star:hover { color: var(--accent-dark, #0b7285); transform: scale(1.15); }
 .wl-star.is-on { color: #f5a524; }
 .wl-star:focus-visible { outline: 2px solid var(--accent-dark, #0b7285); outline-offset: 1px; border-radius: 3px; }
-.ps-table td.col-watch, .wl-starcell { text-align: center; padding-left: 0; padding-right: 0; }
+td.col-watch, th.col-watch, .wl-starcell { text-align: center; padding-left: 0; padding-right: 0; }
+.underperf-table .col-watch { width: 28px; }
 
 /* On a profile the star sits beside the h1, so it is sized to the heading
    rather than to a table row. */

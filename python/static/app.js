@@ -2004,7 +2004,8 @@ function renderPerfRows(key) {
     const rows = st.data.filter(p =>
         st.group === 'attackers' ? (p.pos === 'MID' || p.pos === 'FWD') : (p.pos === 'DEF' || p.pos === 'GK'));
     body.innerHTML = rows.length ? rows.map(p => `
-        <tr class="ps-row">
+        <tr class="ps-row" data-id="${p.id}" data-code="${p.code == null ? '' : p.code}">
+            <td class="col-watch">${watchStar(p.code, p.web_name)}</td>
             <td class="ps-name">${shirtImg(p.team_code, p.pos, 'shirt-sm')}<span>${esc(p.web_name)}</span></td>
             <td>${p.pos}</td>
             <td>${p.team_name || ''}</td>
@@ -2015,7 +2016,16 @@ function renderPerfRows(key) {
             <td>£${p.cost != null ? p.cost.toFixed(1) : '–'}</td>
             <td><div class="player-gws">${miniFixtures(p)}</div></td>
         </tr>`).join('')
-        : `<tr><td colspan="9" class="text-muted small p-2">${cfg.empty}</td></tr>`;
+        : `<tr><td colspan="10" class="text-muted small p-2">${cfg.empty}</td></tr>`;
+    // The rows have always looked clickable - .ps-row carries cursor:pointer -
+    // and until now did nothing: the only .ps-row handler was scoped to the
+    // search widget's own container. Open the pop-up, which is where the star,
+    // the watch button and the compare link all live.
+    body.querySelectorAll('.ps-row').forEach(tr => tr.addEventListener('click', () => {
+        const p = st.data.find(x => x.id === +tr.dataset.id);
+        if (p) openPlayerModal(p, false);
+    }));
+    bindWatchStars(body);
 }
 function loadPerfView(key) {
     const cfg = PERF_VIEWS[key], st = perfState[key];
@@ -2032,7 +2042,7 @@ function loadPerfView(key) {
             // the rest of the session.
             st.loaded = false;
             document.getElementById(cfg.body).innerHTML =
-                '<tr><td colspan="9" class="text-muted small p-2">Couldn’t load this table.</td></tr>';
+                '<tr><td colspan="10" class="text-muted small p-2">Couldn’t load this table.</td></tr>';
         });
 }
 Object.entries(PERF_VIEWS).forEach(([key, cfg]) => {

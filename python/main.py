@@ -2206,7 +2206,11 @@ def all_players(response: Response):
 def underperforming(response: Response, top_n: int = 20):
     """Players whose actual returns lag their underlying xG/xGC numbers."""
     response.headers["Cache-Control"] = API_CACHE
-    return get_underperforming_players(state["position_dfs"], top_n=top_n)
+    data = get_underperforming_players(state["position_dfs"], top_n=top_n)
+    # So the rows can open the player pop-up with a working profile link, the
+    # same enrichment /api/all_players does.
+    _attach_paths(data.get("results"))
+    return data
 
 
 @app.get("/api/overperforming")
@@ -2218,7 +2222,9 @@ def overperforming(response: Response, top_n: int = 20):
     would otherwise silently serve the opposite table - a wrong answer that
     looks exactly like a right one."""
     response.headers["Cache-Control"] = API_CACHE
-    return get_overperforming_players(state["position_dfs"], top_n=top_n)
+    data = get_overperforming_players(state["position_dfs"], top_n=top_n)
+    _attach_paths(data.get("results"))
+    return data
 
 
 @app.get("/api/player/{player_id}")

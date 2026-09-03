@@ -630,6 +630,12 @@ def get_performance_gap_players(position_dfs, direction="under", top_n=20,
             next_gws = r.get("next_gameweeks")
             rows.append({
                 "id": int(r["id"]), "web_name": r.get("web_name", ""),
+                # For the player pop-up these rows can now open: the watchlist
+                # is keyed on `code`, and the pop-up gates its Watch button and
+                # its profile link on it. `status` lets the availability band
+                # render the same as it does from the main table.
+                "code": int(r["code"]) if r.get("code") == r.get("code") else None,
+                "status": (r.get("status") or "a"),
                 "pos": POS_SHORT.get(int(r["element_type"]), "?"),
                 "team_code": int(r["team_code"]) if r.get("team_code") == r.get("team_code") else None,
                 "team_name": short.get(int(r["team"])) if r.get("team") == r.get("team") else None,
