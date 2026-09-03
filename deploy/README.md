@@ -239,6 +239,52 @@ reverses the decision to vendor Bootstrap. Both are added only while the token
 is set. It also makes `/privacy` say the site runs analytics — if the beacon is
 ever removed, that page has to be changed back.
 
+## 2b. SSH sessions timing out during long jobs
+
+The manual jobs below (`daily-refresh` especially) make hundreds of serial FPL
+API calls and can run for many minutes with no output in between. An idle SSH
+connection - or a NAT/Cloudflare hop in front of it - will drop during those
+silent stretches and take the job with it. Two fixes, both on the machine you
+SSH *from*.
+
+**Keepalive.** Add to your local `~/.ssh/config` so the client sends a null
+packet every 30s and a dropped link is noticed rather than hanging:
+
+```
+Host web-host
+  ServerAliveInterval 30
+  ServerAliveCountMax 6
+```
+
+On Windows PowerShell there is no `printf`; append the block with:
+
+```powershell
+@"
+Host web-host
+  ServerAliveInterval 30
+  ServerAliveCountMax 6
+"@ | Add-Content -Path $HOME\.ssh\config -Encoding utf8
+```
+
+(Or just open `%USERPROFILE%\.ssh\config` in an editor and paste the three
+lines.) `web-host` is whatever you already type after `ssh` - swap in the real
+host alias.
+
+**Detach the job.** A keepalive stops an *idle* drop; it does not survive the
+laptop sleeping or the network changing. Run anything long inside `tmux` on the
+host so it keeps going regardless of the SSH session:
+
+```
+ssh web-host
+tmux new -As fpl            # attach, or create, a session named "fpl"
+docker exec fpl-buddy python jobs.py daily-refresh
+# Ctrl-b d to detach; `tmux attach -t fpl` to come back
+```
+
+The long ones to run this way are `daily-refresh` (the per-player stats pull is
+the slow part) and a first-time `refresh-stats`. `deadline-watch`,
+`gameweek-report` and the new `ai-doctor` finish in seconds and don't need it.
+
 ## 3. Cron
 
 Two jobs, because they answer to different clocks.

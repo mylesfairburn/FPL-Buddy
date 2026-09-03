@@ -263,3 +263,17 @@ docker exec fpl-buddy python jobs.py gameweek-roundup --gameweek 12 --replace
 ```bash
 docker exec fpl-buddy python jobs.py player-spotlight --replace
 ```
+
+Check every stored AI Manager squad for an illegal XI or a pick the rated pool
+has lost (read-only):
+
+```bash
+docker exec fpl-buddy python jobs.py ai-doctor
+```
+
+Re-solve one stored gameweek's XI, captain and bench from the fifteen it already
+holds — never changes who is in the squad. Dry-run without `--apply`:
+
+```bash
+docker exec fpl-buddy python jobs.py ai-repair --gameweek 2 --apply
+```
