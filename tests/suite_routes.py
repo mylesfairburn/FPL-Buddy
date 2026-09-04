@@ -871,10 +871,14 @@ def test_server_rendered_tables():
 
     # `ps-name` is followed by the column-width class, so this matches the start
     # of the class list rather than the whole attribute - see the .col-* note in
-    # style.css for why those exist.
+    # style.css for why those exist. The row now opens with attributes
+    # (`ssr-row`, `data-code`) and a leading empty watchlist-star cell, so the
+    # match allows for both rather than assuming `<tr>` sits flush against
+    # ps-name - the point of the test is that the NAME cells are in the raw
+    # HTML, not what precedes them.
     check("the players table has rows in the raw HTML", "GET /players",
-          "at least 50 <tr> inside #playersTabSearch", body,
-          lambda b: len(re.findall(r'<tr>\s*<td class="ps-name[ "]', b)) >= 50,
+          "at least 50 server-rendered player-name cells", body,
+          lambda b: len(re.findall(r'<td class="ps-name[ "]', b)) >= 50,
           note="without these a crawler sees an empty table where the ratings are")
 
     # Ownership is server-rendered too, not drawn in by the script. It is the
