@@ -178,6 +178,23 @@ def build_index(position_dfs):
     return pages
 
 
+def top_rated(records, n):
+    """The n highest-rated players, in the order seo_tables ranks the homepage
+    table - `(-rating, web_name)`, rating-less players dropped.
+
+    The sitemap nominates exactly this set. Submitting every player told Google
+    to crawl ~580 near-identical, mostly low-demand pages on a young domain,
+    which is what parks the bulk of them in "Discovered - currently not
+    indexed". The rest are unchanged and stay reachable from /players/a-z; they
+    are simply no longer nominated for crawl. `n` is passed in - kept as
+    seo_tables.TOP_PLAYERS by the caller - so this module gains no import of
+    seo_tables and the two cannot drift on the count."""
+    ranked = sorted(
+        (r for r in records if r.get("rating") is not None),
+        key=lambda r: (-(r.get("rating") or 0), r.get("web_name") or ""))
+    return ranked[:n]
+
+
 def attach_team_names(pages, team_names, team_shorts):
     """Fill in club names. Kept separate from build_index so the team lookup -
     the one part that can hit the network - can fail without costing us the

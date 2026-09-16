@@ -1941,8 +1941,8 @@ def sitemap():
     Every `lastmod` here is meant to be TRUE, which is a change from how this
     started. It used to stamp today on all ~580 URLs, every day, and that is
     the one thing Google documents as a reason to ignore <lastmod> for an
-    entire sitemap - at which point the file stops being able to say which of
-    568 player pages is worth a recrawl, which is the only reason it has dates
+    entire sitemap - at which point the file stops being able to say which
+    player page is worth a recrawl, which is the only reason it has dates
     in it. The prose pages were the clearest case: /privacy claiming a fresh
     edit every morning is plainly false, and it was competing for crawl budget
     against pages that had genuinely changed.
@@ -1963,9 +1963,16 @@ def sitemap():
         f"<changefreq>{meta.get('changefreq', 'monthly')}</changefreq>"
         f"<priority>{meta.get('priority', '0.5')}</priority></url>"
         for path, meta in PAGES.items())
-    # Plus one entry per player. Several hundred URLs, well inside the 50,000
-    # limit for a single sitemap, so this doesn't need splitting into an index.
-    # `xml_escape` because a name can legitimately contain an ampersand.
+    # Plus one entry per player - but only the top-rated ~hundred, not the whole
+    # pool. Nominating every player (~580 of them) told Google to crawl that many
+    # near-identical, mostly no-demand pages on a young, low-authority domain, and
+    # its answer was to leave the bulk of them in "Discovered - currently not
+    # indexed" and back off the site. So the sitemap now points crawl budget at
+    # the set that can actually rank: the same players seo_tables ranks onto the
+    # homepage (seo_tables.TOP_PLAYERS, so the two never disagree on the count).
+    # The rest are unchanged and still reachable from /players/a-z - de-nominated,
+    # not de-indexed. `xml_escape` because a name can legitimately contain an
+    # ampersand.
     #
     # `daily` rather than `weekly`: these pages are rebuilt by the same nightly
     # job that sets data_mod, so weekly understated it in the one direction that
@@ -1973,7 +1980,8 @@ def sitemap():
     urls += "".join(
         f"<url><loc>{SITE_URL}{xml_escape(rec['path'])}</loc><lastmod>{data_mod}</lastmod>"
         f"<changefreq>daily</changefreq><priority>0.6</priority></url>"
-        for rec in player_page_index().values())
+        for rec in player_pages.top_rated(
+            player_page_index().values(), seo_tables_builder.TOP_PLAYERS))
 
     # Plus one per published gameweek edition. These are the only URLs on the
     # site with an honest `lastmod`: a frozen edition genuinely has not changed

@@ -571,10 +571,14 @@ def test_sitemap():
     check("sitemap parses as XML", "GET /sitemap.xml", "valid urlset",
           f"{len(locs)} <loc> entries", lambda _: True, severity="critical")
 
-    # Four sources now: the routing table, one page per player, one per
+    # Four sources now: the routing table, the top-rated players the sitemap
+    # nominates (see player_pages.top_rated - NOT the whole pool), one per
     # published gameweek briefing, and one per roundup. The last two are read
     # live rather than hardcoded because each grows by one a week in season.
-    expected = (len(main.PAGES) + len(main.player_page_index())
+    expected = (len(main.PAGES)
+                + len(main.player_pages.top_rated(
+                    main.player_page_index().values(),
+                    main.seo_tables_builder.TOP_PLAYERS))
                 + len(main.db.gw_report_index())
                 + len(main.db.gw_roundup_index()))
     expect("sitemap URL count",
